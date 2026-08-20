@@ -76,6 +76,19 @@
   },
   "devices": [
     {
+      "address": "BE:68:3F:17:1D:0B",
+      "name": "A_Cup",
+      "groups": [
+        "drink",
+        "cup",
+        "side-a"
+      ],
+      "enabled": true,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
+      "notes": ""
+    },
+    {
       "address": "BE:27:96:00:1C:AE",
       "name": "A_V",
       "groups": [
@@ -121,6 +134,32 @@
         "letters",
         "side-a",
         "E"
+      ],
+      "enabled": true,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
+      "notes": ""
+    },
+    {
+      "address": "BE:68:F1:BB:DB:04",
+      "name": "A_Straw",
+      "groups": [
+        "drink",
+        "straw",
+        "side-a"
+      ],
+      "enabled": true,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
+      "notes": ""
+    },
+    {
+      "address": "BE:68:4B:08:3D:0B",
+      "name": "B_Cup",
+      "groups": [
+        "drink",
+        "cup",
+        "side-b"
       ],
       "enabled": true,
       "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
@@ -178,45 +217,6 @@
       "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
       "channels": "rgb",
       "notes": "weak signal from the Pi's test position (-83 dBm)"
-    },
-    {
-      "address": "BE:68:3F:17:1D:0B",
-      "name": "A_Cup",
-      "groups": [
-        "drink",
-        "cup",
-        "side-a"
-      ],
-      "enabled": true,
-      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
-      "channels": "rgb",
-      "notes": ""
-    },
-    {
-      "address": "BE:68:F1:BB:DB:04",
-      "name": "A_Straw",
-      "groups": [
-        "drink",
-        "straw",
-        "side-a"
-      ],
-      "enabled": true,
-      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
-      "channels": "rgb",
-      "notes": ""
-    },
-    {
-      "address": "BE:68:4B:08:3D:0B",
-      "name": "B_Cup",
-      "groups": [
-        "drink",
-        "cup",
-        "side-b"
-      ],
-      "enabled": true,
-      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
-      "channels": "rgb",
-      "notes": ""
     },
     {
       "address": "BE:68:23:C9:C8:01",

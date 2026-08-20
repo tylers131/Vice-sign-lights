@@ -20,15 +20,15 @@ Defaults to the installed config; pass --config for a different file.
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import shutil
-import stat
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
 
-from vicelights import protocol  # noqa: E402
+from vicelights import protocol   # noqa: E402
+from _configfile import load_config, save_config  # noqa: E402
 
 DEFAULT_CONFIG = "/etc/vice-lights/config.json"
 
@@ -62,27 +62,6 @@ def retune(config: dict, speed: int, floor: int) -> list:
     return changes
 
 
-def save(path: str, config: dict):
-    """Write atomically, keeping the original's owner -- root reclaiming this
-    file is how the service loses its ability to save from the web UI."""
-    if os.path.exists(path):
-        shutil.copy2(path, path + ".bak")
-        original = os.stat(path)
-    else:
-        original = None
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=2)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    if original is not None:
-        os.chmod(tmp, stat.S_IMODE(original.st_mode))
-        if os.geteuid() == 0:
-            os.chown(tmp, original.st_uid, original.st_gid)
-    os.replace(tmp, path)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -98,8 +77,7 @@ def main():
 
     if not os.path.exists(args.config):
         sys.exit("no config at %s -- pass --config PATH" % args.config)
-    with open(args.config, "r", encoding="utf-8") as handle:
-        config = json.load(handle)
+    config = load_config(args.config)
 
     changes = retune(config, args.speed, args.floor)
     if not changes:
@@ -118,8 +96,9 @@ def main():
     if not args.apply:
         print("\nDry run. Re-run with --apply to write %s" % args.config)
         return
-    save(args.config, config)
-    print("\nWrote %s (previous saved as %s.bak)" % (args.config, args.config))
+    backup = save_config(args.config, config)
+    print("\nWrote %s%s" % (args.config,
+                            " (previous saved as %s)" % backup if backup else ""))
     print("Reload it with:  curl -X POST http://localhost/api/config/reload")
 
 

@@ -295,14 +295,23 @@ class BleWorker:
         A device named by more than one step keeps only the last step that
         mentions it, so 'all -> dim red' followed by 'group:letters -> white'
         does what it reads like and never writes twice to one unit.
+
+        Devices are then visited in config order, not in the order the steps
+        happen to name them. Writes are serialised at ~2.5s each, so a scene
+        change is a visible wipe across the sign, and which way that wipe
+        travels is a fact about where the units are mounted -- not about
+        whether someone wrote the 'letters' step before the 'cup' one. Sorting
+        here cannot change what any device displays: the step that wins for a
+        given device is settled in by_address above, independently of order.
         """
         by_address = {}
-        order = []
         for step in scene.get("steps") or []:
             for address in self.store.resolve_target(step.get("target", "all")):
-                if address not in by_address:
-                    order.append(address)
                 by_address[address] = self._frames_for(step, address)
+        order = [a for a in self.store.resolve_target("all") if a in by_address]
+        # Anything a step reached that 'all' does not list (a device disabled
+        # between the two calls) still gets written rather than dropped.
+        order += [a for a in by_address if a not in set(order)]
         items = [self._item(address, by_address[address]) for address in order]
         job = Job("apply", "scene: %s" % scene.get("name", "?"), items,
                   coalesce_key="scene", payload={"scene": scene.get("name")})
