@@ -517,7 +517,9 @@ def _describe_items(items) -> str:
     unique = {_spaced(item["frames"]) for item in items}
     if len(unique) == 1:
         return unique.pop()
-    return "%s (+%d other variant(s), per-device channel order)" % (
+    # A scene with several steps, or a device with its own channel order, both
+    # land here -- so name the fact, not a guess at the cause.
+    return "%s (+%d other frame set(s) in this job)" % (
         _spaced(items[0]["frames"]), len(unique) - 1)
 
 
