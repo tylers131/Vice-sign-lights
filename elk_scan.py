@@ -448,6 +448,55 @@ async def cmd_channels(args):
         print("Tell me exactly what you saw for each and I'll work from that.")
 
 
+async def cmd_unstick(args):
+    """Find out how this firmware leaves a built-in pattern.
+
+    Puts the controller into an obvious animation, then tries each escape
+    strategy, asking whether the strand became a steady colour.
+    """
+    require_bleak()
+    address = normalize_address(args.address)
+    green = protocol.color_frame(0, 255, 0)
+    results = {}
+
+    for strategy in protocol.EXIT_PATTERN_STRATEGIES:
+        print("\n--- strategy '%s'" % strategy)
+        print("  starting a Flash 7 colour pattern ...")
+        await write_frames(address, [protocol.power_frame(True),
+                                     protocol.mode_frame(0x9A)],
+                           args.timeout, verbose=False)
+        await asyncio.sleep(3.0)
+        escape = protocol.exit_pattern_frames(strategy)
+        for frame in escape:
+            print("  escape: %s" % frame.hex(" "))
+        print("  colour: %s  (asking for steady green)" % green.hex(" "))
+        await write_frames(address, escape + [green], args.timeout, verbose=False)
+        await asyncio.sleep(2.0)
+        try:
+            answer = input("  steady green now? [y/n]: ").strip().lower()[:1]
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        results[strategy] = (answer == "y")
+
+    print("\n%-14s %s" % ("STRATEGY", "WORKED"))
+    for strategy, worked in results.items():
+        print("%-14s %s" % (strategy, "yes" if worked else "no"))
+
+    winners = [s for s, worked in results.items() if worked]
+    if not winners:
+        print("\nNone worked. The pattern survives everything we can send, so the")
+        print("only reliable escape is cutting power to the controller. Tell me and")
+        print("I will look for another frame.")
+        return
+    best = winners[0]                      # listed cheapest-first
+    print("\nCheapest that works: '%s'." % best)
+    print("Set \"exit_pattern\": \"%s\" in config.json settings"
+          " (current default is power_cycle)." % best)
+    if best == "none":
+        print("A plain colour frame is enough, so patterns were never the problem.")
+
+
 def cmd_frames(_args):
     print("solid #ff2d78 :", protocol.color_frame(0xFF, 0x2D, 0x78).hex(" "))
     print("power on      :", protocol.power_frame(True).hex(" "))
@@ -545,6 +594,11 @@ def main(argv=None):
     p.add_argument("--config", help="config.json to save the result into")
     p.add_argument("--save", action="store_true", help="write the result to the config")
     p.set_defaults(fn=cmd_channels, is_async=True)
+
+    p = sub.add_parser("unstick",
+                       help="find how this firmware leaves a built-in pattern")
+    p.add_argument("address")
+    p.set_defaults(fn=cmd_unstick, is_async=True)
 
     p = sub.add_parser("frames", help="print every frame (no radio needed)")
     p.set_defaults(fn=cmd_frames, is_async=False)

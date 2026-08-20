@@ -55,6 +55,23 @@ BRIGHTNESS_MODES = ("scale", "native", "both")
 CHANNEL_ORDERS = ("rgb", "rbg", "grb", "gbr", "brg", "bgr")
 
 
+# Leaving a built-in pattern. Many of these firmwares keep animating after a
+# solid-colour frame, so the colour looks ignored. These are the ways out, in
+# increasing order of disruption; `elk_scan.py unstick` finds which one works.
+EXIT_PATTERN_STRATEGIES = ("none", "static_mode", "power_cycle")
+
+STATIC_WHITE_MODE = 0x86
+
+
+def exit_pattern_frames(strategy: str = "power_cycle") -> list:
+    """Frames to send before a solid colour, to leave an animation behind."""
+    if strategy == "static_mode":
+        return [mode_frame(STATIC_WHITE_MODE)]
+    if strategy == "power_cycle":
+        return [power_frame(False), power_frame(True)]
+    return []
+
+
 def apply_channel_order(rgb, order: str = "rgb"):
     order = (order or "rgb").strip().lower()
     if order == "rgb" or order not in CHANNEL_ORDERS:

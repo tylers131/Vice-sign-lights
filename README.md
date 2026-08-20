@@ -265,6 +265,34 @@ The command also separates the cases that are *not* wiring:
 | White for every primary | More than one channel driven at once: shorted wiring, or the strand isn't analog RGB |
 | Anything else | Not a simple swap — capture what you saw for each probe |
 
+### If a colour won't take after using a pattern
+
+Many ELK-BLEDOM firmwares keep animating after a solid-colour frame: the colour
+frame lands, the unit ignores it, and the strand carries on strobing. From the
+UI that reads as "colours aren't setting" — the bytes on the wire are correct
+and the light disagrees.
+
+The service handles it: `exit_pattern` (default `power_cycle`) is prepended to
+a solid colour **only** when that device's previous command set a pattern, so an
+ordinary colour change is still a single write. Find what your firmware needs:
+
+```bash
+python elk_scan.py unstick BE:68:F1:BB:DB:04
+```
+
+It starts an obvious animation, tries each escape, and asks whether the strand
+went steady green.
+
+| `exit_pattern` | Frames sent before the colour |
+| --- | --- |
+| `none` | nothing — a colour frame alone is enough |
+| `static_mode` | `7e 00 03 86 03 00 00 00 ef` (static white) |
+| `power_cycle` | off, then on |
+
+Set the cheapest one that works in `config.json` under `settings`. `power_cycle`
+causes a brief blink on the pattern→colour transition only; if `static_mode`
+works, prefer it.
+
 ### If lights won't turn off
 
 `7e 00 04 00 00 00 ff 00 ef` is the documented off frame, but ELK-BLEDOM clones

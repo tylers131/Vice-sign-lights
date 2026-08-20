@@ -109,6 +109,9 @@ class BleWorker:
         self._stop = False
         self.device_state = {}
         self.last_scan = {"at": None, "devices": []}
+        # Devices whose last queued command put them into a built-in pattern.
+        # A solid colour aimed at one of these needs help getting out first.
+        self._in_pattern = set()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -213,7 +216,41 @@ class BleWorker:
                 rgb = protocol.apply_channel_order(
                     protocol.parse_color(state["color"]), order)
                 state = dict(state, color=protocol.format_color(rgb))
-        return protocol.build_frames(state, self.store.setting("brightness_mode", "scale"))
+        frames = protocol.build_frames(state, self.store.setting("brightness_mode", "scale"))
+        if address:
+            escape = self._track_pattern(address, state)
+            if escape:
+                # The power-cycle escape already ends powered on, so don't send
+                # the power-on frame build_frames put at the front as well.
+                if frames and escape[-1] == frames[0] == protocol.power_frame(True):
+                    frames = frames[1:]
+                frames = escape + frames
+        return frames
+
+    def _track_pattern(self, address: str, state: dict) -> list:
+        """Remember whether this device is animating, and help it stop.
+
+        A unit running a built-in pattern often ignores a solid-colour frame and
+        keeps animating, which reads as "the colour did not apply". Prepend the
+        configured escape only on the transition out of a pattern, so a plain
+        colour change stays one write.
+        """
+        wants_mode = state.get("mode") not in (None, "", "none")
+        if wants_mode:
+            self._in_pattern.add(address)
+            return []
+        if state.get("power") is False:
+            self._in_pattern.discard(address)
+            return []
+        if address in self._in_pattern:
+            self._in_pattern.discard(address)
+            strategy = self.store.setting("exit_pattern", "power_cycle")
+            escape = protocol.exit_pattern_frames(strategy)
+            if escape:
+                log.info("%s was running a pattern; prepending '%s' escape",
+                         address, strategy)
+            return escape
+        return []
 
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""
