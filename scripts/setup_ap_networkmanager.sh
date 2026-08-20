@@ -10,7 +10,10 @@ PSK="${2:-burningman}"
 CHANNEL="${3:-6}"
 IFACE="${IFACE:-wlan0}"
 CON=vice-ap
-ADDR=192.168.4.1/24
+# Override if this collides with the network you use at home -- typing
+# 192.168.4.1 and reaching your router instead of the sign is a bad five
+# minutes. e.g. AP_ADDR=192.168.50.1/24 sudo ./scripts/setup_ap_networkmanager.sh
+ADDR="${AP_ADDR:-192.168.4.1/24}"
 COUNTRY="${COUNTRY:-US}"
 
 [[ $EUID -eq 0 ]] || { echo "run me with sudo" >&2; exit 1; }

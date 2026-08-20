@@ -10,7 +10,8 @@ PSK="${2:-burningman}"
 CHANNEL="${3:-6}"
 IFACE="${IFACE:-wlan0}"
 COUNTRY="${COUNTRY:-US}"
-IP=192.168.4.1
+IP="${AP_IP:-192.168.4.1}"
+NET="${IP%.*}"
 
 [[ $EUID -eq 0 ]] || { echo "run me with sudo" >&2; exit 1; }
 [[ ${#PSK} -ge 8 ]] || { echo "WPA passphrase must be >= 8 characters" >&2; exit 1; }
@@ -83,7 +84,7 @@ echo "==> dnsmasq config (DHCP only; there is no uplink to resolve against)"
 cat > /etc/dnsmasq.d/vice-ap.conf <<CONF
 interface=$IFACE
 bind-interfaces
-dhcp-range=192.168.4.10,192.168.4.60,255.255.255.0,24h
+dhcp-range=$NET.10,$NET.60,255.255.255.0,24h
 dhcp-option=option:router,$IP
 dhcp-option=option:dns-server,$IP
 # Answer every name with the Pi so a phone browser lands on the UI.
@@ -104,4 +105,5 @@ Access point configured. Reboot to be sure it comes up cleanly: sudo reboot
   SSID:       $SSID
   Passphrase: $PSK
   Web UI:     http://$IP/
+  DHCP range: $NET.10 - $NET.60
 MSG

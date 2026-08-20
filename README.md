@@ -411,6 +411,28 @@ Writes `/etc/hostapd/hostapd.conf`, a dnsmasq DHCP range of
 to leave `wlan0` alone if it's installed. Its dnsmasq also resolves *every*
 hostname to the Pi, so a phone browser lands on the UI whatever you type.
 
+### Pick a subnet that does not collide with home
+
+The AP defaults to `192.168.4.1/24`. **Check what your home network uses first:**
+
+```bash
+ip addr show wlan0 | grep 'inet '
+```
+
+A home LAN of `192.168.4.0/22` — which is what this Pi sits on — spans
+192.168.4.0 to 192.168.7.255, so `192.168.4.1` is almost certainly the home
+router. The two networks never run at once, so nothing breaks, but typing
+`192.168.4.1` into a browser then reaches the router or the sign depending on
+which wifi you are joined to. Avoid the ambiguity:
+
+```bash
+AP_ADDR=192.168.50.1/24 sudo ./scripts/setup_ap_networkmanager.sh "ViceSign" "passphrase"
+AP_IP=192.168.50.1      sudo ./scripts/setup_ap_hostapd.sh        "ViceSign" "passphrase"
+```
+
+The hostapd script derives its DHCP range from whatever address you give it.
+Substitute your chosen address wherever this README says `192.168.4.1`.
+
 ### Switching between the AP and normal wifi
 
 The AP has **no uplink**, so while it is up you cannot `git pull`, `apt install`
@@ -632,10 +654,15 @@ that matters: the phases do not cover the Python and D-Bus work between them, or
 a failed device's retries, so quoting only the accounted number understates a
 sweep. The history so far:
 
-| | scene: Vice |
+| | 12-device sweep |
 | --- | --- |
 | one unreachable unit, blocking disconnect | 131.3s |
-| after skipping dead units and capping disconnect | **65.6s** |
+| after skipping dead units and capping disconnect | 65.6s |
+| with all 12 reachable | **49.6s** |
+
+At 49.6s the phases account for everything: `4.13s/device accounted, 4.13s
+actual`. The half-second per device that used to go unmeasured was the failing
+unit's retry time.
 
 Two useful things fall out of the breakdown.
 
