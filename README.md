@@ -472,6 +472,29 @@ So drive a group while you're playing with colours and save `all` for scenes you
 apply and walk away from. Live apply on a two-device group feels immediate;
 live apply on all 12 does not.
 
+### One dead controller used to cost a minute
+
+A controller that is powered down, out of range or simply dead costs
+`attempts` × `connect_timeout` **every sweep** — measured at roughly 60 seconds
+for a single unit, about half the wall clock of a twelve-device scene. It never
+blocked the others, but it taxed every one of them.
+
+After `cooldown_after` consecutive failures (default 2) a device is skipped
+outright for `failure_cooldown` seconds (default 180), then probed once with a
+single attempt instead of the full retry budget. A successful probe clears the
+state immediately and it rejoins the fleet. The UI shows it as `skipped` with
+the reason and the time remaining, and the log names anyone sitting out:
+
+```
+skipped 1 device(s) still in cooldown: B_E
+```
+
+Set `cooldown_after` to 0 to disable the mechanism and always retry everything.
+
+**Investigate a device that keeps cooling down** rather than living with it —
+check the Devices tab for its last error and signal, and see the range note in
+the troubleshooting table.
+
 ### Where the time goes
 
 Every job logs a phase breakdown, because the split decides whether anything can

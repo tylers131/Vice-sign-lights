@@ -43,6 +43,13 @@ DEFAULT_SETTINGS = {
     # then move on, letting it finish in the background. 0 = never wait; raise it
     # to restore the old blocking behaviour if a radio gets upset.
     "disconnect_wait": 0.5,
+    # A controller that is off, out of range or dead costs attempts x
+    # connect_timeout on EVERY sweep -- around 60s for one unit at the defaults.
+    # After this many consecutive failures it is skipped outright for
+    # failure_cooldown seconds, then probed once. It comes straight back the
+    # moment it answers.
+    "cooldown_after": 2,
+    "failure_cooldown": 180.0,
     "scan_seconds": 8.0,
     "log_level": "INFO",
     "apply_on_boot": "",             # scene name to apply at startup, "" = none

@@ -374,6 +374,23 @@ class BleWorker:
 
     # ------------------------------------------------------------- execution
 
+    def _cooldown_remaining(self, address, settings) -> float:
+        """Seconds left before a repeatedly-failing device is worth trying again.
+
+        Without this, one unreachable controller costs attempts x connect_timeout
+        on every single sweep -- measured at ~60s for one unit, roughly half the
+        wall clock of a twelve-device scene. Skipping it outright keeps the other
+        eleven fast, and it rejoins the moment a probe succeeds.
+        """
+        threshold = int(settings.get("cooldown_after", 2))
+        if threshold <= 0:
+            return 0.0
+        state = self.device_state.get(address)
+        if not state or state.get("consecutive_failures", 0) < threshold:
+            return 0.0
+        last = state.get("last_attempt") or 0
+        return max(0.0, float(settings.get("failure_cooldown", 180.0)) - (time.time() - last))
+
     async def _do_writes(self, job):
         settings = self.store.settings
         gap = float(settings.get("inter_device_delay", 0.35))
@@ -381,11 +398,19 @@ class BleWorker:
             if job.state == "superseded":
                 item["status"] = "skipped"
                 continue
+            remaining = self._cooldown_remaining(item["address"], settings)
+            if remaining > 0:
+                fails = self.device_state[item["address"]]["consecutive_failures"]
+                item["status"] = "skipped"
+                item["detail"] = ("unreachable %dx, skipping for another %ds"
+                                  % (fails, int(remaining)))
+                continue
             item["status"] = "working"
             frames = [bytes.fromhex(h) for h in item["frames"]]
             started = time.time()
             ok, detail, char_uuid, phases = await self._write_device(
-                item["address"], frames, settings)
+                item["address"], frames, settings,
+                probing=self._is_known_bad(item["address"], settings))
             elapsed = time.time() - started
             item["status"] = "ok" if ok else "failed"
             item["detail"] = detail
@@ -398,9 +423,21 @@ class BleWorker:
             # Breathe between devices so the shared radio can serve the AP.
             await asyncio.sleep(gap)
         _log_phase_summary(job, gap)
+        skipped = [item for item in job.items if item["status"] == "skipped"]
+        if skipped:
+            log.info("skipped %d device(s) still in cooldown: %s",
+                     len(skipped), ", ".join(item["name"] for item in skipped))
 
-    async def _write_device(self, address, frames, settings):
-        attempts = int(settings.get("attempts", 3))
+    def _is_known_bad(self, address, settings) -> bool:
+        state = self.device_state.get(address)
+        threshold = int(settings.get("cooldown_after", 2))
+        return bool(state and threshold > 0
+                    and state.get("consecutive_failures", 0) >= threshold)
+
+    async def _write_device(self, address, frames, settings, probing=False):
+        # A device that just came off cooldown gets one cheap probe rather than
+        # the full retry budget: if it is still dead, that is 12s wasted, not 60.
+        attempts = 1 if probing else int(settings.get("attempts", 3))
         backoff = float(settings.get("retry_backoff", 0.8))
         last_error = "no attempt made"
         for attempt in range(1, attempts + 1):
