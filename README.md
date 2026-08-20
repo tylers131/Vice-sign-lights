@@ -389,6 +389,35 @@ Writes `/etc/hostapd/hostapd.conf`, a dnsmasq DHCP range of
 to leave `wlan0` alone if it's installed. Its dnsmasq also resolves *every*
 hostname to the Pi, so a phone browser lands on the UI whatever you type.
 
+### Switching between the AP and normal wifi
+
+The AP has **no uplink**, so while it is up you cannot `git pull`, `apt install`
+or reach anything off the Pi. `scripts/ap.sh` moves between the two:
+
+```bash
+sudo ./scripts/ap.sh status          # which mode, which address, what else is saved
+sudo ./scripts/ap.sh off             # rejoin your normal wifi (internet, iteration)
+sudo ./scripts/ap.sh off 'MyWifi'    # ...or a specific saved network
+sudo ./scripts/ap.sh on              # host ViceSign again (playa mode)
+```
+
+`off` also clears the AP profile's autoconnect, so it will not reappear on the
+next reboot until you run `on`.
+
+Either switch drops the connection you are running over. `--delay` re-runs the
+switch as a detached `systemd-run` timer so your command returns first:
+
+```bash
+sudo ./scripts/ap.sh off --delay 5
+```
+
+Then reconnect on the other network. Coming **from** the AP, the Pi returns to
+whatever address your router gives it; going **to** the AP, it is always
+`192.168.4.1`.
+
+If you are locked out with the AP up: join **ViceSign** from a laptop and
+`ssh <user>@192.168.4.1`.
+
 Either way:
 
 * Join **ViceSign** from your phone, open **http://192.168.4.1/**
