@@ -319,6 +319,20 @@ DEFAULT_CONFIG_PATHS = ("/etc/vice-lights/config.json", "config.json",
                         "config.example.json")
 
 
+def drain_stdin():
+    """Throw away anything typed before the prompt appeared.
+
+    Writing a mode takes ~4s (connect, write, disconnect), and people type
+    during it. Those keystrokes sit in the terminal buffer and are then eaten by
+    the *next* prompt, silently attaching an answer to the wrong pattern.
+    """
+    try:
+        import termios
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
 def _load_store(path=None, for_writing=False):
     """Open the first config that exists, so identify works before install.
 
@@ -601,17 +615,20 @@ async def cmd_modes(args):
 
     print("Auditioning %d pattern(s) on %s, %.0fs each, speed %d."
           % (len(values), address, args.dwell, args.speed))
-    print("At each prompt: describe what you SEE, Enter to skip,")
-    print("'r' to watch it again, 'q' to stop.\n")
+    print("Each switch takes a few seconds, during which the OLD pattern is")
+    print("still showing. Only describe what you see after 'NOW SHOWING'.")
+    print("Anything typed before the prompt appears is discarded.")
+    print("Enter skips, 'r' watches the same one again, 'q' stops.\n")
 
     index = 0
     while index < len(values):
         value = values[index]
         key = protocol.mode_key(value)
         known = learned.get(key)
-        print("[%d/%d] %s  %s%s"
+        print("[%d/%d] %s  (documented as '%s')%s"
               % (index + 1, len(values), key, protocol.MODES.get(value, "?"),
-                 ("  (recorded: '%s')" % known) if known else ""))
+                 ("  [recorded: '%s']" % known) if known else ""))
+        print("   switching... the PREVIOUS pattern is still showing", end="", flush=True)
         try:
             await write_frames(address,
                                [protocol.power_frame(True),
@@ -619,13 +636,18 @@ async def cmd_modes(args):
                                 protocol.speed_frame(args.speed)],
                                args.timeout, verbose=False)
         except Exception as exc:
-            print("   unreachable: %s" % exc)
+            print("\r   unreachable: %s%s" % (exc, " " * 20))
             index += 1
             continue
 
+        # Only now is this pattern actually on the strand. Say so unmistakably:
+        # answering a beat early is what shifts a whole run by one.
+        print("\r   >>> NOW SHOWING %s -- watch it for %.0fs%s"
+              % (key, args.dwell, " " * 20))
         await asyncio.sleep(args.dwell)
+        drain_stdin()
         try:
-            answer = input("   what does it do? ").strip()
+            answer = input("   what does %s do? " % key).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break

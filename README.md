@@ -690,6 +690,14 @@ Type a description to record it, Enter to skip, `r` to watch it again, `q` to
 stop. Useful flags: `--only 0x89,0x91` for specific values, `--new-only` to skip
 what is already recorded, `--speed` and `--start`.
 
+**Only describe what you see after `>>> NOW SHOWING`.** Writing a mode takes
+around four seconds — connect, write, disconnect — and the *previous* pattern
+keeps running for all of it. Answering during that window records the pattern
+before the one you are being asked about, and once you settle into a rhythm the
+whole run shifts by one. The tool prints the switch and the watch phase as
+separate lines for that reason, and discards anything typed before the prompt
+appears, so a fast answer cannot land on the wrong pattern.
+
 Or do it from the phone while standing at the sign, which is easier in the dark:
 **Control → pick a pattern → Apply pattern → Name this pattern.** Same store,
 same effect.
