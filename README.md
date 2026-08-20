@@ -683,6 +683,35 @@ Plus **Split** (one face pink, the other cyan — only interesting because you
 cannot see both at once), **Warm**, **Letters only** (drink goes dark), and
 **All off**, which is excluded from rotation.
 
+Three more use the controllers' own patterns, so they keep moving on their own:
+
+| | What it does |
+| --- | --- |
+| **Drift** | whole sign fading through 7 colours, slowly |
+| **Slow burn** | letters fading RGB, drink steady cyan |
+| **Carousel** | letters and cup fading at different rates, straw steady white |
+
+### What the patterns actually are on this hardware
+
+Audited on the sign, not taken from documentation. The firmware has a second
+7-colour fade at `0x8a` that the documented table does not, which displaces
+everything after it — so the published mode list is not merely mislabelled, it
+is a different list.
+
+| Values | Behaviour |
+| --- | --- |
+| `0x80`–`0x86` | static colours — the colour picker does these better |
+| `0x87`, `0x88` | flash / jump through 7 colours |
+| `0x89`, `0x8a` | **fade RGB, fade 7 colours** — the useful ones |
+| `0x8b`–`0x91` | fade a single colour: red, green, blue, yellow, cyan, magenta, white |
+| `0x92`–`0x94` | further fade RGB variants |
+| `0x95`–`0x9c` | strobes, same colour order |
+| `0x9d` | solid white |
+
+For something left running all night, `0x89` and `0x8a` are the material: they
+move continuously without strobing. The `0x95`+ range is exhausting to sit
+beside for hours and is best left out of rotation.
+
 Edit any of them from the Scenes tab, or add your own — new scenes join the
 rotation automatically unless you tick a specific playlist.
 
