@@ -652,6 +652,23 @@ def _log_phase_summary(job, gap: float):
     in the gap between the two numbers. Quoting only the accounted figure would
     understate what a sweep really costs.
     """
+    elapsed = time.time() - (job.started or time.time())
+
+    # A device that fails burns attempts x connect_timeout and drags the whole
+    # sweep with it. Say so in seconds: otherwise the cost only surfaces as
+    # inflated "unmeasured" time spread over every device, which reads like a
+    # measurement problem rather than one broken controller. This runs before
+    # the phase averages bail out, because a sweep where nothing succeeded is
+    # exactly when you most need to be told which units ate the clock.
+    failures = [item for item in job.items if item.get("status") == "failed"]
+    if failures:
+        wasted = sum(item.get("ms", 0) for item in failures) / 1000.0
+        log.warning("%d failing device(s) cost %.0fs of this %.0fs sweep: %s",
+                    len(failures), wasted, elapsed,
+                    ", ".join("%s %.0fs" % (item.get("name") or item.get("address", "?"),
+                                            item.get("ms", 0) / 1000.0)
+                              for item in failures))
+
     samples = [item.get("phases") or {} for item in job.items
                if item.get("status") == "ok" and item.get("phases")]
     if not samples:
@@ -660,7 +677,6 @@ def _log_phase_summary(job, gap: float):
               for name in PHASE_ORDER}
     accounted = sum(totals.values()) + gap
     attempted = [item for item in job.items if item.get("status") in ("ok", "failed")]
-    elapsed = time.time() - (job.started or time.time())
     actual = elapsed / len(attempted) if attempted else 0.0
     log.info("phase averages over %d device(s): %s | inter-device gap %.2fs "
              "| %.2fs/device accounted, %.2fs actual (%.2fs unmeasured)",
