@@ -244,7 +244,7 @@ class BleWorker:
             return []
         if address in self._in_pattern:
             self._in_pattern.discard(address)
-            strategy = self.store.setting("exit_pattern", "power_cycle")
+            strategy = self.store.setting("exit_pattern", "none")
             escape = protocol.exit_pattern_frames(strategy)
             if escape:
                 log.info("%s was running a pattern; prepending '%s' escape",

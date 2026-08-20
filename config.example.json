@@ -12,7 +12,8 @@
     "scan_seconds": 8.0,
     "log_level": "INFO",
     "apply_on_boot": "Vice",
-    "force_full_brightness": true
+    "force_full_brightness": true,
+    "exit_pattern": "none"
   },
   "groups": [
     "letters",

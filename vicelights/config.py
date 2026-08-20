@@ -28,9 +28,10 @@ DEFAULT_SETTINGS = {
     # quietly dim the sign. Set false to re-enable dimming end to end.
     "force_full_brightness": True,
     # How to leave a built-in pattern when a solid colour is next requested.
-    # none | static_mode | power_cycle. Only sent when the previous command to
-    # that device set a mode, so ordinary colour changes stay a single write.
-    "exit_pattern": "power_cycle",
+    # none | static_mode | power_cycle. Measured on this sign with
+    # `elk_scan.py unstick`: a plain colour frame is enough, so nothing extra is
+    # sent. Raise it only if a replacement controller behaves differently.
+    "exit_pattern": "none",
     "connect_timeout": 12.0,         # seconds per connect attempt
     "write_timeout": 6.0,            # seconds per characteristic write
     "attempts": 3,                   # 1 try + 2 retries

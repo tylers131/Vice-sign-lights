@@ -63,7 +63,7 @@ EXIT_PATTERN_STRATEGIES = ("none", "static_mode", "power_cycle")
 STATIC_WHITE_MODE = 0x86
 
 
-def exit_pattern_frames(strategy: str = "power_cycle") -> list:
+def exit_pattern_frames(strategy: str = "none") -> list:
     """Frames to send before a solid colour, to leave an animation behind."""
     if strategy == "static_mode":
         return [mode_frame(STATIC_WHITE_MODE)]
@@ -80,6 +80,13 @@ def apply_channel_order(rgb, order: str = "rgb"):
     return tuple(value[channel] for channel in order)
 
 # Built-in animation modes.  Value -> friendly name.
+#
+# CAUTION: these names come from general ELK-BLEDOM documentation and do NOT
+# reliably describe this hardware. 0x9a, documented as "Flash 7 colour", flashes
+# a single colour on the sign's controllers. Treat the names as labels for
+# picking a mode by trial, not as a specification. The values themselves are
+# accepted -- the units do change behaviour -- it is the descriptions that are
+# unverified.
 MODES = {
     0x80: "Static red",
     0x81: "Static blue",

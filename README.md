@@ -272,9 +272,10 @@ frame lands, the unit ignores it, and the strand carries on strobing. From the
 UI that reads as "colours aren't setting" — the bytes on the wire are correct
 and the light disagrees.
 
-The service handles it: `exit_pattern` (default `power_cycle`) is prepended to
-a solid colour **only** when that device's previous command set a pattern, so an
-ordinary colour change is still a single write. Find what your firmware needs:
+**Measured on this sign: not needed.** `unstick` reports that a plain colour
+frame exits a pattern on all three strategies, so `exit_pattern` defaults to
+`none` and nothing extra is sent. The machinery stays for a replacement
+controller that behaves differently. To re-check:
 
 ```bash
 python elk_scan.py unstick BE:68:F1:BB:DB:04
@@ -289,9 +290,10 @@ went steady green.
 | `static_mode` | `7e 00 03 86 03 00 00 00 ef` (static white) |
 | `power_cycle` | off, then on |
 
-Set the cheapest one that works in `config.json` under `settings`. `power_cycle`
-causes a brief blink on the pattern→colour transition only; if `static_mode`
-works, prefer it.
+Set the cheapest one that works in `config.json` under `settings`. The escape
+is prepended **only** on a pattern→colour transition, so an ordinary colour
+change is a single write either way. `power_cycle` causes a brief blink on that
+transition; prefer `static_mode` or `none` where they work.
 
 ### If lights won't turn off
 
@@ -403,6 +405,11 @@ Either way:
 ## 5. Using it
 
 The UI has five tabs.
+
+> **Built-in pattern names are unreliable.** The mode list comes from general
+> ELK-BLEDOM documentation, and on this hardware the values do something other
+> than their labels claim — 0x9a, documented as "Flash 7 colour", flashes a
+> single colour. The modes work; the names are guesses. Pick by trial.
 
 **Control** — pick a target (All / a group / one controller), pick a colour and
 brightness, hit **Apply**. *Live apply* sends as you drag; it debounces in the
