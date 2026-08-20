@@ -8,7 +8,8 @@ frames you verify here are byte-for-byte the frames the service sends.
     ./elk_scan.py probe BE:FF:00:11:22:33 # list services/characteristics, pick one
     ./elk_scan.py flash BE:FF:00:11:22:33 # red/green/blue confirmation blink
     ./elk_scan.py color BE:FF:.. '#ff2d78' --brightness 60
-    ./elk_scan.py off   BE:FF:..
+    ./elk_scan.py off   BE:FF:.. --variant all   # try each off encoding
+    ./elk_scan.py all off                 # black out every controller in the config
     ./elk_scan.py identify                # light each controller in turn and name it
     ./elk_scan.py frames                  # print every frame, no radio needed
     ./elk_scan.py adopt --out config.json # scan and write a starter config
@@ -156,7 +157,48 @@ async def cmd_color(args):
 
 
 async def cmd_off(args):
-    await write_frames(args.address, [protocol.power_frame(False)], args.timeout)
+    variant = getattr(args, "variant", 0)
+    if variant == "all":
+        for index in range(len(protocol.POWER_OFF_VARIANTS)):
+            print("variant %d:" % index)
+            await write_frames(args.address, [protocol.power_frame(False, index)],
+                               args.timeout)
+            await asyncio.sleep(2.0)
+        print("\nWhichever variant blacked it out is the one these units speak.")
+        return
+    await write_frames(args.address, [protocol.power_frame(False, int(variant))],
+                       args.timeout)
+
+
+async def cmd_all(args):
+    """Drive every controller in the config at once -- the panic button."""
+    require_bleak()
+    if args.addresses:
+        addresses = [normalize_address(a) for a in args.addresses]
+    else:
+        store = _load_store(args.config)
+        if store is None:
+            sys.exit("no config found -- pass --addresses AA:.. or --config PATH")
+        addresses = [d["address"] for d in store.devices()]
+
+    if args.state == "off":
+        frames = [protocol.power_frame(False, args.variant)]
+    else:
+        rgb = protocol.scale_rgb(protocol.parse_color(args.color), args.brightness)
+        frames = [protocol.power_frame(True), protocol.color_frame(*rgb)]
+
+    print("%s %d controller(s): %s"
+          % (args.state, len(addresses), protocol.describe_frames(frames)))
+    ok = failed = 0
+    for index, address in enumerate(addresses, 1):
+        try:
+            await write_frames(address, frames, args.timeout, verbose=False)
+            print("  [%d/%d] %s ok" % (index, len(addresses), address))
+            ok += 1
+        except Exception as exc:
+            print("  [%d/%d] %s FAILED: %s" % (index, len(addresses), address, exc))
+            failed += 1
+    print("\n%d ok, %d failed" % (ok, failed))
 
 
 async def cmd_mode(args):
@@ -265,6 +307,12 @@ async def cmd_identify(args):
                 print()
                 break
             if answer.lower() in ("q", "quit"):
+                if not args.keep_on:
+                    try:
+                        await write_frames(address, [protocol.power_frame(False)],
+                                           args.timeout, verbose=False)
+                    except Exception as exc:
+                        print("  could not turn it back off: %s" % exc)
                 break
             if answer and store is not None:
                 store.upsert_device({"address": address, "name": answer})
@@ -276,8 +324,10 @@ async def cmd_identify(args):
             try:
                 await write_frames(address, [protocol.power_frame(False)],
                                    args.timeout, verbose=False)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Never silent: a failed off is why you end up with several lit
+                # at once and no idea which address you are looking at.
+                print("  WARNING: could not turn it back off: %s" % exc)
 
     print("\ndone.")
     if store is not None:
@@ -340,7 +390,18 @@ def main(argv=None):
 
     p = sub.add_parser("off", help="power a unit off")
     p.add_argument("address")
+    p.add_argument("--variant", default=0,
+                   help="off-frame encoding: 0, 1, 2, or 'all' to try each in turn")
     p.set_defaults(fn=cmd_off, is_async=True)
+
+    p = sub.add_parser("all", help="drive every controller in the config at once")
+    p.add_argument("state", choices=["on", "off"])
+    p.add_argument("--config", help="config.json to read addresses from")
+    p.add_argument("--addresses", nargs="+", help="use these addresses instead")
+    p.add_argument("--color", default="#ffffff", help="colour for 'on'")
+    p.add_argument("--brightness", type=int, default=100)
+    p.add_argument("--variant", type=int, default=0, help="off-frame encoding")
+    p.set_defaults(fn=cmd_all, is_async=True)
 
     p = sub.add_parser("adopt", help="scan and write a starter config.json")
     p.add_argument("--seconds", type=float, default=10.0)

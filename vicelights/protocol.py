@@ -8,11 +8,15 @@ Frame layout is always 9 bytes::
 
     7e 00 <cmd> <a> <b> <c> <d> 00 ef
 
-Confirmed on hardware
----------------------
+Accepted by the hardware (the write goes through on 0000fff3)
+------------------------------------------------------------
 solid colour   7e 00 05 03 RR GG BB 00 ef
 power on       7e 00 04 f0 00 01 ff 00 ef
 power off      7e 00 04 00 00 00 ff 00 ef
+
+0000fff3 is write-without-response, so nothing is acknowledged: a successful
+write proves the connection and characteristic only, never the semantics. Off
+in particular has several encodings in the wild -- see POWER_OFF_VARIANTS.
 
 Widely reported for ELK-BLEDOM, but *not* honoured by every clone
 -----------------------------------------------------------------
@@ -86,11 +90,30 @@ def color_frame(r: int, g: int, b: int) -> bytes:
     return _frame(0x05, 0x03, r, g, b)
 
 
-def power_frame(on: bool) -> bytes:
-    """7e 00 04 f0 00 01 ff 00 ef / 7e 00 04 00 00 00 ff 00 ef"""
-    if on:
-        return bytes([0x7E, 0x00, 0x04, 0xF0, 0x00, 0x01, 0xFF, 0x00, 0xEF])
-    return bytes([0x7E, 0x00, 0x04, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEF])
+# Reported off frames, in the order we try them. Variant 0 is the documented
+# one; the others turn up in other ELK-BLEDOM implementations. A unit that does
+# not understand a frame drops it silently, so trying alternates costs nothing
+# but a write. See `elk_scan.py off --variant N`.
+POWER_OFF_VARIANTS = (
+    bytes([0x7E, 0x00, 0x04, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEF]),
+    bytes([0x7E, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEF]),
+    bytes([0x7E, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEF]),  # black, not off
+)
+
+POWER_ON_VARIANTS = (
+    bytes([0x7E, 0x00, 0x04, 0xF0, 0x00, 0x01, 0xFF, 0x00, 0xEF]),
+    bytes([0x7E, 0x00, 0x04, 0xF0, 0x00, 0x01, 0x00, 0x00, 0xEF]),
+)
+
+
+def power_frame(on: bool, variant: int = 0) -> bytes:
+    """7e 00 04 f0 00 01 ff 00 ef / 7e 00 04 00 00 00 ff 00 ef
+
+    ``variant`` selects an alternate encoding for units that ignore the
+    documented one; 0 is the default everywhere in the service.
+    """
+    table = POWER_ON_VARIANTS if on else POWER_OFF_VARIANTS
+    return table[clamp(variant, 0, len(table) - 1)]
 
 
 def brightness_frame(percent: int) -> bytes:

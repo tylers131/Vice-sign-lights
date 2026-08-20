@@ -186,6 +186,34 @@ prompting (for when you're at the sign and not the keyboard), `--keep-on`
 leaves them lit as it goes, `--all-off-first` blacks everything out before
 starting, and `--color '#00ff00'` if red is hard to pick out.
 
+If you end a walk with several lights on at once, the off frame isn't landing —
+see below. Start over from a known state with:
+
+```bash
+python elk_scan.py all off --config config.json
+```
+
+### If lights won't turn off
+
+`7e 00 04 00 00 00 ff 00 ef` is the documented off frame, but ELK-BLEDOM clones
+use more than one encoding and an unrecognised frame is dropped in silence. Try
+each in turn on a controller you can see, two seconds apart:
+
+```bash
+python elk_scan.py off BE:27:96:00:1C:AE --variant all
+```
+
+| Variant | Bytes | |
+| --- | --- | --- |
+| 0 | `7e 00 04 00 00 00 ff 00 ef` | the documented one |
+| 1 | `7e 00 04 00 00 00 00 00 ef` | trailing byte differs |
+| 2 | `7e 00 05 03 00 00 00 00 ef` | sets black, does not power off |
+
+Whichever one blacks it out is what your units speak. Variant 2 always works
+because it's just the colour frame with zeros — but it leaves the controller
+powered, so it draws standby current and any later colour command takes effect
+immediately. Fine for a scene, wrong for "off for the night".
+
 ### Two firmware families
 
 The sign's 12 controllers are not identical:
