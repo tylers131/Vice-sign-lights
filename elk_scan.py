@@ -270,7 +270,18 @@ def _load_store(path=None, for_writing=False):
                 print("%s is tracked in git; using %s instead" % (candidate, target))
             candidate = target
         print("using config %s" % candidate)
-        return ConfigStore(candidate)
+        try:
+            return ConfigStore(candidate)
+        except PermissionError:
+            sys.exit(
+                "cannot %s %s -- it belongs to root.\n"
+                "Either re-run under the service's interpreter:\n"
+                "  sudo %s %s ...\n"
+                "or hand the config to your user once:\n"
+                "  sudo chown -R $USER %s"
+                % ("write" if for_writing else "read", candidate,
+                   sys.executable, os.path.abspath(sys.argv[0]),
+                   os.path.dirname(candidate) or candidate))
     return None
 
 

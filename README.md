@@ -142,7 +142,12 @@ downloaded sdist is cached, so the retry is immediate.
 
 ### Find your controllers
 
-Stop the service first — only one process may own the radio:
+Stop the service first — only one process may own the radio. `install.sh` hands
+`/etc/vice-lights` to the user who ran it, so the CLI can edit the config
+without `sudo`; if you hit `Permission denied` on an older install, either run
+`sudo chown -R $USER /etc/vice-lights` once, or invoke the CLI as root with the
+venv's interpreter (`sudo ~/venv/bin/python elk_scan.py ...` — plain
+`sudo python` has no bleak):
 
 ```bash
 sudo systemctl stop vice-lights

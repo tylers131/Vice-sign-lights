@@ -38,6 +38,15 @@ if [[ ! -f "$CONF_DIR/config.json" ]]; then
   echo "    To re-detect instead: sudo $APP_DIR/venv/bin/python $APP_DIR/elk_scan.py adopt --out $CONF_DIR/config.json --force"
 fi
 
+# The service runs as root, but the CLI tools run as you. Without this the
+# config is root-only and every elk_scan invocation needs sudo.
+if [[ -n "${SUDO_USER:-}" ]]; then
+  echo "==> giving $SUDO_USER ownership of $CONF_DIR so the CLI works without sudo"
+  chown -R "$SUDO_USER" "$CONF_DIR" "$STATE_DIR"
+fi
+chmod 0755 "$CONF_DIR"
+[[ -f "$CONF_DIR/config.json" ]] && chmod 0644 "$CONF_DIR/config.json"
+
 echo "==> systemd unit"
 install -m 0644 "$SRC_DIR/systemd/vice-lights.service" /etc/systemd/system/vice-lights.service
 systemctl daemon-reload
