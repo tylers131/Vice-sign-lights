@@ -9,6 +9,7 @@ frames you verify here are byte-for-byte the frames the service sends.
     ./elk_scan.py flash BE:FF:00:11:22:33 # red/green/blue confirmation blink
     ./elk_scan.py color BE:FF:.. '#ff2d78' --brightness 60
     ./elk_scan.py off   BE:FF:..
+    ./elk_scan.py identify                # light each controller in turn and name it
     ./elk_scan.py frames                  # print every frame, no radio needed
     ./elk_scan.py adopt --out config.json # scan and write a starter config
 
@@ -27,6 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from vicelights import protocol  # noqa: E402
+from vicelights.config import ConfigStore, normalize_address  # noqa: E402
 from vicelights.ble import get_services, normalize_scan  # noqa: E402
 
 try:
@@ -190,6 +192,98 @@ async def cmd_adopt(args):
     print("\nwrote %s with %d device(s)" % (args.out, len(elk)))
 
 
+DEFAULT_CONFIG_PATHS = ("/etc/vice-lights/config.json", "config.json",
+                        "config.example.json")
+
+
+def _load_store(path=None):
+    """Open the first config that exists, so identify works before install."""
+    for candidate in ([path] if path else list(DEFAULT_CONFIG_PATHS)):
+        if candidate and os.path.exists(candidate):
+            print("using config %s" % candidate)
+            return ConfigStore(candidate)
+    return None
+
+
+async def cmd_identify(args):
+    """Light one controller at a time so you can map addresses to strands.
+
+    You cannot tell a BE:27:96:00:1C:AE from a BE:27:49:00:06:95 by looking at
+    it. Plug a strand into one controller, run this, and the address that lights
+    it up is that controller's. Type its physical name at the prompt and it is
+    written straight into the config.
+    """
+    require_bleak()
+    store = None
+    names = {}
+    if args.addresses:
+        addresses = [normalize_address(a) for a in args.addresses]
+    else:
+        store = _load_store(args.config)
+        if store is None:
+            sys.exit("no config found -- pass --addresses AA:.. or --config PATH")
+        addresses = [d["address"] for d in store.devices()]
+        names = {d["address"]: d["name"] for d in store.devices()}
+    if not addresses:
+        sys.exit("no addresses to walk")
+
+    start = max(1, args.start) - 1
+    addresses = addresses[start:]
+    rgb = protocol.parse_color(args.color)
+
+    if args.all_off_first:
+        print("turning all %d controller(s) off first ..." % len(addresses))
+        for address in addresses:
+            try:
+                await write_frames(address, [protocol.power_frame(False)],
+                                   args.timeout, verbose=False)
+            except Exception as exc:
+                print("  %s: %s" % (address, exc))
+
+    print("\nWalking %d controller(s). Only one is lit at a time." % len(addresses))
+    if not args.auto:
+        print("At each prompt: type a name to save it, Enter to skip, q to quit.\n")
+
+    for index, address in enumerate(addresses, start + 1):
+        known = names.get(address, "")
+        print("[%d/%d] %s%s" % (index, start + len(addresses), address,
+                                ("  (currently '%s')" % known) if known else ""))
+        try:
+            await write_frames(address, [protocol.power_frame(True),
+                                         protocol.color_frame(*rgb)],
+                               args.timeout, verbose=False)
+        except Exception as exc:
+            print("  unreachable: %s" % exc)
+            continue
+
+        if args.auto:
+            await asyncio.sleep(args.auto)
+        else:
+            try:
+                answer = input("  lit? name it, or Enter to skip: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if answer.lower() in ("q", "quit"):
+                break
+            if answer and store is not None:
+                store.upsert_device({"address": address, "name": answer})
+                print("  saved as '%s'" % answer)
+            elif answer:
+                print("  (no config open, so '%s' was not saved)" % answer)
+
+        if not args.keep_on:
+            try:
+                await write_frames(address, [protocol.power_frame(False)],
+                                   args.timeout, verbose=False)
+            except Exception:
+                pass
+
+    print("\ndone.")
+    if store is not None:
+        print("config: %s" % store.path)
+
+
 def cmd_frames(_args):
     print("solid #ff2d78 :", protocol.color_frame(0xFF, 0x2D, 0x78).hex(" "))
     print("power on      :", protocol.power_frame(True).hex(" "))
@@ -256,6 +350,19 @@ def main(argv=None):
     p.add_argument("--out", default="config.json")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_adopt, is_async=True)
+
+    p = sub.add_parser("identify",
+                       help="light each controller in turn so you can name it")
+    p.add_argument("--config", help="config.json to read addresses from and write names to")
+    p.add_argument("--addresses", nargs="+", help="walk these addresses instead of a config")
+    p.add_argument("--color", default="#ff0000", help="colour to light with (default red)")
+    p.add_argument("--auto", type=float, default=0.0,
+                   help="do not prompt; hold each one lit for N seconds")
+    p.add_argument("--start", type=int, default=1, help="resume from the Nth controller")
+    p.add_argument("--keep-on", action="store_true", help="leave each one lit when moving on")
+    p.add_argument("--all-off-first", action="store_true",
+                   help="turn every controller off before starting")
+    p.set_defaults(fn=cmd_identify, is_async=True)
 
     p = sub.add_parser("frames", help="print every frame (no radio needed)")
     p.set_defaults(fn=cmd_frames, is_async=False)

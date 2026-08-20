@@ -40,12 +40,17 @@ Every frame is 9 bytes: `7e 00 <cmd> <a> <b> <c> <d> 00 ef`.
 
 | Command | Bytes | Status |
 | --- | --- | --- |
-| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | **Confirmed** |
-| Power on | `7e 00 04 f0 00 01 ff 00 ef` | **Confirmed** |
-| Power off | `7e 00 04 00 00 00 ff 00 ef` | **Confirmed** |
+| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | Accepted by the hardware; visual check pending |
+| Power on | `7e 00 04 f0 00 01 ff 00 ef` | Accepted by the hardware; visual check pending |
+| Power off | `7e 00 04 00 00 00 ff 00 ef` | Accepted by the hardware; visual check pending |
 | Brightness | `7e 00 01 BB 00 00 00 00 ef` (`BB` = 0–100, **not** 0–255) | Common, not universal |
 | Pattern / mode | `7e 00 03 MM 03 00 00 00 ef` (`MM` = `0x80`–`0x9d`) | Common, not universal |
 | Pattern speed | `7e 00 02 SS 00 00 00 00 ef` (`SS` = 0–100) | Common, not universal |
+
+`fff3` is **write-without-response**, so the controller acknowledges nothing: a
+write that "succeeds" only proves the connection and characteristic are right,
+never that the bytes meant anything. These frames are confirmed as far as the
+transport goes — only watching a strand actually turn red confirms the rest.
 
 Print them all, no radio needed:
 
@@ -152,6 +157,35 @@ The `SEEN` column shows how many passes each unit appeared in. Anything below
 3/3, or weaker than about -80 dBm, is worth moving the Pi or the controller for
 before you rely on it.
 
+### Mapping addresses to physical lights
+
+A BLE address tells you nothing about which light it drives, and the
+controllers are identical to look at. `identify` walks the fleet lighting one
+controller at a time and writes the name you type straight into the config:
+
+```bash
+python elk_scan.py identify --config config.json
+```
+
+```
+[1/12] BE:27:96:00:1C:AE  (currently 'Light 01')
+  lit? name it, or Enter to skip: Left V
+  saved as 'Left V'
+[2/12] BE:27:49:00:06:95  (currently 'Light 02')
+  lit? name it, or Enter to skip:
+```
+
+With fewer strands than controllers, plug a strand in, run the walk, and press
+Enter past every address until that strand lights — that address is the
+controller it's plugged into. Name it, then `q` to quit, move the strand, and
+resume where you left off with `--start N`. Unreachable units are reported and
+skipped rather than stopping the walk.
+
+Useful flags: `--auto 3` holds each one lit for three seconds without
+prompting (for when you're at the sign and not the keyboard), `--keep-on`
+leaves them lit as it goes, `--all-off-first` blacks everything out before
+starting, and `--color '#00ff00'` if red is hard to pick out.
+
 ### Two firmware families
 
 The sign's 12 controllers are not identical:
@@ -161,10 +195,18 @@ The sign's 12 controllers are not identical:
 | `BE:27:xx:00:xx:xx` | `ELK-BLEDOM` | 8 |
 | `BE:68:xx:xx:xx:xx` | `ELK-BLEDOM A4` / `B1` / `C1` / `DB` | 4 |
 
-Different OUI blocks and naming schemes mean different firmware, so they may
-expose different write characteristics. `probe` one of each before trusting the
-whole fleet. The detected UUID is cached per device in `config.json`, so a mixed
-fleet is handled automatically once each unit has been written to once.
+Different OUI blocks and naming schemes suggested different firmware, but
+probing one of each found the same layout on both:
+
+```
+service 0000fff0-...  Vendor specific
+   char 0000fff3-...  [read,write-without-response]      <- we write here
+   char 0000fff4-...  [notify]
+```
+
+So the fleet is homogeneous where it counts, and the `fff3` preference is the
+right default. The detected UUID is still cached per device in `config.json`, so
+a replacement controller that differs is handled without any code change.
 
 You can also do all of this from the UI: **Devices &rarr; Scan**, then **Add**.
 
