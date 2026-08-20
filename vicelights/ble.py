@@ -243,7 +243,8 @@ class BleWorker:
         items = [self._item(address, by_address[address]) for address in order]
         job = Job("apply", "scene: %s" % scene.get("name", "?"), items,
                   coalesce_key="scene", payload={"scene": scene.get("name")})
-        log.info("queued scene '%s': %d device(s)", scene.get("name"), len(items))
+        log.info("queued scene '%s': %d device(s), frames %s",
+                 scene.get("name"), len(items), _describe_items(items))
         return self._register(job)
 
     def submit_test(self, address: str) -> Job:
