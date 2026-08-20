@@ -469,6 +469,30 @@ retrying a broken `vice-ap` instead of falling back — recover in this order:
    PWR — it powers the Pi too), wait ~90s for the gadget interface to appear in
    System Settings → Network, and `ssh <user>@<hostname>.local`.
 
+### Rebuilding from scratch
+
+Nothing on the Pi is irreplaceable. `config.example.json` carries all twelve
+addresses, their physical names, the groups, the scenes and every setting that
+was measured rather than guessed — so a fresh card is about twenty minutes and
+the identify walk does not need repeating.
+
+1. Flash Raspberry Pi OS Lite with Raspberry Pi Imager. In its settings, set the
+   hostname, enable SSH, and give it your wifi — that alone avoids most of the
+   ways this gets painful.
+2. Then:
+
+```bash
+sudo apt update && sudo apt install -y git
+git clone -b claude/elk-bledom-pi-controller-bfabcl   https://github.com/tylers131/Vice-sign-lights.git vice-sign-lights
+cd vice-sign-lights
+sudo ./scripts/install.sh
+sudo cp config.example.json /etc/vice-lights/config.json
+sudo systemctl restart vice-lights
+sudo ./scripts/enable_usb_console.sh      # before anything can strand you again
+```
+
+Leave the access point until last, as before.
+
 ### Set up the USB console before you need it
 
 A Zero W with broken wifi has no ethernet and no console. Enabling the gadget

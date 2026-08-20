@@ -3,17 +3,20 @@
     "host": "0.0.0.0",
     "port": 80,
     "brightness_mode": "scale",
+    "force_full_brightness": true,
+    "exit_pattern": "none",
     "connect_timeout": 12.0,
     "write_timeout": 6.0,
     "attempts": 3,
     "retry_backoff": 0.8,
     "inter_frame_delay": 0.06,
     "inter_device_delay": 0.35,
+    "disconnect_wait": 0.5,
+    "cooldown_after": 2,
+    "failure_cooldown": 180.0,
     "scan_seconds": 8.0,
     "log_level": "INFO",
-    "apply_on_boot": "Vice",
-    "force_full_brightness": true,
-    "exit_pattern": "none"
+    "apply_on_boot": "Vice"
   },
   "groups": [
     "letters",
