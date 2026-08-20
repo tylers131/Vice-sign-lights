@@ -166,25 +166,29 @@ reason: the config store drops fields it does not recognise, and it rewrites the
 file after the first successful write to each device. A `channels` order saved
 by a newer CLI would be silently erased by an older service.
 
-### Activate the venv first
+### The CLI finds its own interpreter
 
-Every `elk_scan.py` command needs the virtualenv that has `bleak`. A shell
-without it fails on the first BLE call:
+`elk_scan.py` needs `bleak`, which lives in a virtualenv. Rather than requiring
+you to remember which shell has it activated, the script re-runs itself under
+one that does — checking the installed `/opt/vice-sign-lights/venv` first, since
+the service runs from it:
 
-```bash
-source ~/venv/bin/activate      # prompt gains a (venv) prefix
+```
+$ python elk_scan.py scan
+bleak is not in /usr/bin/python3; re-running with /opt/vice-sign-lights/venv/bin/python
+scanning 8s ...
 ```
 
-An alias saves both this and the directory:
+So any of these work, from any directory:
 
 ```bash
-echo "alias vice='cd ~/vice-sign-lights && source ~/venv/bin/activate'" >> ~/.bashrc
-source ~/.bashrc
+python elk_scan.py scan
+python3 elk_scan.py scan
+/opt/vice-sign-lights/venv/bin/python elk_scan.py scan
 ```
 
-Then `vice` from anywhere puts you in the right place with the right
-interpreter. If you forget, the CLI now says which virtualenv to activate rather
-than telling you to install something that is already installed.
+If no virtualenv can be found, it names the interpreter that failed and how to
+install into it, rather than suggesting an install that already happened.
 
 ### Find your controllers
 

@@ -44,7 +44,46 @@ except ImportError:  # pragma: no cover
     BleakClient = BleakScanner = None
 
 
-VENV_CANDIDATES = ("~/venv", "./venv", "/opt/vice-sign-lights/venv")
+VENV_CANDIDATES = ("/opt/vice-sign-lights/venv", "~/venv", "./venv", "~/.venv")
+
+
+def _candidate_venvs():
+    """Virtualenvs on this box that plausibly have bleak, best first.
+
+    The installed one leads: the service runs from it, so if anything on this
+    machine can talk to the radio, that interpreter can.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    found = []
+    for candidate in VENV_CANDIDATES:
+        if candidate.startswith("./"):
+            path = os.path.join(here, candidate[2:])
+        else:
+            path = os.path.expanduser(candidate)
+        path = os.path.abspath(path)
+        python = os.path.join(path, "bin", "python")
+        if os.path.exists(python) and path not in found:
+            found.append(path)
+    return found
+
+
+def reexec_with_venv():
+    """Re-run under an interpreter that has bleak, rather than failing.
+
+    Which python is on PATH depends on whether a virtualenv happens to be
+    activated in this shell, which has nothing to do with what the user meant.
+    If bleak is missing here but present in a known virtualenv, switch to it and
+    carry on -- announcing the switch, and guarding against a loop.
+    """
+    if BleakScanner is not None or os.environ.get("VICELIGHTS_REEXEC"):
+        return
+    for path in _candidate_venvs():
+        python = os.path.join(path, "bin", "python")
+        print("bleak is not in %s; re-running with %s"
+              % (sys.executable, python), file=sys.stderr)
+        os.execve(python,
+                  [python, os.path.abspath(sys.argv[0])] + sys.argv[1:],
+                  dict(os.environ, VICELIGHTS_REEXEC="1"))
 
 
 def require_bleak():
@@ -56,15 +95,8 @@ def require_bleak():
     """
     if BleakScanner is not None:
         return
-    here = os.path.dirname(os.path.abspath(__file__))
     script = os.path.abspath(sys.argv[0])
-    found = []
-    for candidate in VENV_CANDIDATES:
-        path = os.path.abspath(os.path.expanduser(
-            candidate if not candidate.startswith("./") else os.path.join(here, candidate[2:])))
-        python = os.path.join(path, "bin", "python")
-        if os.path.exists(python) and path not in found:
-            found.append(path)
+    found = _candidate_venvs()
 
     lines = ["bleak is not importable by %s" % sys.executable]
     if found:
@@ -639,6 +671,7 @@ def cmd_frames(_args):
 
 
 def main(argv=None):
+    reexec_with_venv()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--timeout", type=float, default=12.0)
     sub = parser.add_subparsers(dest="command", required=True)
