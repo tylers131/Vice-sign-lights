@@ -361,9 +361,26 @@ banner. Timers keep working.
 
 ### Speed expectations
 
-A connect/write/disconnect cycle is roughly 1.5–2.5s per controller on a Zero W,
-so **a full 12-device change takes 20–30s**. That's the radio, not the code. The
-UI stays responsive throughout; nothing waits on BLE.
+Measured on the sign: **a full 12-device scene takes about 70 seconds**, or
+~5.9s per controller. That is connect, GATT service discovery, two writes and
+disconnect, on a 1GHz ARMv6 core running BlueZ — the radio and the stack, not
+the code. The UI stays responsive throughout; nothing waits on BLE.
+
+That number is why targeting matters. A group is proportionally faster, and the
+per-letter groups are the fastest useful unit:
+
+| Target | Devices | Roughly |
+| --- | --- | --- |
+| `all` / a full scene | 12 | ~70s |
+| `letters` | 8 | ~47s |
+| `side-a` / `side-b` | 6 | ~35s |
+| `drink` | 4 | ~24s |
+| `cup`, `straw`, `V`, `I`, `C`, `E` | 2 | ~12s |
+| one controller | 1 | ~6s |
+
+So drive a group while you're playing with colours and save `all` for scenes you
+apply and walk away from. Live apply on a two-device group feels immediate;
+live apply on all 12 does not.
 
 ---
 
