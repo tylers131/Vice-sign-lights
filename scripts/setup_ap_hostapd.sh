@@ -33,8 +33,29 @@ CONF
 fi
 
 echo "==> static IP on $IFACE"
+# Which daemon owns the address is decided by what is RUNNING, not by whether
+# /etc/dhcpcd.conf exists. Pi OS Trixie ships that file with NetworkManager
+# active and dhcpcd not running at all; trusting the file there writes a stanza
+# nothing reads, leaves wlan0 down with no address, and dnsmasq then dies with
+# "unknown interface wlan0".
+USE_DHCPCD=""
+if systemctl is-active --quiet dhcpcd 2>/dev/null; then
+  USE_DHCPCD=1
+fi
+
+# Either way, drop any stanza a previous run left in dhcpcd.conf.
 if [[ -f /etc/dhcpcd.conf ]]; then
   sed -i '/# vice-sign-lights AP/,/# end vice-sign-lights AP/d' /etc/dhcpcd.conf
+fi
+
+if [[ -n "$USE_DHCPCD" ]]; then
+  echo "    dhcpcd is running; pinning the address there"
+  # Clear a drop-in a previous run may have left pointing at a unit this branch
+  # does not create -- dnsmasq would Require a unit that no longer exists.
+  rm -f /etc/systemd/system/dnsmasq.service.d/vice-ap.conf
+  systemctl disable vice-ap-ip.service 2>/dev/null || true
+  rm -f /etc/systemd/system/vice-ap-ip.service
+  systemctl daemon-reload
   cat >> /etc/dhcpcd.conf <<CONF
 # vice-sign-lights AP
 interface $IFACE
@@ -43,7 +64,7 @@ interface $IFACE
 # end vice-sign-lights AP
 CONF
 else
-  # No dhcpcd (Bookworm): pin the address with a tiny oneshot unit.
+  echo "    dhcpcd is not running; pinning the address with a systemd unit"
   cat > /etc/systemd/system/vice-ap-ip.service <<CONF
 [Unit]
 Description=Static IP for the Vice sign access point
@@ -108,9 +129,31 @@ CONF
 rfkill unblock wifi || true
 systemctl unmask hostapd
 systemctl enable hostapd dnsmasq
-systemctl restart dnsmasq
+
+echo "==> bringing up $IFACE with $IP"
+if [[ -n "$USE_DHCPCD" ]]; then
+  systemctl restart dhcpcd
+else
+  systemctl restart vice-ap-ip.service
+fi
+sleep 2
+
+# dnsmasq binds to this address specifically, so a missing address here is a
+# hard stop with a clear cause rather than "unknown interface" three steps on.
+if ! ip addr show "$IFACE" | grep -q "inet ${IP}/"; then
+  echo
+  echo "FAILED: $IFACE did not come up holding $IP." >&2
+  ip addr show "$IFACE" | sed 's/^/    /' >&2
+  echo "Nothing is serving yet. Check that $IFACE exists (iw dev) and is not" >&2
+  echo "rfkill-blocked (rfkill list), then re-run. ./scripts/ap.sh off reverts." >&2
+  exit 1
+fi
+echo "    $IFACE holds $IP"
+
 systemctl restart hostapd
-sleep 3
+sleep 2
+systemctl restart dnsmasq
+sleep 2
 
 echo
 echo "==> checking what actually came up"
