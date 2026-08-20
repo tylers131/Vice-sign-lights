@@ -151,30 +151,46 @@ downloaded sdist is cached, so the retry is immediate.
 ## 7. Touch panel on the sign
 
 A 5" DSI panel driven straight from the Pi, so the sign can be controlled with
-no phone at all. `/kiosk` is a separate UI from the phone one, not the same
-page shrunk: scene buttons, OFF, NEXT and rotation, and nothing that can summon
-a keyboard or change the fleet. Sized for 480x320 upward, so a 3.5" SPI panel
-works too.
+no phone at all. `vice_kiosk.py` draws it with pygame on KMSDRM: scene buttons
+grouped movement-first, OFF, NEXT and rotation, and nothing that can summon a
+keyboard or change the fleet. Scales from 480x320 up.
 
+    cd ~/vice-sign-lights && git pull && sudo ./scripts/update.sh
     sudo ./scripts/setup_kiosk.sh
 
-Pi OS Lite has no desktop, so there is nothing for a browser to draw into.
-`cage` is a Wayland compositor that runs exactly one fullscreen application --
-no panel, no launcher, no window chrome to escape into, which is the whole
-requirement for a screen bolted to a sign in public.
+### Why pygame and not a browser
 
-### Why the browser profile is deleted on every start
+The first attempt ran Chromium under the `cage` Wayland compositor. That is the
+conventional answer and it wanted 123 packages and 486MB -- Chromium, xwayland,
+LLVM, Vulkan drivers -- to draw a grid of buttons on a machine whose actual job
+is writing nine-byte frames over Bluetooth. pygame needs 53 packages and no
+browser at all.
 
-The sign is switched off by pulling a plug. A Chromium profile that was not
-closed cleanly puts a "Restore pages?" bubble over the UI, and with no keyboard
-and no window chrome there is no way to dismiss it -- the panel is bricked
-until someone SSHes in. The profile holds nothing worth keeping, because the
-page is served from this machine, so it is deleted on every start.
+It also removed a whole class of failure. A browser kiosk has to be told not to
+offer devtools, not to zoom, not to navigate, and above all not to show the
+"Restore pages?" bubble after the plug is pulled -- which on a screen with no
+keyboard cannot be dismissed at all. None of that exists here.
 
-### If the panel is dark
+### It talks to the same API a phone does
+
+The panel is a separate process from the service, speaking HTTP to
+`127.0.0.1`. It cannot wedge the sign: if it crashes, the lights carry on and
+the web UI still works, and systemd restarts it. It imports nothing from the
+`vicelights` package, so it runs on the system interpreter with pygame from
+apt, outside the venv.
+
+When the API is unreachable it says "cannot reach the sign" and keeps trying,
+so the panel surviving a service restart needs no coordination between them.
+
+### If the panel is dark, or ignores touches
 
 Check whether the service is running first: `systemctl status vice-kiosk`. A
-running service with a dark panel is a display problem, not a browser one.
+running service with a dark panel is a display problem, not an app one.
+
+`setup_kiosk.sh` adds the user to `video`, `render` and `input`. Group changes
+only apply to a new login, so **reboot once** after setup before investigating
+anything else. Missing `input` in particular draws the UI perfectly and ignores
+every touch, which is a confusing way to fail.
 
     ls /sys/class/drm | grep -i dsi        # the kernel should enumerate a DSI connector
     cat /sys/class/backlight/*/brightness  # and the backlight should be non-zero
@@ -187,8 +203,8 @@ off while seating it. Some third-party panels also want a `dtoverlay` line in
 ### Rotation
 
 Not wired up, because it depends on how the panel physically mounts and that is
-not known until it is on the sign. If it comes up upside down, say so and it
-can be set from the compositor -- do not guess at `config.txt` values.
+not known until it is on the sign. If it comes up upside down, say so rather
+than guessing at `config.txt` values.
 
 ### Turning the panel off
 

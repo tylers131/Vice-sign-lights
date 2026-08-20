@@ -15,7 +15,7 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -d "$APP_DIR/venv" ]] || { echo "$APP_DIR/venv missing -- run install.sh first" >&2; exit 1; }
 
 echo "==> $SRC_DIR -> $APP_DIR"
-for item in vicelights elk_scan.py requirements.txt config.example.json README.md scripts; do
+for item in vicelights elk_scan.py vice_kiosk.py requirements.txt config.example.json README.md scripts; do
   [[ -e "$SRC_DIR/$item" ]] || continue
   rm -rf "${APP_DIR:?}/$item"
   cp -r "$SRC_DIR/$item" "$APP_DIR/"
