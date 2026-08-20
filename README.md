@@ -148,6 +148,55 @@ downloaded sdist is cached, so the retry is immediate.
 
 **Budget 5–10 minutes** for the venv and the install even with `SKIP_CYTHON=1`.
 
+## 7. Touch panel on the sign
+
+A 5" DSI panel driven straight from the Pi, so the sign can be controlled with
+no phone at all. `/kiosk` is a separate UI from the phone one, not the same
+page shrunk: scene buttons, OFF, NEXT and rotation, and nothing that can summon
+a keyboard or change the fleet. Sized for 480x320 upward, so a 3.5" SPI panel
+works too.
+
+    sudo ./scripts/setup_kiosk.sh
+
+Pi OS Lite has no desktop, so there is nothing for a browser to draw into.
+`cage` is a Wayland compositor that runs exactly one fullscreen application --
+no panel, no launcher, no window chrome to escape into, which is the whole
+requirement for a screen bolted to a sign in public.
+
+### Why the browser profile is deleted on every start
+
+The sign is switched off by pulling a plug. A Chromium profile that was not
+closed cleanly puts a "Restore pages?" bubble over the UI, and with no keyboard
+and no window chrome there is no way to dismiss it -- the panel is bricked
+until someone SSHes in. The profile holds nothing worth keeping, because the
+page is served from this machine, so it is deleted on every start.
+
+### If the panel is dark
+
+Check whether the service is running first: `systemctl status vice-kiosk`. A
+running service with a dark panel is a display problem, not a browser one.
+
+    ls /sys/class/drm | grep -i dsi        # the kernel should enumerate a DSI connector
+    cat /sys/class/backlight/*/brightness  # and the backlight should be non-zero
+
+If no DSI connector appears, the ribbon is the usual cause: it must be seated
+contacts-toward-the-board in the DISPLAY port (not CAMERA), with the Pi powered
+off while seating it. Some third-party panels also want a `dtoverlay` line in
+`/boot/firmware/config.txt`; check the panel's own instructions.
+
+### Rotation
+
+Not wired up, because it depends on how the panel physically mounts and that is
+not known until it is on the sign. If it comes up upside down, say so and it
+can be set from the compositor -- do not guess at `config.txt` values.
+
+### Turning the panel off
+
+    sudo systemctl disable --now vice-kiosk
+
+The web UI on a phone keeps working regardless; the panel is an addition to it,
+never the only way in.
+
 ### A corrupt config can no longer stop the sign from starting
 
 `load()` used to call `json.load()` with nothing catching it, so an unparseable
