@@ -472,6 +472,49 @@ So drive a group while you're playing with colours and save `all` for scenes you
 apply and walk away from. Live apply on a two-device group feels immediate;
 live apply on all 12 does not.
 
+### Where the time goes
+
+Every job logs a phase breakdown, because the split decides whether anything can
+be done about it:
+
+```
+phase averages over 12 device(s): connect 2.10s  discover 2.80s  write 0.12s
+  disconnect 0.55s | inter-device gap 0.35s | 5.92s/device accounted
+```
+
+* **connect** and **discover** are ATT round trips gated by the BLE connection
+  interval and the peripheral's advertising rate. A faster CPU barely moves
+  them.
+* the Python and D-Bus marshalling wrapped around them *is* CPU-bound, and on
+  this Pi `dbus-fast` runs as pure Python (see `SKIP_CYTHON` above), which is
+  the slowest it can be.
+
+Read your own numbers before believing anything about how to speed this up:
+
+```bash
+journalctl -u vice-lights --no-pager | grep "phase averages"
+```
+
+**If discover dominates**, try making BlueZ keep its GATT cache for unbonded
+devices — add to `/etc/bluetooth/main.conf`, then `sudo systemctl restart
+bluetooth`:
+
+```ini
+[GATT]
+Cache = always
+```
+
+That lets a reconnect skip rediscovering services it already knows. Measure
+before and after; it is the one change that could cut the largest slice without
+new hardware.
+
+**On a Pi Zero 2 W**, the CPU-bound share should shrink substantially: a
+Cortex-A53 has roughly 2–3× the per-core throughput of the Zero W's ARM1176,
+there are four cores so the wifi AP stops competing with the service, and it is
+armv7 — so piwheels serves a *compiled* `dbus-fast` and `SKIP_CYTHON` is no
+longer needed. The radio-bound share does not change. How much that helps
+depends entirely on the breakdown above.
+
 ---
 
 ## 6. Config file
