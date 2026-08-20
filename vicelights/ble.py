@@ -197,25 +197,34 @@ class BleWorker:
         self._loop.call_soon_threadsafe(self._queue.put_nowait, job)
         return job
 
-    def _frames_for(self, state: dict) -> list:
+    def _frames_for(self, state: dict, address: str = None) -> list:
         """Every path to the radio builds its frames here.
 
         Keeping the full-brightness override at this single point means the UI,
-        a saved scene and a raw API call cannot disagree about it.
+        a saved scene and a raw API call cannot disagree about it. Channel order
+        is per device, so frames are built per device rather than once per job.
         """
         if self.store.setting("force_full_brightness", True):
             state = dict(state, brightness=100)
+        if address and state.get("color") is not None:
+            device = self.store.device(address) or {}
+            order = device.get("channels", "rgb")
+            if order != "rgb":
+                rgb = protocol.apply_channel_order(
+                    protocol.parse_color(state["color"]), order)
+                state = dict(state, color=protocol.format_color(rgb))
         return protocol.build_frames(state, self.store.setting("brightness_mode", "scale"))
 
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""
         addresses = self.store.resolve_target(target)
-        frames = self._frames_for(state)
-        items = [self._item(address, frames) for address in addresses]
+        items = [self._item(address, self._frames_for(state, address))
+                 for address in addresses]
+        frames = items[0]["frames"] if items else []
         label = label or ("%s -> %s" % (self.store.target_label(target), _describe(state)))
         job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
         log.info("queued %s: %d device(s), frames %s",
-                 label, len(items), protocol.describe_frames(frames))
+                 label, len(items), " ".join(frames))
         return self._register(job)
 
     def submit_scene(self, scene: dict) -> Job:
@@ -228,11 +237,10 @@ class BleWorker:
         by_address = {}
         order = []
         for step in scene.get("steps") or []:
-            frames = self._frames_for(step)
             for address in self.store.resolve_target(step.get("target", "all")):
                 if address not in by_address:
                     order.append(address)
-                by_address[address] = frames
+                by_address[address] = self._frames_for(step, address)
         items = [self._item(address, by_address[address]) for address in order]
         job = Job("apply", "scene: %s" % scene.get("name", "?"), items,
                   coalesce_key="scene", payload={"scene": scene.get("name")})

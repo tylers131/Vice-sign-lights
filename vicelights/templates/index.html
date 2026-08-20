@@ -428,7 +428,8 @@ function renderDevices(){
       + '<span class="dot '+cls+'"></span>'
       + '<div class="grow">'
       +   '<div class="name">'+esc(d.name)+(d.enabled?"":' <span class="pill">disabled</span>')+'</div>'
-      +   '<div class="meta">'+d.address+' &middot; '+(d.groups.join(", ")||"no group")+'</div>'
+      +   '<div class="meta">'+d.address+' &middot; '+(d.groups.join(", ")||"no group")
+      +     (d.channels && d.channels!=="rgb" ? ' &middot; channels '+esc(d.channels) : "")+'</div>'
       +   '<div class="meta">'+when+(d.last_ms?(" &middot; "+d.last_ms+"ms"):"")+'</div>'
       + '</div>'
       + '<button class="btn sm" onclick="editDevice(\''+d.address+'\')">Edit</button>'
@@ -604,10 +605,14 @@ function editDevice(addr){
   var groups=prompt("Groups (comma separated). Known: "+STATE.groups.join(", "),
                     dev.groups.join(", "));
   if(groups===null) return;
+  var channels=prompt("Channel order if the RGB pads are swapped "
+      + "(rgb, rbg, grb, gbr, brg, bgr)", dev.channels||"rgb");
+  if(channels===null) return;
   var enabled=confirm("OK = enabled, Cancel = disabled (skip this unit)");
   post("/api/devices",{address:addr, name:name,
       groups:groups.split(",").map(function(s){ return s.trim(); })
                    .filter(function(s){ return s; }),
+      channels:channels.trim().toLowerCase()||"rgb",
       enabled:enabled}).then(loadState);
 }
 function addManual(){

@@ -11,6 +11,7 @@ frames you verify here are byte-for-byte the frames the service sends.
     ./elk_scan.py off   BE:FF:.. --variant all   # try each off encoding
     ./elk_scan.py all off                 # black out every controller in the config
     ./elk_scan.py identify                # light each controller in turn and name it
+    ./elk_scan.py channels BE:FF:.. --save # detect swapped RGB wiring
     ./elk_scan.py frames                  # print every frame, no radio needed
     ./elk_scan.py adopt --out config.json # scan and write a starter config
 
@@ -360,6 +361,72 @@ async def cmd_identify(args):
         print("config: %s" % store.path)
 
 
+PROBES = [("red", (255, 0, 0), "r"), ("green", (0, 255, 0), "g"),
+          ("blue", (0, 0, 255), "b")]
+
+
+async def cmd_channels(args):
+    """Work out whether a controller's RGB pads are wired the way we assume.
+
+    Sends pure red, then green, then blue, and asks what actually appeared. If
+    the answers are a permutation of r/g/b, that permutation is the device's
+    channel order and can be saved straight into the config.
+    """
+    require_bleak()
+    address = normalize_address(args.address)
+    store = _load_store(args.config, for_writing=True) if args.save else None
+
+    print("Watch the strand. Answer with what you SEE, not what was asked for.")
+    observed = []
+    for name, rgb, _expected in PROBES:
+        try:
+            await write_frames(address,
+                               [protocol.power_frame(True), protocol.color_frame(*rgb)],
+                               args.timeout, verbose=False)
+        except Exception as exc:
+            sys.exit("could not write to %s: %s" % (address, exc))
+        try:
+            answer = input("  sent %-5s -> what do you see? "
+                           "[r]ed [g]reen [b]lue [w]hite [n]othing [o]ther: "
+                           % name).strip().lower()[:1]
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        observed.append(answer)
+
+    print("\nsent red, green, blue -> saw %s" % ", ".join(o or "?" for o in observed))
+
+    if sorted(observed) == ["b", "g", "r"]:
+        order = "".join(observed)
+        if order == "rgb":
+            print("Channels are wired correctly. The colour problem is something"
+                  " else -- see the notes below.")
+        else:
+            print("Channel order for this controller is '%s'." % order)
+            print("Frames will be permuted so asking for red gives red.")
+            if store is not None:
+                store.upsert_device({"address": address, "channels": order})
+                print("saved to %s" % store.path)
+            else:
+                print("Re-run with --save, or set \"channels\": \"%s\" on this"
+                      " device in config.json." % order)
+        return
+
+    if "n" in observed:
+        print("\nAt least one colour changed nothing. That is not a wiring")
+        print("problem -- the controller may be running a built-in pattern that")
+        print("overrides solid colour. Try:")
+        print("  elk_scan.py off %s" % address)
+        print("  elk_scan.py color %s '#ff0000'" % address)
+    elif "w" in observed:
+        print("\nWhite where a primary was asked for means more than one channel")
+        print("is driven at once -- usually a wiring short, or a strand wired for")
+        print("a different controller type (check it is analog RGB, not addressable).")
+    else:
+        print("\nNot a clean permutation, so this is not a simple channel swap.")
+        print("Tell me exactly what you saw for each and I'll work from that.")
+
+
 def cmd_frames(_args):
     print("solid #ff2d78 :", protocol.color_frame(0xFF, 0x2D, 0x78).hex(" "))
     print("power on      :", protocol.power_frame(True).hex(" "))
@@ -450,6 +517,13 @@ def main(argv=None):
     p.add_argument("--all-off-first", action="store_true",
                    help="turn every controller off before starting")
     p.set_defaults(fn=cmd_identify, is_async=True)
+
+    p = sub.add_parser("channels",
+                       help="find out if a controller's RGB pads are swapped")
+    p.add_argument("address")
+    p.add_argument("--config", help="config.json to save the result into")
+    p.add_argument("--save", action="store_true", help="write the result to the config")
+    p.set_defaults(fn=cmd_channels, is_async=True)
 
     p = sub.add_parser("frames", help="print every frame (no radio needed)")
     p.set_defaults(fn=cmd_frames, is_async=False)

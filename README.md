@@ -210,6 +210,30 @@ see below. Start over from a known state with:
 python elk_scan.py all off --config config.json
 ```
 
+### If a colour comes out wrong
+
+These controllers are cheap and the RGB pads are not always wired the way the
+firmware assumes, so asking for red can produce green. Find out which:
+
+```bash
+python elk_scan.py channels BE:68:F1:BB:DB:04 --save
+```
+
+It sends pure red, then green, then blue, and asks what you actually saw. If the
+answers are a permutation of r/g/b it saves that device's `channels` order and
+every frame for that controller is permuted from then on — ask for red, get red.
+The setting is **per device**, so one miswired unit does not affect the other
+eleven.
+
+The command also separates the cases that are *not* wiring:
+
+| What you see | Meaning |
+| --- | --- |
+| A clean r/g/b permutation | Swapped pads. Saved and corrected automatically. |
+| Nothing changes | Likely stuck in a built-in pattern — power off, then set a colour |
+| White for every primary | More than one channel driven at once: shorted wiring, or the strand isn't analog RGB |
+| Anything else | Not a simple swap — capture what you saw for each probe |
+
 ### If lights won't turn off
 
 `7e 00 04 00 00 00 ff 00 ef` is the documented off frame, but ELK-BLEDOM clones

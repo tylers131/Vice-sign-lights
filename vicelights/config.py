@@ -59,6 +59,17 @@ def normalize_address(addr: str) -> str:
     return addr
 
 
+def _channels(value) -> str:
+    """Validate a per-device channel order, falling back to plain rgb."""
+    from .protocol import CHANNEL_ORDERS
+    order = str(value or "rgb").strip().lower()
+    if order not in CHANNEL_ORDERS:
+        if value:
+            log.warning("ignoring unknown channel order %r", value)
+        return "rgb"
+    return order
+
+
 class ConfigError(Exception):
     pass
 
@@ -142,6 +153,7 @@ class ConfigStore:
                 "groups": [str(g).strip() for g in (entry.get("groups") or []) if str(g).strip()],
                 "enabled": bool(entry.get("enabled", True)),
                 "char_uuid": entry.get("char_uuid") or None,
+                "channels": _channels(entry.get("channels")),
                 "notes": entry.get("notes") or "",
             })
 
@@ -310,6 +322,8 @@ class ConfigStore:
                         device["enabled"] = bool(entry["enabled"])
                     if "char_uuid" in entry:
                         device["char_uuid"] = entry["char_uuid"] or None
+                    if "channels" in entry:
+                        device["channels"] = _channels(entry["channels"])
                     if "notes" in entry:
                         device["notes"] = entry["notes"]
                     return device
@@ -319,6 +333,7 @@ class ConfigStore:
                 "groups": [str(g).strip() for g in (entry.get("groups") or []) if str(g).strip()],
                 "enabled": bool(entry.get("enabled", True)),
                 "char_uuid": entry.get("char_uuid") or None,
+                "channels": _channels(entry.get("channels")),
                 "notes": entry.get("notes") or "",
             }
             data["devices"].append(device)

@@ -47,6 +47,21 @@ NAME_PREFIXES = ("elk-bledom", "elk-ble", "elkbledom", "melk", "ledble")
 
 BRIGHTNESS_MODES = ("scale", "native", "both")
 
+# Per-device channel order. These controllers are cheap and the RGB pads are not
+# always wired the way the firmware assumes, so asking for red can produce green.
+# The string names which physical colour each frame byte actually drives, in
+# byte order: "grb" means byte 0 drives green, byte 1 red, byte 2 blue. Feeding
+# our (r, g, b) through it puts each value in the byte that lights it.
+CHANNEL_ORDERS = ("rgb", "rbg", "grb", "gbr", "brg", "bgr")
+
+
+def apply_channel_order(rgb, order: str = "rgb"):
+    order = (order or "rgb").strip().lower()
+    if order == "rgb" or order not in CHANNEL_ORDERS:
+        return tuple(rgb)
+    value = {"r": rgb[0], "g": rgb[1], "b": rgb[2]}
+    return tuple(value[channel] for channel in order)
+
 # Built-in animation modes.  Value -> friendly name.
 MODES = {
     0x80: "Static red",
