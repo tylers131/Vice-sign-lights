@@ -178,6 +178,270 @@
   ],
   "scenes": [
     {
+      "id": "drift",
+      "name": "Drift",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 30
+        }
+      ]
+    },
+    {
+      "id": "slowburn",
+      "name": "Slow burn",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 137,
+          "speed": 20
+        },
+        {
+          "target": "group:drink",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "carousel",
+      "name": "Carousel",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 40
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 137,
+          "speed": 40
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "pulse",
+      "name": "Pulse",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 144,
+          "speed": 25
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 143,
+          "speed": 25
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 145,
+          "speed": 25
+        }
+      ]
+    },
+    {
+      "id": "heartbeat",
+      "name": "Heartbeat",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 139,
+          "speed": 15
+        }
+      ]
+    },
+    {
+      "id": "neondrift",
+      "name": "Neon drift",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 144,
+          "speed": 35
+        },
+        {
+          "target": "group:drink",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 143,
+          "speed": 35
+        }
+      ]
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 141,
+          "speed": 20
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 143,
+          "speed": 25
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 145,
+          "speed": 30
+        }
+      ]
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 139,
+          "speed": 18
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 142,
+          "speed": 22
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 139,
+          "speed": 18
+        }
+      ]
+    },
+    {
+      "id": "counter",
+      "name": "Counterpoint",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 137,
+          "speed": 15
+        },
+        {
+          "target": "group:drink",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 60
+        }
+      ]
+    },
+    {
+      "id": "sides",
+      "name": "Two faces",
+      "steps": [
+        {
+          "target": "group:side-a",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 30
+        },
+        {
+          "target": "group:side-b",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 137,
+          "speed": 30
+        }
+      ]
+    },
+    {
+      "id": "jumpcut",
+      "name": "Jump cut",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 136,
+          "speed": 20
+        }
+      ]
+    },
+    {
+      "id": "rave",
+      "name": "Rave",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 135,
+          "speed": 70
+        }
+      ]
+    },
+    {
       "id": "vice",
       "name": "Vice",
       "steps": [
@@ -596,72 +860,6 @@
       ]
     },
     {
-      "id": "drift",
-      "name": "Drift",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 138,
-          "speed": 30
-        }
-      ]
-    },
-    {
-      "id": "slowburn",
-      "name": "Slow burn",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 137,
-          "speed": 20
-        },
-        {
-          "target": "group:drink",
-          "power": true,
-          "color": "#22d3ee",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        }
-      ]
-    },
-    {
-      "id": "carousel",
-      "name": "Carousel",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 138,
-          "speed": 40
-        },
-        {
-          "target": "group:cup",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 137,
-          "speed": 40
-        },
-        {
-          "target": "group:straw",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        }
-      ]
-    },
-    {
       "id": "off",
       "name": "All off",
       "steps": [
@@ -698,9 +896,22 @@
   ],
   "rotation": {
     "enabled": true,
-    "playlist": [],
+    "playlist": [
+      "Drift",
+      "Slow burn",
+      "Carousel",
+      "Pulse",
+      "Heartbeat",
+      "Neon drift",
+      "Ocean",
+      "Ember",
+      "Counterpoint",
+      "Two faces",
+      "Jump cut"
+    ],
     "exclude": [
-      "All off"
+      "All off",
+      "Rave"
     ],
     "interval_minutes": 8.0,
     "order": "shuffle",

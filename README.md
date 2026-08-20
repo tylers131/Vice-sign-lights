@@ -683,13 +683,40 @@ Plus **Split** (one face pink, the other cyan — only interesting because you
 cannot see both at once), **Warm**, **Letters only** (drink goes dark), and
 **All off**, which is excluded from rotation.
 
-Three more use the controllers' own patterns, so they keep moving on their own:
+### Scenes that move
+
+Twelve run the controllers' own patterns, so they animate continuously with no
+BLE traffic at all. **These are what rotation plays by default** — a static
+palette held for eight minutes is what makes a sign look switched off.
 
 | | What it does |
 | --- | --- |
 | **Drift** | whole sign fading through 7 colours, slowly |
 | **Slow burn** | letters fading RGB, drink steady cyan |
-| **Carousel** | letters and cup fading at different rates, straw steady white |
+| **Carousel** | letters and cup fading, straw steady white |
+| **Pulse** | letters magenta, cup cyan, straw white — each breathing in its own colour |
+| **Heartbeat** | whole sign on a slow red pulse |
+| **Neon drift** | letters magenta, drink cyan, both fading |
+| **Ocean** | letters blue, cup cyan, straw white, all at different rates |
+| **Ember** | letters red, cup yellow, slow |
+| **Counterpoint** | letters fading slowly while the drink runs four times faster |
+| **Two faces** | each side of the sign doing something different |
+| **Jump cut** | whole sign stepping hard through 7 colours |
+| **Rave** | flash 7 colours, fast — excluded from rotation on purpose |
+
+Two ideas do most of the work. The **single-colour fades** (`0x8b`–`0x91`) give
+movement while keeping a colour identity, so the sign can breathe without
+turning into a rainbow. And running groups at **different speeds** stops
+everything pulsing in lockstep, which is what makes cheap light installations
+look mechanical.
+
+`Rave` is left out of rotation deliberately: flash-7 at speed 70 is a party
+trick, not something to leave running for six hours beside people trying to
+sleep. Tick it back in from the Timing tab if you disagree.
+
+**Speeds are a starting point, not a result.** Watch them after dark and adjust:
+Control → pick the pattern → speed → Apply, then save over the scene. It is not
+even settled whether a higher number means faster on this firmware.
 
 ### What the patterns actually are on this hardware
 
