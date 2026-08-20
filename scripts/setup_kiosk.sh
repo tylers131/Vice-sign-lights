@@ -36,11 +36,17 @@ fi
 
 echo "==> installing cage and a browser"
 apt-get update || echo "    (apt update had trouble; continuing with cached indexes)"
-apt-get install -y cage
+
+# --no-install-recommends deliberately. Pulling cage in with recommends drags
+# xwayland, mesa-vulkan-drivers and llvm along -- 486MB and 123 packages, none
+# of which a Wayland kiosk uses. Fonts are the one recommend that actually
+# matters (without them Chromium renders blank boxes), so ask for them by name.
+APT_INSTALL=(apt-get install -y --no-install-recommends)
+"${APT_INSTALL[@]}" cage fonts-liberation fonts-dejavu-core
 
 BROWSER=""
 for candidate in chromium chromium-browser; do
-  if apt-get install -y "$candidate" >/dev/null 2>&1 || command -v "$candidate" >/dev/null; then
+  if "${APT_INSTALL[@]}" "$candidate" >/dev/null 2>&1 || command -v "$candidate" >/dev/null; then
     BROWSER="$(command -v "$candidate" || true)"
     [[ -n "$BROWSER" ]] && break
   fi
