@@ -148,6 +148,30 @@ downloaded sdist is cached, so the retry is immediate.
 
 **Budget 5–10 minutes** for the venv and the install even with `SKIP_CYTHON=1`.
 
+### The service must be enabled, not just started
+
+`systemctl restart` works on a unit that is not enabled for boot, so a sign
+deployed with `update.sh` alone runs perfectly until the first power cut and
+then never comes back. This was found the hard way: the web UI was serving all
+day, `wlan0` came up as an access point after a reboot, a phone associated and
+got a DHCP lease, and nothing loaded -- because the unit had never been armed.
+
+Check it, and not just whether it is running:
+
+    systemctl is-enabled vice-lights    # must say: enabled
+    systemctl is-active  vice-lights    # must say: active
+
+    sudo systemctl enable --now vice-lights
+
+`install.sh` enables it; `update.sh` now does too, and both fail loudly rather
+than reporting success when the service is not up afterwards. Worth confirming
+before you leave, along with the reboot test -- a sign that cannot survive
+being switched off is not finished.
+
+Note the journal here is volatile, so `journalctl -u vice-lights` shows nothing
+from before the last boot. The service also writes `/var/log/vice-lights.log`,
+which does persist; look there for what happened before a restart.
+
 ### Updating
 
 **The service runs from `/opt/vice-sign-lights`, not from your checkout.**

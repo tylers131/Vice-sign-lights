@@ -33,9 +33,24 @@ if ! cmp -s "$SRC_DIR/systemd/vice-lights.service" /etc/systemd/system/vice-ligh
   systemctl daemon-reload
 fi
 
+# A restart works perfectly well on a disabled unit, so a sign deployed with
+# this script alone runs all day and then never comes back from a power cut.
+# Enabling here is idempotent and makes that impossible to get wrong.
+if ! systemctl is-enabled --quiet vice-lights 2>/dev/null; then
+  echo "==> service was not enabled for boot; enabling it"
+  systemctl enable vice-lights.service
+fi
+
 echo "==> restarting"
 systemctl restart vice-lights
 sleep 4
 journalctl -u vice-lights -n 12 --no-pager | sed 's/^/    /'
 echo
-echo "Now running $REVISION"
+
+if systemctl is-active --quiet vice-lights; then
+  echo "Now running $REVISION (enabled for boot)"
+else
+  echo "FAILED: vice-lights is not running after the restart." >&2
+  systemctl --no-pager --lines=15 status vice-lights >&2 || true
+  exit 1
+fi
