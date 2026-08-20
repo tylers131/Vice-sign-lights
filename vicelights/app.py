@@ -11,6 +11,7 @@ import logging
 import logging.handlers
 import os
 import signal
+import socket
 import sys
 
 from .ble import BleWorker
@@ -141,8 +142,15 @@ def main(argv=None):
     host = args.host or store.setting("host", "0.0.0.0")
     port = int(args.port or store.setting("port", 80))
 
+    suffix = "" if port == 80 else ":%d" % port
     for address in local_addresses():
-        log.info("web UI: http://%s%s", address, "" if port == 80 else ":%d" % port)
+        log.info("web UI: http://%s%s", address, suffix)
+    # A DHCP lease changes; the hostname does not. Both Android and iOS resolve
+    # .local, so this is the address worth writing on the sign's enclosure.
+    hostname = socket.gethostname().split(".")[0]
+    if hostname:
+        log.info("web UI: http://%s.local%s  (stable across DHCP changes)",
+                 hostname, suffix)
     log.info("%d device(s), %d group(s), %d scene(s), %d schedule(s) loaded",
              len(store.devices()), len(store.group_names()),
              len(store.scenes()), len(store.schedules()))

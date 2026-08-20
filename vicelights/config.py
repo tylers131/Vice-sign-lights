@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import stat
 import tempfile
 import threading
 import uuid
@@ -200,6 +201,12 @@ class ConfigStore:
                     handle.write(payload)
                     handle.flush()
                     os.fsync(handle.fileno())
+                # An atomic replace makes a NEW inode owned by whoever is
+                # writing. The service runs as root, so without carrying the
+                # original ownership across it quietly takes the config away
+                # from the user editing it with the CLI -- and every `chown`
+                # gets undone by the next save.
+                self._inherit_ownership(tmp)
                 os.replace(tmp, self.path)
                 # fsync the directory so the rename itself is durable.
                 dir_fd = os.open(directory, os.O_RDONLY)
@@ -211,6 +218,24 @@ class ConfigStore:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
                 raise
+
+    def _inherit_ownership(self, tmp: str):
+        """Give the replacement file the original's mode and owner."""
+        try:
+            original = os.stat(self.path)
+        except FileNotFoundError:
+            os.chmod(tmp, 0o644)
+            return
+        try:
+            os.chmod(tmp, stat.S_IMODE(original.st_mode))
+        except OSError as exc:
+            log.debug("could not carry mode across: %s", exc)
+        if os.geteuid() != 0 and original.st_uid != os.geteuid():
+            return                      # only root can hand a file to someone else
+        try:
+            os.chown(tmp, original.st_uid, original.st_gid)
+        except OSError as exc:
+            log.debug("could not carry ownership across: %s", exc)
 
     # ------------------------------------------------------------ shape
 

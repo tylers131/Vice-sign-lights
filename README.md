@@ -166,6 +166,24 @@ reason: the config store drops fields it does not recognise, and it rewrites the
 file after the first successful write to each device. A `channels` order saved
 by a newer CLI would be silently erased by an older service.
 
+### Who owns the config
+
+`/etc/vice-lights/config.json` is read and written by two things: the service,
+running as root, and the CLI, running as you. `install.sh` hands the directory
+to the installing user so the CLI works without `sudo`.
+
+That ownership used to evaporate. Saves are atomic — write a temp file, rename
+it over the original — which creates a *new* inode owned by whoever wrote it. So
+the first time the service cached a characteristic UUID, root took the file back
+and every `chown` you had done was undone. The save now carries the original
+file's owner and mode across, so it stays where you put it.
+
+If an older install already lost it:
+
+```bash
+sudo chown -R $USER /etc/vice-lights /var/lib/vice-lights
+```
+
 ### The CLI finds its own interpreter
 
 `elk_scan.py` needs `bleak`, which lives in a virtualenv. Rather than requiring
