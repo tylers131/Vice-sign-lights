@@ -1,0 +1,29 @@
+[Unit]
+Description=Vice Sign Lights - ELK-BLEDOM controller and web UI
+Documentation=file:///opt/vice-sign-lights/README.md
+After=bluetooth.service network.target
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+# Root because the service binds port 80 and sets the system clock from the UI
+# (the Zero W has no RTC and there is no NTP on the playa).
+User=root
+WorkingDirectory=/opt/vice-sign-lights
+Environment=PYTHONUNBUFFERED=1
+Environment=VICELIGHTS_CONFIG=/etc/vice-lights/config.json
+Environment=VICELIGHTS_LOG=/var/log/vice-lights.log
+Environment=VICELIGHTS_STATE=/var/lib/vice-lights/lastknown-time
+# Give bluetoothd time to bring hci0 up after a cold boot.
+ExecStartPre=/bin/sleep 8
+ExecStart=/opt/vice-sign-lights/venv/bin/python -m vicelights
+Restart=always
+RestartSec=5
+# A wedged BLE op must never stop the service from being restarted.
+TimeoutStopSec=20
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

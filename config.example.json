@@ -1,0 +1,300 @@
+{
+  "settings": {
+    "host": "0.0.0.0",
+    "port": 80,
+    "brightness_mode": "scale",
+    "connect_timeout": 12.0,
+    "write_timeout": 6.0,
+    "attempts": 3,
+    "retry_backoff": 0.8,
+    "inter_frame_delay": 0.06,
+    "inter_device_delay": 0.35,
+    "scan_seconds": 8.0,
+    "log_level": "INFO",
+    "apply_on_boot": "Warm on"
+  },
+  "groups": [
+    "letters",
+    "border",
+    "base"
+  ],
+  "devices": [
+    {
+      "address": "BE:FF:00:00:00:01",
+      "name": "Letters 1",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:02",
+      "name": "Letters 2",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:03",
+      "name": "Letters 3",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:04",
+      "name": "Letters 4",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:05",
+      "name": "Letters 5",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:06",
+      "name": "Letters 6",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:07",
+      "name": "Letters 7",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:08",
+      "name": "Letters 8",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:09",
+      "name": "Letters 9",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0A",
+      "name": "Letters 10",
+      "groups": [
+        "letters"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0B",
+      "name": "Border 1",
+      "groups": [
+        "border"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0C",
+      "name": "Border 2",
+      "groups": [
+        "border"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0D",
+      "name": "Border 3",
+      "groups": [
+        "border"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0E",
+      "name": "Border 4",
+      "groups": [
+        "border"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:0F",
+      "name": "Base 1",
+      "groups": [
+        "base"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    },
+    {
+      "address": "BE:FF:00:00:00:10",
+      "name": "Base 2",
+      "groups": [
+        "base"
+      ],
+      "enabled": true,
+      "char_uuid": null,
+      "notes": ""
+    }
+  ],
+  "scenes": [
+    {
+      "id": "warm",
+      "name": "Warm on",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ff8c2a",
+          "brightness": 80,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "vice",
+      "name": "Vice",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:border",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 90,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:base",
+          "power": true,
+          "color": "#8000ff",
+          "brightness": 60,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "lowbat",
+      "name": "Low power",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ff4000",
+          "brightness": 25,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "party",
+      "name": "Fade party",
+      "steps": [
+        {
+          "target": "all",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 145,
+          "speed": 40
+        }
+      ]
+    },
+    {
+      "id": "off",
+      "name": "All off",
+      "steps": [
+        {
+          "target": "all",
+          "power": false,
+          "color": "#000000",
+          "brightness": 0,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    }
+  ],
+  "schedules": [
+    {
+      "id": "dusk",
+      "name": "Dusk",
+      "scene": "Vice",
+      "time": "19:30",
+      "days": [],
+      "enabled": true,
+      "last_fired": ""
+    },
+    {
+      "id": "late",
+      "name": "Late night dim",
+      "scene": "Low power",
+      "time": "02:00",
+      "days": [],
+      "enabled": true,
+      "last_fired": ""
+    },
+    {
+      "id": "dawn",
+      "name": "Dawn off",
+      "scene": "All off",
+      "time": "06:30",
+      "days": [],
+      "enabled": true,
+      "last_fired": ""
+    }
+  ]
+}

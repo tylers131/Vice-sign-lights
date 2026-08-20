@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Vice Sign Lights</title>
+<style>
+/* Everything inline on purpose: the AP has no uplink, so no CDN, no webfont. */
+:root{
+  --bg:#0b0d12; --panel:#161a23; --panel2:#1e2431; --line:#2b3342;
+  --ink:#e8ecf4; --muted:#8b96ad; --accent:#ff2d78; --accent2:#22d3ee;
+  --ok:#25c06a; --warn:#f5a524; --bad:#ef4444;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-text-size-adjust:100%}
+body{padding-bottom:env(safe-area-inset-bottom)}
+header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#141824,#10131b);
+  border-bottom:1px solid var(--line);padding:10px 12px 0}
+h1{margin:0;font-size:17px;letter-spacing:.08em;text-transform:uppercase}
+h1 span{color:var(--accent)}
+.sub{font-size:12px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+nav{display:flex;gap:2px;margin-top:8px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+nav button{flex:1 0 auto;background:none;border:0;border-bottom:2px solid transparent;
+  color:var(--muted);padding:10px 12px;font-size:14px;font-weight:600;white-space:nowrap}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent)}
+main{padding:12px;max-width:760px;margin:0 auto}
+section{display:none}
+section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:12px;margin-bottom:12px}
+.card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted)}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+input,select,textarea{width:100%;background:var(--panel2);color:var(--ink);
+  border:1px solid var(--line);border-radius:9px;padding:11px;font-size:16px;font-family:inherit}
+textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;min-height:150px}
+input[type=color]{height:56px;padding:4px}
+input[type=range]{padding:0;height:38px;accent-color:var(--accent);background:none;border:0}
+button{cursor:pointer;font-family:inherit}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+  border-radius:10px;padding:13px 14px;font-size:15px;font-weight:600;width:100%}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{background:none}
+.btn.bad{color:var(--bad);border-color:#4a2430}
+.btn.sm{padding:8px 10px;font-size:13px;width:auto}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1 1 0;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.swatches{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-top:8px}
+.swatch{aspect-ratio:1;border-radius:8px;border:1px solid #0006}
+.pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:#1c4a33}
+.pill.bad{color:var(--bad);border-color:#4a2430}
+.pill.warn{color:var(--warn);border-color:#4a3a1c}
+.dot{width:10px;height:10px;border-radius:50%;background:#4b5563;flex:0 0 auto}
+.dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.busy{background:var(--accent2)}
+.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0}
+.item .grow{flex:1 1 auto;min-width:0}
+.item .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .meta{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.bar{height:6px;border-radius:3px;background:var(--panel2);overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  width:0;transition:width .3s}
+.banner{border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner.warn{background:#3a2a0d;border:1px solid #5c4413;color:#ffd591}
+.banner.bad{background:#3a1216;border:1px solid #5c1c24;color:#ffb4b4}
+.banner button{flex:0 0 auto}
+pre.log{background:#0a0c11;border:1px solid var(--line);border-radius:10px;padding:10px;
+  font-size:11px;line-height:1.5;max-height:60vh;overflow:auto;white-space:pre-wrap;
+  word-break:break-word;margin:0}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.days button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+  border-radius:8px;padding:9px 0;font-size:12px;font-weight:600}
+.days button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.muted{color:var(--muted);font-size:12px}
+.right{text-align:right}
+.toast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:50;
+  background:#000c;border:1px solid var(--line);border-radius:10px;padding:10px 16px;
+  font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw}
+.toast.on{opacity:1}
+hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Vice <span>Sign</span> Lights</h1>
+  <div class="sub">
+    <span id="hdrQueue" class="pill">idle</span>
+    <span id="hdrDevices" class="pill">- devices</span>
+    <span id="hdrClock" class="pill">clock</span>
+    <span id="hdrBackend" class="pill">ble</span>
+  </div>
+  <nav>
+    <button data-tab="control" class="on">Control</button>
+    <button data-tab="scenes">Scenes</button>
+    <button data-tab="timing">Timing</button>
+    <button data-tab="devices">Devices</button>
+    <button data-tab="system">System</button>
+  </nav>
+</header>
+
+<main>
+<div id="banners"></div>
+
+<!-- ------------------------------------------------------------ control -->
+<section id="tab-control" class="on">
+  <div class="card">
+    <h2>Target</h2>
+    <select id="target"></select>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" onclick="power(true)">Power on</button>
+      <button class="btn" onclick="power(false)">Power off</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Colour</h2>
+    <input type="color" id="color" value="#ff2d78" oninput="onColorInput()">
+    <div class="swatches" id="swatches"></div>
+    <label>Brightness <span id="brightVal">100%</span></label>
+    <input type="range" id="brightness" min="0" max="100" value="100"
+           oninput="document.getElementById('brightVal').textContent=this.value+'%'"
+           onchange="maybeLive()">
+    <label><input type="checkbox" id="live" style="width:auto;margin-right:6px">
+      Live apply (send as you change)</label>
+    <button class="btn primary" style="margin-top:10px" onclick="applyNow()">Apply colour</button>
+  </div>
+
+  <div class="card">
+    <h2>Built-in pattern</h2>
+    <p class="muted">Optional. Some units ignore these; the sign degrades to
+      whatever it was showing.</p>
+    <select id="mode"><option value="">- none (solid colour) -</option></select>
+    <label>Speed <span id="speedVal">50</span></label>
+    <input type="range" id="speed" min="0" max="100" value="50"
+           oninput="document.getElementById('speedVal').textContent=this.value">
+    <button class="btn" style="margin-top:10px" onclick="applyMode()">Apply pattern</button>
+  </div>
+
+  <div class="card">
+    <h2>Queue</h2>
+    <div id="jobs"><p class="muted">Nothing queued.</p></div>
+    <button class="btn ghost sm" style="margin-top:10px;width:100%"
+            onclick="post('/api/queue/clear',{}).then(refreshStatus)">Clear queued jobs</button>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- scenes -->
+<section id="tab-scenes">
+  <div class="card">
+    <h2>Scenes</h2>
+    <div class="grid" id="sceneButtons"></div>
+  </div>
+  <div class="card">
+    <h2>Save current settings as a scene</h2>
+    <p class="muted">Saves the Control tab's colour, brightness and pattern for
+      the selected target. Saving over an existing name adds the step to it.</p>
+    <label>Scene name</label>
+    <input id="sceneName" placeholder="Sunset">
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" onclick="saveScene(false)">Save as new scene</button>
+      <button class="btn" onclick="saveScene(true)">Add step to scene</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Scene contents</h2>
+    <div id="sceneList"></div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- timing -->
+<section id="tab-timing">
+  <div class="card">
+    <h2>Clock</h2>
+    <div id="clockBox"></div>
+    <button class="btn primary" style="margin-top:10px" onclick="syncClock()">
+      Set Pi clock from this phone</button>
+    <p class="muted" style="margin-bottom:0">The Zero W has no battery clock and
+      there is no internet, so the time is whatever you last set. Timers below
+      do not care about the clock.</p>
+  </div>
+
+  <div class="card">
+    <h2>Timer (relative, survives an unset clock)</h2>
+    <div class="row">
+      <select id="timerScene"></select>
+      <input id="timerMinutes" type="number" min="1" value="30" style="max-width:110px">
+    </div>
+    <button class="btn" style="margin-top:10px" onclick="addTimer()">Start timer</button>
+    <div id="timerList" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Schedules (wall clock)</h2>
+    <label>Scene</label>
+    <select id="schedScene"></select>
+    <div class="row">
+      <div>
+        <label>Time</label>
+        <input id="schedTime" type="time" value="19:30">
+      </div>
+      <div>
+        <label>Label (optional)</label>
+        <input id="schedName" placeholder="Dusk">
+      </div>
+    </div>
+    <label>Days (none selected = every day)</label>
+    <div class="days" id="schedDays"></div>
+    <button class="btn primary" style="margin-top:10px" onclick="addSchedule()">
+      Add schedule</button>
+    <hr>
+    <div id="schedList"></div>
+    <div id="nextRuns" class="muted"></div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------ devices -->
+<section id="tab-devices">
+  <div class="card">
+    <h2>Controllers</h2>
+    <div id="deviceList"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" onclick="testAll()">Test all (slow)</button>
+      <button class="btn sm" onclick="loadState()">Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Groups</h2>
+    <div id="groupList"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="newGroup" placeholder="new group name">
+      <button class="btn sm" onclick="addGroup()">Add</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scan for controllers</h2>
+    <div class="row">
+      <button class="btn" onclick="startScan()">Scan (8s)</button>
+      <button class="btn ghost" onclick="loadScan()">Show last scan</button>
+    </div>
+    <div id="scanList" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Add by address</h2>
+    <div class="row">
+      <input id="manualAddr" placeholder="AA:BB:CC:DD:EE:FF">
+      <input id="manualName" placeholder="Friendly name">
+    </div>
+    <button class="btn sm" style="margin-top:10px" onclick="addManual()">Add controller</button>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- system -->
+<section id="tab-system">
+  <div class="card">
+    <h2>Log</h2>
+    <pre class="log" id="logBox">loading...</pre>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" onclick="loadLog()">Refresh log</button>
+      <label style="flex:0 0 auto;margin:0;display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="logAuto" style="width:auto"> auto</label>
+    </div>
+    <p class="muted" id="logPath"></p>
+  </div>
+  <div class="card">
+    <h2>Raw config</h2>
+    <p class="muted">Same JSON as the file on disk. Saving replaces it wholesale.</p>
+    <textarea id="configBox" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" onclick="loadConfig()">Reload</button>
+      <button class="btn sm primary" onclick="saveConfig()">Save config</button>
+    </div>
+  </div>
+</section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+var STATE = {devices:[],groups:[],scenes:[],schedules:[],modes:[],timers:[],next_runs:[]};
+var SCHED_DAYS = [];
+var DAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+var PRESETS = ["#ff0000","#ff5a00","#ffaa00","#ffff00","#00ff40","#00ffd0",
+               "#0080ff","#3000ff","#8000ff","#ff00d0","#ff6080","#ffffff",
+               "#ffd0a0","#a0ffd0","#404040","#000000"];
+var LIVE_TIMER = null;
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,
+  function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]; }); }
+function toast(msg){
+  var t=$("toast"); t.textContent=msg; t.classList.add("on");
+  clearTimeout(t._h); t._h=setTimeout(function(){ t.classList.remove("on"); },2600);
+}
+function get(url){ return fetch(url,{cache:"no-store"}).then(function(r){ return r.json(); }); }
+function post(url,body,method){
+  return fetch(url,{method:method||"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})}).then(function(r){ return r.json(); })
+    .then(function(j){ if(j && j.ok===false){ toast("Error: "+j.error); } return j; })
+    .catch(function(e){ toast("Network error: "+e); throw e; });
+}
+function del(url){ return post(url,null,"DELETE"); }
+
+/* ---------------------------------------------------------------- tabs */
+Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
+  b.onclick=function(){
+    Array.prototype.forEach.call(document.querySelectorAll("nav button"),
+      function(x){ x.classList.remove("on"); });
+    Array.prototype.forEach.call(document.querySelectorAll("section"),
+      function(x){ x.classList.remove("on"); });
+    b.classList.add("on");
+    $("tab-"+b.dataset.tab).classList.add("on");
+    if(b.dataset.tab==="system"){ loadLog(); loadConfig(); }
+  };
+});
+
+/* ------------------------------------------------------------- control */
+function buildSwatches(){
+  $("swatches").innerHTML = PRESETS.map(function(c){
+    return '<div class="swatch" style="background:'+c+'" onclick="pick(\''+c+'\')"></div>';
+  }).join("");
+}
+function pick(c){ $("color").value=c; maybeLive(); }
+function onColorInput(){ maybeLive(); }
+function maybeLive(){
+  if(!$("live").checked) return;
+  clearTimeout(LIVE_TIMER);
+  LIVE_TIMER = setTimeout(applyNow, 350);   /* debounce; server coalesces too */
+}
+function currentState(){
+  return {target:$("target").value, power:true, color:$("color").value,
+          brightness:parseInt($("brightness").value,10)};
+}
+function applyNow(){
+  post("/api/apply",currentState()).then(function(j){
+    if(j.ok){ toast("Queued: "+j.job.label); refreshStatus(); }
+  });
+}
+function applyMode(){
+  var m=$("mode").value;
+  var body={target:$("target").value, power:true,
+            brightness:parseInt($("brightness").value,10),
+            speed:parseInt($("speed").value,10)};
+  if(m){ body.mode=parseInt(m,10); } else { body.color=$("color").value; }
+  post("/api/apply",body).then(function(j){
+    if(j.ok){ toast("Queued: "+j.job.label); refreshStatus(); }
+  });
+}
+function power(on){
+  post("/api/power",{target:$("target").value,on:on}).then(function(j){
+    if(j.ok){ toast(on?"Turning on...":"Turning off..."); refreshStatus(); }
+  });
+}
+
+/* -------------------------------------------------------------- render */
+function renderTargets(){
+  var sel=$("target"), prev=sel.value;
+  var html='<option value="all">All ('+STATE.devices.length+' controllers)</option>';
+  if(STATE.groups.length){
+    html+='<optgroup label="Groups">'+STATE.groups.map(function(g){
+      var n=STATE.devices.filter(function(d){ return d.groups.indexOf(g)>=0; }).length;
+      return '<option value="group:'+esc(g)+'">'+esc(g)+' ('+n+')</option>';
+    }).join("")+'</optgroup>';
+  }
+  html+='<optgroup label="Single controller">'+STATE.devices.map(function(d){
+    return '<option value="device:'+d.address+'">'+esc(d.name)+'</option>';
+  }).join("")+'</optgroup>';
+  sel.innerHTML=html;
+  if(prev){ sel.value=prev; if(!sel.value) sel.value="all"; }
+}
+function renderModes(){
+  var sel=$("mode");
+  if(sel.options.length>1) return;
+  STATE.modes.forEach(function(m){
+    var o=document.createElement("option");
+    o.value=m.value; o.textContent=m.name;
+    sel.appendChild(o);
+  });
+}
+function renderScenes(){
+  $("sceneButtons").innerHTML = STATE.scenes.length
+    ? STATE.scenes.map(function(s){
+        return '<button class="btn primary" onclick="applyScene(\''+esc(s.name)+'\')">'
+             + esc(s.name)+'</button>'; }).join("")
+    : '<p class="muted">No scenes yet. Set a colour on the Control tab, then save one.</p>';
+
+  $("sceneList").innerHTML = STATE.scenes.length ? STATE.scenes.map(function(s){
+    var steps = s.steps.map(function(st){
+      var what = st.power===false ? "off"
+        : (st.mode ? ("pattern "+st.mode) : st.color) + " @ " + st.brightness + "%";
+      return '<div class="meta">' + esc(st.target) + ' &rarr; ' + esc(what) + '</div>';
+    }).join("");
+    return '<div class="item"><div class="grow"><div class="name">'+esc(s.name)+'</div>'
+      + steps + '</div>'
+      + '<button class="btn sm bad" onclick="deleteScene(\''+s.id+'\')">Delete</button></div>';
+  }).join("") : '<p class="muted">Nothing saved.</p>';
+
+  ["timerScene","schedScene"].forEach(function(id){
+    var sel=$(id), prev=sel.value;
+    sel.innerHTML = STATE.scenes.map(function(s){
+      return '<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>'; }).join("");
+    if(prev) sel.value=prev;
+  });
+}
+function renderDevices(){
+  $("deviceList").innerHTML = STATE.devices.length ? STATE.devices.map(function(d){
+    var cls = d.reachable===true ? "ok" : (d.reachable===false ? "bad" : "");
+    var when = d.last_ok ? ("ok "+ago(d.last_ok)) : (d.last_error ? esc(d.last_error) : "never contacted");
+    return '<div class="item">'
+      + '<span class="dot '+cls+'"></span>'
+      + '<div class="grow">'
+      +   '<div class="name">'+esc(d.name)+(d.enabled?"":' <span class="pill">disabled</span>')+'</div>'
+      +   '<div class="meta">'+d.address+' &middot; '+(d.groups.join(", ")||"no group")+'</div>'
+      +   '<div class="meta">'+when+(d.last_ms?(" &middot; "+d.last_ms+"ms"):"")+'</div>'
+      + '</div>'
+      + '<button class="btn sm" onclick="editDevice(\''+d.address+'\')">Edit</button>'
+      + '<button class="btn sm" onclick="testDevice(\''+d.address+'\')">Test</button>'
+      + '</div>';
+  }).join("") : '<p class="muted">No controllers configured. Scan below.</p>';
+
+  $("groupList").innerHTML = STATE.groups.length ? STATE.groups.map(function(g){
+    var n=STATE.devices.filter(function(d){ return d.groups.indexOf(g)>=0; }).length;
+    return '<div class="item"><div class="grow"><div class="name">'+esc(g)+'</div>'
+      + '<div class="meta">'+n+' controller(s)</div></div>'
+      + '<button class="btn sm" onclick="applyToGroup(\''+esc(g)+'\')">Select</button>'
+      + '<button class="btn sm bad" onclick="deleteGroup(\''+esc(g)+'\')">Delete</button></div>';
+  }).join("") : '<p class="muted">No groups yet.</p>';
+}
+function renderSchedules(){
+  $("schedList").innerHTML = STATE.schedules.length ? STATE.schedules.map(function(s){
+    var days = (s.days && s.days.length)
+      ? s.days.map(function(d){ return DAY_NAMES[d]; }).join(" ") : "every day";
+    return '<div class="item"><div class="grow">'
+      + '<div class="name">'+esc(s.time)+' &middot; '+esc(s.scene)+'</div>'
+      + '<div class="meta">'+esc(s.name||"")+' '+days
+      + (s.enabled?"":' &middot; disabled')+'</div></div>'
+      + '<button class="btn sm bad" onclick="deleteSchedule(\''+s.id+'\')">Delete</button></div>';
+  }).join("") : '<p class="muted">No schedules.</p>';
+
+  $("nextRuns").innerHTML = (STATE.next_runs||[]).length
+    ? "Next: " + STATE.next_runs.map(function(n){
+        return esc(n.scene)+" at "+esc(n.when.replace("T"," ")); }).join(" &middot; ")
+    : "";
+}
+function renderTimers(timers){
+  STATE.timers = timers || STATE.timers;
+  $("timerList").innerHTML = (STATE.timers||[]).length ? STATE.timers.map(function(t){
+    return '<div class="item"><div class="grow"><div class="name">'+esc(t.scene)+'</div>'
+      + '<div class="meta">in '+fmtSecs(t.remaining_seconds)+'</div></div>'
+      + '<button class="btn sm bad" onclick="cancelTimer(\''+t.id+'\')">Cancel</button></div>';
+  }).join("") : '<p class="muted">No timers running.</p>';
+}
+function renderClock(info){
+  if(!info) return;
+  var cls = info.clock_ok ? "ok" : "bad";
+  $("hdrClock").className = "pill "+cls;
+  $("hdrClock").textContent = info.clock_ok ? info.now.replace("T"," ") : "clock unset";
+  $("clockBox").innerHTML =
+      '<div class="item"><div class="grow"><div class="name">'+esc(info.now.replace("T"," "))+'</div>'
+    + '<div class="meta">'+(info.clock_ok?"looks sane":"NOT SET - schedules paused")
+    + (info.source?(" &middot; set by "+esc(info.source)):"")
+    + (info.can_set?"":" &middot; cannot set (not running as root)")+'</div></div></div>';
+  var banners = [];
+  if(!info.clock_ok){
+    banners.push('<div class="banner bad">Pi clock is not set, so wall-clock schedules '
+      + 'are paused. <button class="btn sm" onclick="syncClock()">Sync from phone</button></div>');
+  }
+  $("banners").innerHTML = banners.join("");
+}
+function fmtSecs(s){
+  s=Math.max(0,parseInt(s,10));
+  var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+  if(h) return h+"h "+m+"m";
+  if(m) return m+"m "+sec+"s";
+  return sec+"s";
+}
+function ago(epoch){
+  var d = Math.max(0, Math.floor(Date.now()/1000 - epoch));
+  return fmtSecs(d)+" ago";
+}
+
+/* --------------------------------------------------------------- polls */
+function loadState(){
+  return get("/api/state").then(function(j){
+    if(!j.ok) return;
+    STATE = j;
+    renderTargets(); renderModes(); renderScenes(); renderDevices();
+    renderSchedules(); renderTimers(j.timers); renderClock(j.time);
+    $("hdrDevices").textContent = j.devices.length+" devices";
+    $("hdrBackend").textContent = j.backend;
+    $("hdrBackend").className = "pill" + (j.backend==="bleak" ? " ok" : " warn");
+  });
+}
+function refreshStatus(){
+  return get("/api/status").then(function(j){
+    if(!j.ok) return;
+    var q=$("hdrQueue");
+    q.textContent = j.busy ? ("working"+(j.queued?" +"+j.queued:"")) : (j.queued? j.queued+" queued":"idle");
+    q.className = "pill" + (j.busy ? " warn" : "");
+    renderTimers(j.timers);
+    /* merge live reachability into the device cards without a full reload */
+    var changed=false;
+    STATE.devices.forEach(function(d){
+      var rt=j.devices[d.address];
+      if(rt && (d.reachable!==rt.reachable || d.last_ok!==rt.last_ok)){
+        d.reachable=rt.reachable; d.last_ok=rt.last_ok;
+        d.last_error=rt.last_error; d.last_ms=rt.last_ms; changed=true;
+      }
+    });
+    if(changed) renderDevices();
+    renderJobs(j.jobs||[]);
+    if($("logAuto") && $("logAuto").checked
+       && $("tab-system").classList.contains("on")) loadLog();
+  }).catch(function(){ $("hdrQueue").textContent="offline";
+                       $("hdrQueue").className="pill bad"; });
+}
+function renderJobs(jobs){
+  var live = jobs.filter(function(j){ return j.state==="running"||j.state==="queued"; });
+  var show = live.length ? live : jobs.slice(0,3);
+  if(!show.length){ $("jobs").innerHTML='<p class="muted">Nothing queued.</p>'; return; }
+  $("jobs").innerHTML = show.map(function(j){
+    var pct = j.total ? Math.round(100*j.done/j.total) : (j.state==="done"?100:0);
+    var dot = j.state==="running" ? "busy" : (j.state==="done" ? "ok"
+            : (j.state==="failed" ? "bad" : ""));
+    var failed = j.items ? j.items.filter(function(i){ return i.status==="failed"; }) : [];
+    return '<div class="item"><span class="dot '+dot+'"></span><div class="grow">'
+      + '<div class="name">'+esc(j.label)+'</div>'
+      + '<div class="meta">'+esc(j.state)+' &middot; '+j.done+'/'+j.total
+      + (j.failed?(' &middot; '+j.failed+' failed'):'')+'</div>'
+      + (failed.length ? '<div class="meta">skipped: '
+          + failed.map(function(i){ return esc(i.name); }).join(", ")+'</div>' : '')
+      + '<div class="bar"><i style="width:'+pct+'%"></i></div>'
+      + '</div></div>';
+  }).join("");
+}
+
+/* -------------------------------------------------------------- scenes */
+function applyScene(name){
+  post("/api/scene/apply",{scene:name}).then(function(j){
+    if(j.ok){ toast("Scene queued: "+name); refreshStatus(); }
+  });
+}
+function saveScene(append){
+  var name=$("sceneName").value.trim();
+  if(!name){ toast("Give the scene a name"); return; }
+  var step={target:$("target").value, power:true, color:$("color").value,
+            brightness:parseInt($("brightness").value,10)};
+  if($("mode").value){ step.mode=parseInt($("mode").value,10);
+                       step.speed=parseInt($("speed").value,10); }
+  var existing=null;
+  STATE.scenes.forEach(function(s){ if(s.name===name) existing=s; });
+  var steps = (append && existing) ? existing.steps.concat([step]) : [step];
+  var body = {name:name, steps:steps};
+  if(existing) body.id=existing.id;
+  post("/api/scenes",body).then(function(j){
+    if(j.ok){ toast("Saved scene "+name); loadState(); }
+  });
+}
+function deleteScene(id){
+  if(!confirm("Delete this scene?")) return;
+  del("/api/scenes/"+id).then(loadState);
+}
+
+/* ------------------------------------------------------------- devices */
+function testDevice(addr){
+  post("/api/devices/"+addr+"/test",{}).then(function(j){
+    if(j.ok){ toast("Testing "+addr); refreshStatus(); }
+  });
+}
+function testAll(){
+  if(!confirm("Test all "+STATE.devices.length+" controllers? Takes ~"
+      +(STATE.devices.length*3)+"s.")) return;
+  STATE.devices.forEach(function(d){ post("/api/devices/"+d.address+"/test",{}); });
+  toast("Queued "+STATE.devices.length+" tests");
+}
+function editDevice(addr){
+  var dev=null;
+  STATE.devices.forEach(function(d){ if(d.address===addr) dev=d; });
+  if(!dev) return;
+  var name=prompt("Friendly name for "+addr, dev.name);
+  if(name===null) return;
+  var groups=prompt("Groups (comma separated). Known: "+STATE.groups.join(", "),
+                    dev.groups.join(", "));
+  if(groups===null) return;
+  var enabled=confirm("OK = enabled, Cancel = disabled (skip this unit)");
+  post("/api/devices",{address:addr, name:name,
+      groups:groups.split(",").map(function(s){ return s.trim(); })
+                   .filter(function(s){ return s; }),
+      enabled:enabled}).then(loadState);
+}
+function addManual(){
+  var addr=$("manualAddr").value.trim();
+  if(!addr){ toast("Address required"); return; }
+  post("/api/devices",{address:addr, name:$("manualName").value.trim()||addr})
+    .then(function(j){ if(j.ok){ $("manualAddr").value=""; $("manualName").value="";
+                                 toast("Added"); loadState(); } });
+}
+function addGroup(){
+  var name=$("newGroup").value.trim();
+  if(!name) return;
+  post("/api/groups",{name:name}).then(function(){ $("newGroup").value=""; loadState(); });
+}
+function deleteGroup(name){
+  if(!confirm("Delete group "+name+"? Controllers stay, they just leave the group.")) return;
+  del("/api/groups/"+encodeURIComponent(name)).then(loadState);
+}
+function applyToGroup(name){
+  $("target").value="group:"+name;
+  Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b){
+    if(b.dataset.tab==="control") b.click();
+  });
+}
+function startScan(){
+  post("/api/scan",{seconds:8}).then(function(j){
+    if(j.ok){ toast("Scanning 8s (BLE is serialized, so this waits its turn)");
+              setTimeout(loadScan, 11000); }
+  });
+}
+function loadScan(){
+  get("/api/scan/result").then(function(j){
+    var found=(j.scan&&j.scan.devices)||[];
+    $("scanList").innerHTML = found.length ? found.map(function(d){
+      return '<div class="item"><span class="dot '+(d.is_elk?"ok":"")+'"></span>'
+        + '<div class="grow"><div class="name">'+esc(d.name||"(no name)")+'</div>'
+        + '<div class="meta">'+d.address+' &middot; rssi '+(d.rssi==null?"?":d.rssi)
+        + (d.known?' &middot; already added':'')+'</div></div>'
+        + (d.known?'' : '<button class="btn sm" onclick="addFound(\''+d.address+'\',\''
+           +esc(d.name||d.address)+'\')">Add</button>')
+        + '</div>';
+    }).join("") : '<p class="muted">Nothing found yet.</p>';
+  });
+}
+function addFound(addr,name){
+  post("/api/devices",{address:addr,name:name}).then(function(){
+    toast("Added "+addr); loadState(); loadScan();
+  });
+}
+
+/* -------------------------------------------------------------- timing */
+function syncClock(){
+  var now=new Date();
+  var pad=function(n){ return (n<10?"0":"")+n; };
+  var iso = now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())
+          + "T"+pad(now.getHours())+":"+pad(now.getMinutes())+":"+pad(now.getSeconds());
+  post("/api/time",{iso:iso,source:"phone"}).then(function(j){
+    if(j.ok){ toast("Clock set to "+iso.replace("T"," ")); loadState(); }
+  });
+}
+function addTimer(){
+  post("/api/timers",{scene:$("timerScene").value,
+                      minutes:parseFloat($("timerMinutes").value)})
+    .then(function(j){ if(j.ok){ toast("Timer started"); refreshStatus(); } });
+}
+function cancelTimer(id){ del("/api/timers/"+id).then(refreshStatus); }
+function buildDays(){
+  $("schedDays").innerHTML = DAY_NAMES.map(function(d,i){
+    return '<button type="button" data-day="'+i+'" onclick="toggleDay('+i+',this)">'+d+'</button>';
+  }).join("");
+}
+function toggleDay(i,btn){
+  var at=SCHED_DAYS.indexOf(i);
+  if(at>=0){ SCHED_DAYS.splice(at,1); btn.classList.remove("on"); }
+  else { SCHED_DAYS.push(i); btn.classList.add("on"); }
+}
+function addSchedule(){
+  if(!$("schedScene").value){ toast("Create a scene first"); return; }
+  post("/api/schedules",{scene:$("schedScene").value, time:$("schedTime").value,
+                         name:$("schedName").value.trim(), days:SCHED_DAYS.slice()})
+    .then(function(j){ if(j.ok){ toast("Schedule added"); SCHED_DAYS=[];
+      Array.prototype.forEach.call(document.querySelectorAll("#schedDays button"),
+        function(b){ b.classList.remove("on"); });
+      loadState(); } });
+}
+function deleteSchedule(id){ del("/api/schedules/"+id).then(loadState); }
+
+/* -------------------------------------------------------------- system */
+function loadLog(){
+  get("/api/log?n=250").then(function(j){
+    if(!j.ok) return;
+    var box=$("logBox");
+    var stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.textContent = j.lines.join("\n");
+    $("logPath").textContent = "file: "+j.path;
+    if(stick) box.scrollTop = box.scrollHeight;
+  });
+}
+function loadConfig(){
+  get("/api/config").then(function(j){
+    if(j.ok) $("configBox").value = JSON.stringify(j.config,null,2);
+  });
+}
+function saveConfig(){
+  var text=$("configBox").value;
+  var parsed;
+  try { parsed=JSON.parse(text); }
+  catch(e){ toast("Not valid JSON: "+e.message); return; }
+  if(!confirm("Replace the whole config with this?")) return;
+  fetch("/api/config",{method:"PUT",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(parsed)}).then(function(r){ return r.json(); })
+    .then(function(j){ if(j.ok){ toast("Config saved"); loadState(); loadConfig(); }
+                       else toast("Error: "+j.error); });
+}
+
+/* ---------------------------------------------------------------- boot */
+buildSwatches();
+buildDays();
+loadState().then(refreshStatus);
+setInterval(refreshStatus, 1500);
+setInterval(function(){ if(!document.hidden) loadState(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,467 @@
+"""JSON config store: devices, groups, scenes, schedules, settings.
+
+Hand-editable and UI-editable.  Writes are atomic (tmp file + fsync + rename)
+so a power cut mid-save can never leave a truncated config on the SD card --
+which matters when the whole thing lives on playa power.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import tempfile
+import threading
+import uuid
+
+log = logging.getLogger("vicelights.config")
+
+ADDR_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+DEFAULT_SETTINGS = {
+    "host": "0.0.0.0",
+    "port": 80,
+    "brightness_mode": "scale",      # scale | native | both
+    "connect_timeout": 12.0,         # seconds per connect attempt
+    "write_timeout": 6.0,            # seconds per characteristic write
+    "attempts": 3,                   # 1 try + 2 retries
+    "retry_backoff": 0.8,            # seconds, doubled each retry
+    "inter_frame_delay": 0.06,       # gap between frames on one device
+    "inter_device_delay": 0.35,      # gap between devices: lets wifi breathe
+    "scan_seconds": 8.0,
+    "log_level": "INFO",
+    "apply_on_boot": "",             # scene name to apply at startup, "" = none
+}
+
+DEFAULT_CONFIG = {
+    "settings": dict(DEFAULT_SETTINGS),
+    "devices": [],
+    "groups": [],
+    "scenes": [],
+    "schedules": [],
+    "timers": [],
+}
+
+
+def new_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def normalize_address(addr: str) -> str:
+    addr = (addr or "").strip().upper().replace("-", ":")
+    if not ADDR_RE.match(addr):
+        raise ValueError("bad BLE address: %r (want AA:BB:CC:DD:EE:FF)" % addr)
+    return addr
+
+
+class ConfigError(Exception):
+    pass
+
+
+class ConfigStore:
+    """Thread-safe accessor around the on-disk JSON config."""
+
+    def __init__(self, path: str):
+        self.path = os.path.abspath(path)
+        self._lock = threading.RLock()
+        self._data = dict(DEFAULT_CONFIG)
+        self.load()
+
+    # ---------------------------------------------------------------- io
+
+    def load(self):
+        with self._lock:
+            if not os.path.exists(self.path):
+                log.warning("no config at %s, starting from defaults", self.path)
+                self._data = json.loads(json.dumps(DEFAULT_CONFIG))
+                self.save()
+                return self._data
+            with open(self.path, "r", encoding="utf-8") as handle:
+                raw = json.load(handle)
+            self._data = self._normalize(raw)
+            log.info(
+                "loaded config: %d devices, %d groups, %d scenes, %d schedules",
+                len(self._data["devices"]), len(self._data["groups"]),
+                len(self._data["scenes"]), len(self._data["schedules"]),
+            )
+            return self._data
+
+    def save(self):
+        with self._lock:
+            payload = json.dumps(self._data, indent=2, sort_keys=False)
+            directory = os.path.dirname(self.path) or "."
+            os.makedirs(directory, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".json")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, self.path)
+                # fsync the directory so the rename itself is durable.
+                dir_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except Exception:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+                raise
+
+    # ------------------------------------------------------------ shape
+
+    def _normalize(self, raw: dict) -> dict:
+        if not isinstance(raw, dict):
+            raise ConfigError("config root must be an object")
+
+        data = json.loads(json.dumps(DEFAULT_CONFIG))
+        settings = dict(DEFAULT_SETTINGS)
+        settings.update(raw.get("settings") or {})
+        data["settings"] = settings
+
+        seen = set()
+        for entry in raw.get("devices") or []:
+            try:
+                address = normalize_address(entry.get("address"))
+            except ValueError as exc:
+                log.error("dropping device: %s", exc)
+                continue
+            if address in seen:
+                log.warning("dropping duplicate device %s", address)
+                continue
+            seen.add(address)
+            data["devices"].append({
+                "address": address,
+                "name": (entry.get("name") or address).strip(),
+                "groups": [str(g).strip() for g in (entry.get("groups") or []) if str(g).strip()],
+                "enabled": bool(entry.get("enabled", True)),
+                "char_uuid": entry.get("char_uuid") or None,
+                "notes": entry.get("notes") or "",
+            })
+
+        groups = [str(g).strip() for g in (raw.get("groups") or []) if str(g).strip()]
+        for device in data["devices"]:
+            for group in device["groups"]:
+                if group not in groups:
+                    groups.append(group)
+        data["groups"] = groups
+
+        for scene in raw.get("scenes") or []:
+            steps = []
+            for step in scene.get("steps") or []:
+                steps.append({
+                    "target": step.get("target") or "all",
+                    "power": step.get("power", True),
+                    "color": step.get("color", "#ffffff"),
+                    "brightness": step.get("brightness", 100),
+                    "mode": step.get("mode"),
+                    "speed": step.get("speed"),
+                })
+            data["scenes"].append({
+                "id": scene.get("id") or new_id(),
+                "name": (scene.get("name") or "unnamed").strip(),
+                "steps": steps,
+            })
+
+        for schedule in raw.get("schedules") or []:
+            data["schedules"].append({
+                "id": schedule.get("id") or new_id(),
+                "name": (schedule.get("name") or "").strip(),
+                "scene": schedule.get("scene") or "",
+                "time": schedule.get("time") or "00:00",
+                "days": sorted({int(d) for d in (schedule.get("days") or []) if 0 <= int(d) <= 6}),
+                "enabled": bool(schedule.get("enabled", True)),
+                "last_fired": schedule.get("last_fired") or "",
+            })
+
+        return data
+
+    # ------------------------------------------------------------ reads
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return json.loads(json.dumps(self._data))
+
+    @property
+    def settings(self) -> dict:
+        with self._lock:
+            return dict(self._data["settings"])
+
+    def setting(self, key, default=None):
+        with self._lock:
+            return self._data["settings"].get(key, DEFAULT_SETTINGS.get(key, default))
+
+    def devices(self, enabled_only: bool = False) -> list:
+        with self._lock:
+            devices = json.loads(json.dumps(self._data["devices"]))
+        if enabled_only:
+            devices = [d for d in devices if d.get("enabled", True)]
+        return devices
+
+    def device(self, address: str):
+        address = normalize_address(address)
+        for device in self.devices():
+            if device["address"] == address:
+                return device
+        return None
+
+    def group_names(self) -> list:
+        with self._lock:
+            return list(self._data["groups"])
+
+    def scenes(self) -> list:
+        with self._lock:
+            return json.loads(json.dumps(self._data["scenes"]))
+
+    def scene(self, name_or_id: str):
+        key = (name_or_id or "").strip().lower()
+        for scene in self.scenes():
+            if scene["id"] == name_or_id or scene["name"].strip().lower() == key:
+                return scene
+        return None
+
+    def schedules(self) -> list:
+        with self._lock:
+            return json.loads(json.dumps(self._data["schedules"]))
+
+    # ---------------------------------------------------------- targets
+
+    def resolve_target(self, target: str) -> list:
+        """'all' | 'group:NAME' | 'device:AA:BB:..' | bare address -> addresses.
+
+        Disabled devices are never returned: disabling is how you park a unit
+        that has died in the dust without editing every scene.
+        """
+        target = (target or "all").strip()
+        devices = self.devices(enabled_only=True)
+
+        if target.lower() in ("all", "*"):
+            return [d["address"] for d in devices]
+
+        if target.lower().startswith("group:"):
+            name = target.split(":", 1)[1].strip().lower()
+            return [d["address"] for d in devices
+                    if any(g.strip().lower() == name for g in d["groups"])]
+
+        if target.lower().startswith("device:"):
+            target = target.split(":", 1)[1].strip()
+
+        try:
+            address = normalize_address(target)
+        except ValueError:
+            # Fall back to a friendly-name lookup so scenes can name a device.
+            key = target.strip().lower()
+            return [d["address"] for d in devices if d["name"].strip().lower() == key]
+        return [d["address"] for d in devices if d["address"] == address]
+
+    def target_label(self, target: str) -> str:
+        target = (target or "all").strip()
+        if target.lower() in ("all", "*"):
+            return "all devices"
+        if target.lower().startswith("group:"):
+            return "group %s" % target.split(":", 1)[1]
+        addresses = self.resolve_target(target)
+        if len(addresses) == 1:
+            device = self.device(addresses[0])
+            if device:
+                return device["name"]
+        return target
+
+    # --------------------------------------------------------- mutation
+
+    def mutate(self, fn):
+        """Apply ``fn(data)`` under the lock, then persist and return the result."""
+        with self._lock:
+            result = fn(self._data)
+            self._sync_groups()
+            self.save()
+        return result
+
+    def _sync_groups(self):
+        groups = list(self._data["groups"])
+        for device in self._data["devices"]:
+            for group in device["groups"]:
+                if group not in groups:
+                    groups.append(group)
+        self._data["groups"] = groups
+
+    def replace_all(self, raw: dict):
+        with self._lock:
+            self._data = self._normalize(raw)
+            self.save()
+        return self.snapshot()
+
+    def upsert_device(self, entry: dict) -> dict:
+        address = normalize_address(entry.get("address"))
+
+        def apply(data):
+            for device in data["devices"]:
+                if device["address"] == address:
+                    device["name"] = (entry.get("name") or device["name"]).strip()
+                    if "groups" in entry:
+                        device["groups"] = [str(g).strip() for g in entry["groups"] if str(g).strip()]
+                    if "enabled" in entry:
+                        device["enabled"] = bool(entry["enabled"])
+                    if "char_uuid" in entry:
+                        device["char_uuid"] = entry["char_uuid"] or None
+                    if "notes" in entry:
+                        device["notes"] = entry["notes"]
+                    return device
+            device = {
+                "address": address,
+                "name": (entry.get("name") or address).strip(),
+                "groups": [str(g).strip() for g in (entry.get("groups") or []) if str(g).strip()],
+                "enabled": bool(entry.get("enabled", True)),
+                "char_uuid": entry.get("char_uuid") or None,
+                "notes": entry.get("notes") or "",
+            }
+            data["devices"].append(device)
+            return device
+
+        return self.mutate(apply)
+
+    def delete_device(self, address: str) -> bool:
+        address = normalize_address(address)
+
+        def apply(data):
+            before = len(data["devices"])
+            data["devices"] = [d for d in data["devices"] if d["address"] != address]
+            return len(data["devices"]) != before
+
+        return self.mutate(apply)
+
+    def remember_characteristic(self, address: str, char_uuid: str):
+        """Cache the detected characteristic so later connects skip discovery."""
+        def apply(data):
+            for device in data["devices"]:
+                if device["address"] == address and device.get("char_uuid") != char_uuid:
+                    device["char_uuid"] = char_uuid
+                    return True
+            return False
+
+        try:
+            return self.mutate(apply)
+        except Exception:
+            log.exception("could not cache characteristic for %s", address)
+            return False
+
+    def add_group(self, name: str):
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("group name required")
+
+        def apply(data):
+            if name not in data["groups"]:
+                data["groups"].append(name)
+            return data["groups"]
+
+        return self.mutate(apply)
+
+    def delete_group(self, name: str):
+        def apply(data):
+            data["groups"] = [g for g in data["groups"] if g != name]
+            for device in data["devices"]:
+                device["groups"] = [g for g in device["groups"] if g != name]
+            return data["groups"]
+
+        result = self.mutate(apply)
+        # _sync_groups would resurrect it from membership; membership is cleared
+        # above, so this is safe.
+        return result
+
+    def upsert_scene(self, scene: dict) -> dict:
+        name = (scene.get("name") or "").strip()
+        if not name:
+            raise ValueError("scene name required")
+        steps = []
+        for step in scene.get("steps") or []:
+            steps.append({
+                "target": step.get("target") or "all",
+                "power": bool(step.get("power", True)),
+                "color": step.get("color", "#ffffff"),
+                "brightness": int(step.get("brightness", 100)),
+                "mode": step.get("mode"),
+                "speed": step.get("speed"),
+            })
+        if not steps:
+            raise ValueError("scene needs at least one step")
+        scene_id = scene.get("id")
+
+        def apply(data):
+            for existing in data["scenes"]:
+                if (scene_id and existing["id"] == scene_id) or existing["name"] == name:
+                    existing["name"] = name
+                    existing["steps"] = steps
+                    return existing
+            created = {"id": scene_id or new_id(), "name": name, "steps": steps}
+            data["scenes"].append(created)
+            return created
+
+        return self.mutate(apply)
+
+    def delete_scene(self, scene_id: str) -> bool:
+        def apply(data):
+            before = len(data["scenes"])
+            data["scenes"] = [s for s in data["scenes"]
+                              if s["id"] != scene_id and s["name"] != scene_id]
+            return len(data["scenes"]) != before
+
+        return self.mutate(apply)
+
+    def upsert_schedule(self, schedule: dict) -> dict:
+        time_str = (schedule.get("time") or "").strip()
+        if not re.match(r"^\d{1,2}:\d{2}$", time_str):
+            raise ValueError("time must be HH:MM")
+        hour, minute = (int(part) for part in time_str.split(":"))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("time out of range")
+        time_str = "%02d:%02d" % (hour, minute)
+        scene_name = (schedule.get("scene") or "").strip()
+        if not self.scene(scene_name):
+            raise ValueError("unknown scene: %s" % scene_name)
+        days = sorted({int(d) for d in (schedule.get("days") or []) if 0 <= int(d) <= 6})
+        schedule_id = schedule.get("id")
+
+        def apply(data):
+            for existing in data["schedules"]:
+                if schedule_id and existing["id"] == schedule_id:
+                    existing.update({
+                        "name": (schedule.get("name") or existing["name"]).strip(),
+                        "scene": scene_name,
+                        "time": time_str,
+                        "days": days,
+                        "enabled": bool(schedule.get("enabled", True)),
+                    })
+                    return existing
+            created = {
+                "id": schedule_id or new_id(),
+                "name": (schedule.get("name") or "").strip(),
+                "scene": scene_name,
+                "time": time_str,
+                "days": days,
+                "enabled": bool(schedule.get("enabled", True)),
+                "last_fired": "",
+            }
+            data["schedules"].append(created)
+            return created
+
+        return self.mutate(apply)
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        def apply(data):
+            before = len(data["schedules"])
+            data["schedules"] = [s for s in data["schedules"] if s["id"] != schedule_id]
+            return len(data["schedules"]) != before
+
+        return self.mutate(apply)
+
+    def mark_schedule_fired(self, schedule_id: str, stamp: str):
+        def apply(data):
+            for schedule in data["schedules"]:
+                if schedule["id"] == schedule_id:
+                    schedule["last_fired"] = stamp
+            return True
+
+        return self.mutate(apply)

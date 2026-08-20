@@ -1,0 +1,8 @@
+# Pi Zero W (ARMv6) friendly: pure-Python or piwheels-prebuilt only.
+# Install with piwheels so nothing has to compile on the Pi:
+#   pip install --extra-index-url https://www.piwheels.org/simple -r requirements.txt
+# (Raspberry Pi OS already points pip at piwheels via /etc/pip.conf.)
+
+bleak>=0.21,<0.23        # BLE client; pulls dbus-fast (piwheels has armv6 wheels)
+Flask>=2.2,<4            # pure Python
+waitress>=2.1,<4         # pure-Python WSGI server, steadier than the dev server
