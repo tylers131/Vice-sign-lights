@@ -16,6 +16,12 @@ Environment=VICELIGHTS_LOG=/var/log/vice-lights.log
 Environment=VICELIGHTS_STATE=/var/lib/vice-lights/lastknown-time
 # Give bluetoothd time to bring hci0 up after a cold boot.
 ExecStartPre=/bin/sleep 8
+# The Zero W can boot with the Bluetooth radio soft-blocked (hci0 DOWN,
+# "Failed to set mode: Failed (0x03)" in the bluetoothd log), which would look
+# like all 16 controllers dying at once. Clear it and bring the adapter up.
+# Leading "-" means a failure here never stops the service from starting.
+ExecStartPre=-/bin/sh -c 'rfkill unblock bluetooth || true'
+ExecStartPre=-/bin/sh -c 'hciconfig hci0 up 2>/dev/null || btmgmt power on 2>/dev/null || true'
 ExecStart=/opt/vice-sign-lights/venv/bin/python -m vicelights
 Restart=always
 RestartSec=5

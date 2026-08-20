@@ -367,7 +367,8 @@ runs as root because it binds port 80 and sets the system clock.
 
 | Symptom | Try |
 | --- | --- |
-| Every device unreachable | `sudo systemctl status bluetooth`; `sudo hciconfig hci0 up`; make sure `elk_scan.py` isn't also running |
+| Every device unreachable | Check `hciconfig hci0` says UP RUNNING and `rfkill list bluetooth` says `Soft blocked: no` — see the row below; also make sure `elk_scan.py` isn't running at the same time |
+| `hci0` DOWN, `rfkill` shows `Soft blocked: yes`, bluetoothd logs `Failed to set mode: Failed (0x03)` | `sudo rfkill unblock bluetooth && sudo hciconfig hci0 up`. The service also does this at every start |
 | One device unreachable | Power-cycle it; check range; **Test** it from the UI; it may just be too far — the log names it every attempt |
 | Colours look wrong | Some clones swap red/green wiring. Send pure red with `elk_scan.py color <addr> '#ff0000'` and rewire, or swap channels at the controller |
 | Brightness does nothing | You're on `"native"`; switch to `"scale"` |
