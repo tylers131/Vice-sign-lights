@@ -148,6 +148,31 @@ downloaded sdist is cached, so the retry is immediate.
 
 **Budget 5–10 minutes** for the venv and the install even with `SKIP_CYTHON=1`.
 
+### A corrupt config can no longer stop the sign from starting
+
+`load()` used to call `json.load()` with nothing catching it, so an unparseable
+`/etc/vice-lights/config.json` raised at startup, crash-looped forever under
+`Restart=always`, and never bound port 80. That is the same symptom as the
+disabled-unit failure below -- no web UI at all -- but recoverable only over
+SSH, which in a desert at night means the sign stays dark.
+
+Saves are atomic and fsync the directory, so a power cut mid-write leaves the
+old file intact. Card corruption from repeated unclean shutdowns is the real
+risk, and it is not a remote one on a Pi that gets switched off by pulling a
+plug for a week.
+
+Now a config that will not parse is copied aside as
+`config.json.unreadable-<epoch>` and the service recovers, in order, from:
+
+1. `config.json.lastgood` -- written every time a config parses cleanly
+2. `config.json.bak` -- left by `retune_fades.py` and `reorder_devices.py`
+3. the built-in defaults, as a last resort
+
+Only the third loses your devices and scenes, and even then the UI comes up so
+you can see what happened from a phone. Tested against a truncated file, binary
+garbage, a zero-length file, and garbage with only a `.bak` surviving; the
+first three recover the full fleet.
+
 ### The service must be enabled, not just started
 
 `systemctl restart` works on a unit that is not enabled for boot, so a sign

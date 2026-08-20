@@ -11,9 +11,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import stat
 import tempfile
 import threading
+import time
 import uuid
 
 log = logging.getLogger("vicelights.config")
@@ -162,6 +164,14 @@ class ConfigError(Exception):
     pass
 
 
+LAST_GOOD_SUFFIX = ".lastgood"
+
+
+def _read_json(path: str):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 class ConfigStore:
     """Thread-safe accessor around the on-disk JSON config."""
 
@@ -180,15 +190,81 @@ class ConfigStore:
                 self._data = json.loads(json.dumps(DEFAULT_CONFIG))
                 self.save()
                 return self._data
-            with open(self.path, "r", encoding="utf-8") as handle:
-                raw = json.load(handle)
+            try:
+                raw = _read_json(self.path)
+            except Exception as exc:
+                return self._recover(exc)
             self._data = self._normalize(raw)
+            self._keep_last_good()
             log.info(
                 "loaded config: %d devices, %d groups, %d scenes, %d schedules",
                 len(self._data["devices"]), len(self._data["groups"]),
                 len(self._data["scenes"]), len(self._data["schedules"]),
             )
             return self._data
+
+    def _keep_last_good(self):
+        """Snapshot a config that parsed, to fall back to if this one stops.
+
+        Cheap: load happens at startup and on an explicit reload, not per sweep.
+        """
+        try:
+            shutil.copy2(self.path, self.path + LAST_GOOD_SUFFIX)
+        except OSError as exc:
+            log.debug("could not snapshot last-good config: %s", exc)
+
+    def _recover(self, exc):
+        """Come up anyway when the config will not parse.
+
+        A sign serving its web UI with the wrong scenes can be fixed from a
+        phone in thirty seconds. One that raises at startup crash-loops under
+        Restart=always, never binds port 80, and needs SSH and a laptop --
+        which, in a desert at night, means it stays dark. So a config that has
+        been corrupted (an SD card surviving repeated unclean shutdowns is not
+        a given) must never be able to stop the service from starting.
+        """
+        log.error("config at %s will not parse: %s", self.path, exc)
+        preserved = self._preserve_unreadable()
+
+        for label, candidate in (("last-good", self.path + LAST_GOOD_SUFFIX),
+                                 ("backup", self.path + ".bak")):
+            if not os.path.exists(candidate):
+                continue
+            try:
+                raw = _read_json(candidate)
+            except Exception as inner:
+                log.error("the %s copy (%s) will not parse either: %s",
+                          label, candidate, inner)
+                continue
+            self._data = self._normalize(raw)
+            log.warning("recovered the config from the %s copy (%s)", label, candidate)
+            if preserved:
+                log.warning("the unreadable file was kept at %s", preserved)
+            self.save()
+            return self._data
+
+        log.error("no usable copy of the config; starting from defaults. "
+                  "Devices, scenes and mode names are gone until you restore "
+                  "one%s", " -- unreadable original kept at %s" % preserved
+                  if preserved else "")
+        self._data = json.loads(json.dumps(DEFAULT_CONFIG))
+        self.save()
+        return self._data
+
+    def _preserve_unreadable(self) -> str:
+        """Copy the unreadable config aside so it can still be salvaged.
+
+        Copied rather than moved: save() carries ownership across only when the
+        original is still there, and losing the owner is how the config stops
+        being writable from the web UI.
+        """
+        target = "%s.unreadable-%d" % (self.path, int(time.time()))
+        try:
+            shutil.copy2(self.path, target)
+            return target
+        except OSError as exc:
+            log.error("could not preserve the unreadable config: %s", exc)
+            return ""
 
     def save(self):
         with self._lock:
