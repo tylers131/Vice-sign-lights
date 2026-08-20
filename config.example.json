@@ -734,7 +734,7 @@
     "0x97": "strobe green",
     "0x98": "strobe blue",
     "0x99": "strobe yellow",
-    "0x9a": "strobe cyan",
+    "0x9a": "flash cyan",
     "0x9b": "strobe magenta",
     "0x9c": "strobe white",
     "0x9d": "solid white"

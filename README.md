@@ -705,7 +705,7 @@ is a different list.
 | `0x89`, `0x8a` | **fade RGB, fade 7 colours** — the useful ones |
 | `0x8b`–`0x91` | fade a single colour: red, green, blue, yellow, cyan, magenta, white |
 | `0x92`–`0x94` | further fade RGB variants |
-| `0x95`–`0x9c` | strobes, same colour order |
+| `0x95`–`0x9c` | strobes and flashes, same colour order (`0x9a` is a flash) |
 | `0x9d` | solid white |
 
 For something left running all night, `0x89` and `0x8a` are the material: they
