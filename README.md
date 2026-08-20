@@ -453,11 +453,34 @@ retrying a broken `vice-ap` instead of falling back — recover in this order:
    ```bash
    sudo rm /mnt/rootfs/etc/NetworkManager/system-connections/vice-ap.nmconnection
    ```
-3. **No Linux machine?** The boot partition is FAT32 and editable anywhere.
-   Append `dtoverlay=dwc2` to `config.txt`, and add `modules-load=dwc2,g_ether`
-   after `rootwait` in `cmdline.txt` (one line, space separated). Connect a USB
-   cable to the Pi's **USB** port — not PWR — and `ssh <user>@raspberrypi.local`
-   over the gadget interface, then delete the profile.
+3. **On a Mac (or any machine without ext4)** — the rootfs is unreadable, but
+   the boot partition is FAT32 and mounts anywhere. Turn on USB gadget
+   networking from there and get a shell over the USB cable:
+
+   ```bash
+   printf '\n[all]\ndtoverlay=dwc2\n' | sudo tee -a /Volumes/bootfs/config.txt
+   sudo sed -i '' 's/rootwait/rootwait modules-load=dwc2,g_ether/' /Volumes/bootfs/cmdline.txt
+   cat /Volumes/bootfs/cmdline.txt        # must still be ONE line
+   diskutil eject /Volumes/bootfs
+   ```
+
+   Edit these in Terminal, never in TextEdit — smart quotes break the boot.
+   Then put the card back, connect a USB cable to the Pi's **USB** port (not
+   PWR — it powers the Pi too), wait ~90s for the gadget interface to appear in
+   System Settings → Network, and `ssh <user>@<hostname>.local`.
+
+### Set up the USB console before you need it
+
+A Zero W with broken wifi has no ethernet and no console. Enabling the gadget
+interface in advance turns a card-pulling exercise into plugging in a cable:
+
+```bash
+sudo ./scripts/enable_usb_console.sh && sudo reboot
+```
+
+It is idempotent, backs up both files it touches, and keeps `cmdline.txt` on one
+line. Worth doing before the sign ships — a USB cable is a lot easier to find in
+the dust than a card reader and a laptop that can mount ext4.
 
 Current versions of the setup script avoid this by not enabling autoconnect
 until the AP has come up once, but a profile made by an older version can still
