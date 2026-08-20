@@ -758,13 +758,56 @@ turning into a rainbow. And running groups at **different speeds** stops
 everything pulsing in lockstep, which is what makes cheap light installations
 look mechanical.
 
+The catch is that a single-colour fade only ramps *brightness*. See
+**Fade speed** below: below about speed 50 it is invisible, and the five scenes
+built on them shipped at 15–35, which made them look like solid colours.
+
 `Rave` is left out of rotation deliberately: flash-7 at speed 70 is a party
 trick, not something to leave running for six hours beside people trying to
 sleep. Tick it back in from the Timing tab if you disagree.
 
 **Speeds are a starting point, not a result.** Watch them after dark and adjust:
-Control → pick the pattern → speed → Apply, then save over the scene. It is not
-even settled whether a higher number means faster on this firmware.
+Control → pick the pattern → speed → Apply, then save over the scene.
+
+#### Fade speed: higher is faster, and single-colour fades need most of the range
+
+Measured on the sign, on `A_Straw`:
+
+| Frame | What it did |
+| --- | --- |
+| `0x88` jump 7 colours @ 50 | hard cuts through colours, unmistakable |
+| `0x91` fade white @ 25 | **looked like solid white** |
+| `0x91` fade white @ 100 | visibly breathes |
+| `0x9c` strobe white @ 60 | flashes clearly — about 2s off, 2s on |
+
+A strobe at 60 running a ~4-second cycle sets the scale: **60 is about the
+slowest worth using for anything**, and at 25 a cycle is long enough that a
+brightness ramp simply cannot be seen. A fade needs more speed than a strobe
+does, because on/off is far easier to notice than a gradual ramp.
+
+Higher is faster, then — but the two kinds of fade are not comparable:
+
+- **Multi-colour** fades (`fade 7 colours`, `fade RGB`) shift *hue*, so they read
+  as movement even at speed 20. Drift, Slow burn, Carousel, Counterpoint and
+  Two faces run at 20–40 and are fine.
+- **Single-colour** fades (`fade red`, `fade white`, …) only ramp *brightness* on
+  one hue. Under ~50 the change is too gradual to perceive and the unit looks
+  like a solid colour. These want 85–100.
+
+Pulse, Heartbeat, Neon drift, Ocean and Ember were all built from single-colour
+fades at 15–35, so all five read as static — five of the eleven scenes in the
+rotation. They are now at 100, the value confirmed visible above. To retune a
+config that predates that fix, or after changing speeds by hand:
+
+    ./scripts/retune_fades.py                        # what would change
+    sudo ./scripts/retune_fades.py --apply           # write it
+    curl -X POST http://localhost/api/config/reload  # pick it up, no restart
+
+It only touches single-colour fades below `--floor` (default 60), leaves the
+multi-colour ones alone, keeps a `.bak`, and preserves the file's owner. Run it
+against `/etc/vice-lights/config.json` — that is the file the service reads, and
+`update.sh` deliberately never overwrites it, so pulling new code does not
+change your scenes.
 
 ### What the patterns actually are on this hardware
 
@@ -778,7 +821,7 @@ is a different list.
 | `0x80`–`0x86` | static colours — the colour picker does these better |
 | `0x87`, `0x88` | flash / jump through 7 colours |
 | `0x89`, `0x8a` | **fade RGB, fade 7 colours** — the useful ones |
-| `0x8b`–`0x91` | fade a single colour: red, green, blue, yellow, cyan, magenta, white |
+| `0x8b`–`0x91` | fade a single colour: red, green, blue, yellow, cyan, magenta, white — needs speed 85+ to be visible |
 | `0x92`–`0x94` | further fade RGB variants |
 | `0x95`–`0x9c` | strobes and flashes, same colour order (`0x9a` is a flash) |
 | `0x9d` | solid white |

@@ -253,7 +253,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 144,
-          "speed": 25
+          "speed": 100
         },
         {
           "target": "group:cup",
@@ -261,7 +261,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 143,
-          "speed": 25
+          "speed": 100
         },
         {
           "target": "group:straw",
@@ -269,7 +269,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 145,
-          "speed": 25
+          "speed": 100
         }
       ]
     },
@@ -283,7 +283,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 139,
-          "speed": 15
+          "speed": 100
         }
       ]
     },
@@ -297,7 +297,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 144,
-          "speed": 35
+          "speed": 100
         },
         {
           "target": "group:drink",
@@ -305,7 +305,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 143,
-          "speed": 35
+          "speed": 100
         }
       ]
     },
@@ -319,7 +319,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 141,
-          "speed": 20
+          "speed": 100
         },
         {
           "target": "group:cup",
@@ -327,7 +327,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 143,
-          "speed": 25
+          "speed": 100
         },
         {
           "target": "group:straw",
@@ -335,7 +335,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 145,
-          "speed": 30
+          "speed": 100
         }
       ]
     },
@@ -349,7 +349,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 139,
-          "speed": 18
+          "speed": 100
         },
         {
           "target": "group:cup",
@@ -357,7 +357,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 142,
-          "speed": 22
+          "speed": 100
         },
         {
           "target": "group:straw",
@@ -365,7 +365,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 139,
-          "speed": 18
+          "speed": 100
         }
       ]
     },
