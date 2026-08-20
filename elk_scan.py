@@ -27,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from vicelights import protocol  # noqa: E402
+from vicelights.ble import get_services, normalize_scan  # noqa: E402
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -42,16 +43,11 @@ def require_bleak():
 async def cmd_scan(args):
     require_bleak()
     print("scanning %.0fs ..." % args.seconds)
-    seen = []
     try:
         discovered = await BleakScanner.discover(timeout=args.seconds, return_adv=True)
-        for device, adv in discovered.values():
-            seen.append((device.address.upper(), (adv.local_name or device.name or "").strip(),
-                         adv.rssi))
     except TypeError:
-        for device in await BleakScanner.discover(timeout=args.seconds):
-            seen.append((device.address.upper(), (device.name or "").strip(),
-                         getattr(device, "rssi", None)))
+        discovered = await BleakScanner.discover(timeout=args.seconds)
+    seen = [(row["address"], row["name"], row["rssi"]) for row in normalize_scan(discovered)]
 
     seen.sort(key=lambda row: (not protocol.looks_like_elk(row[1]), -(row[2] or -999)))
     print("%-20s %-6s %-28s %s" % ("ADDRESS", "RSSI", "NAME", ""))
@@ -68,8 +64,7 @@ async def cmd_probe(args):
     require_bleak()
     print("connecting to %s ..." % args.address)
     async with BleakClient(args.address, timeout=args.timeout) as client:
-        services = getattr(client, "services", None) or client.get_services()
-        collection = list(services)
+        collection = await get_services(client)
         for service in collection:
             print("service %s  %s" % (service.uuid, service.description or ""))
             for char in service.characteristics:
@@ -86,8 +81,7 @@ async def cmd_probe(args):
 async def write_frames(address, frames, timeout=12.0, gap=0.06, verbose=True):
     require_bleak()
     async with BleakClient(address, timeout=timeout) as client:
-        services = getattr(client, "services", None) or client.get_services()
-        uuid, without_response = protocol.pick_characteristic(list(services))
+        uuid, without_response = protocol.pick_characteristic(await get_services(client))
         if uuid is None:
             raise SystemExit("no writable characteristic on %s" % address)
         if verbose:

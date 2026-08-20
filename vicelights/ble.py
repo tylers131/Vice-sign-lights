@@ -373,7 +373,8 @@ class BleWorker:
         client = BleakClient(address, timeout=connect_timeout)
         await asyncio.wait_for(client.connect(), timeout=connect_timeout)
         try:
-            char_uuid, without_response = resolve_characteristic(client, cached)
+            char_uuid, without_response = resolve_characteristic(
+                await get_services(client), cached)
             if char_uuid is None:
                 raise RuntimeError("no writable characteristic on %s" % address)
             if char_uuid != cached:
@@ -420,13 +421,26 @@ class BleWorker:
                  len(found), sum(1 for e in found if e["is_elk"]))
 
 
-def resolve_characteristic(client, cached=None):
-    """Pick the write characteristic, honouring a cached UUID when still valid."""
-    services = getattr(client, "services", None)
-    if services is None:  # bleak < 0.21
-        services = client.get_services()
-    collection = list(services)
+async def get_services(client):
+    """Service collection for a connected client, across bleak versions.
 
+    bleak >= 0.21 exposes a ``services`` property; older releases only have the
+    ``get_services()`` coroutine.  Returns a plain list of services.
+    """
+    services = getattr(client, "services", None)
+    if services is None:
+        getter = getattr(client, "get_services", None)
+        if getter is None:
+            raise RuntimeError("this bleak version exposes no service collection")
+        services = await getter()
+    return list(services)
+
+
+def resolve_characteristic(collection, cached=None):
+    """Pick the write characteristic, honouring a cached UUID when still valid.
+
+    ``collection`` is the list returned by ``get_services``.
+    """
     if cached:
         cached = cached.lower()
         for service in collection:
@@ -439,25 +453,39 @@ def resolve_characteristic(client, cached=None):
 
 
 async def scan_devices(seconds: float = 8.0) -> list:
-    """BLE discovery.  Returns [{address, name, rssi}] for everything seen."""
+    """BLE discovery.  Returns [{address, name, rssi}] for everything seen.
+
+    ``BleakScanner.discover`` has returned three different shapes across bleak
+    versions (list of devices, list of pairs, dict of address -> pair) and
+    ``return_adv`` does not exist on the oldest or, possibly, the newest.  Ask
+    for advertisement data, fall back if the keyword is rejected, and normalise
+    whatever comes back.
+    """
     if not HAVE_BLEAK:
         raise RuntimeError("bleak not installed")
-    results = []
     try:
         discovered = await BleakScanner.discover(timeout=seconds, return_adv=True)
-        for device, adv in discovered.values():
-            results.append({
-                "address": device.address.upper(),
-                "name": (adv.local_name or device.name or "").strip(),
-                "rssi": adv.rssi,
-            })
-    except TypeError:  # bleak < 0.20 has no return_adv
-        for device in await BleakScanner.discover(timeout=seconds):
-            results.append({
-                "address": device.address.upper(),
-                "name": (device.name or "").strip(),
-                "rssi": getattr(device, "rssi", None),
-            })
+    except TypeError:
+        discovered = await BleakScanner.discover(timeout=seconds)
+    return normalize_scan(discovered)
+
+
+def normalize_scan(discovered) -> list:
+    entries = discovered.values() if isinstance(discovered, dict) else discovered
+    results = []
+    for entry in entries:
+        if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            device, adv = entry
+        else:
+            device, adv = entry, None
+        address = getattr(device, "address", None)
+        if not address:
+            continue
+        name = getattr(adv, "local_name", None) or getattr(device, "name", None) or ""
+        rssi = getattr(adv, "rssi", None)
+        if rssi is None:
+            rssi = getattr(device, "rssi", None)
+        results.append({"address": address.upper(), "name": name.strip(), "rssi": rssi})
     return results
 
 

@@ -96,15 +96,31 @@ Manual equivalent, if you'd rather see each step:
 
 ```bash
 python3 -m venv venv
-venv/bin/pip install --extra-index-url https://www.piwheels.org/simple -r requirements.txt
+SKIP_CYTHON=1 venv/bin/pip install --extra-index-url https://www.piwheels.org/simple -r requirements.txt
 sudo mkdir -p /etc/vice-lights /var/lib/vice-lights
 sudo cp config.example.json /etc/vice-lights/config.json
 sudo cp systemd/vice-lights.service /etc/systemd/system/
 sudo systemctl enable --now vice-lights
 ```
 
-**Give it 10–15 minutes on a Zero W.** The venv and `dbus-fast` install are slow
-on a single ARMv6 core even from wheels.
+### Why `SKIP_CYTHON=1`
+
+**Do not `pip install bleak` bare on a Zero W.** bleak depends on `dbus-fast`,
+which ships Cython extensions. When piwheels has no ARMv6 wheel for the version
+pip picks, it falls back to the source tarball and starts compiling — 30–60+
+minutes on one ARMv6 core, frequently ending in an OOM kill on 512MB. It looks
+like a hang; it isn't, it's just slow enough to be useless.
+
+`SKIP_CYTHON=1` is honoured by dbus-fast's build script: it returns early and
+installs the pure-Python implementation in seconds. That implementation is
+slower at marshalling D-Bus messages, which does not matter here — with one BLE
+connection open at a time, the radio dominates the cost by orders of magnitude.
+
+If you already started a bare install and it's sitting on
+`Building wheel for dbus-fast`, Ctrl-C it and re-run with the variable set. The
+downloaded sdist is cached, so the retry is immediate.
+
+**Budget 5–10 minutes** for the venv and the install even with `SKIP_CYTHON=1`.
 
 ### Find your controllers
 
@@ -356,6 +372,7 @@ runs as root because it binds port 80 and sets the system clock.
 | Colours look wrong | Some clones swap red/green wiring. Send pure red with `elk_scan.py color <addr> '#ff0000'` and rewire, or swap channels at the controller |
 | Brightness does nothing | You're on `"native"`; switch to `"scale"` |
 | UI reachable but nothing happens | Check the Queue card and the log — jobs may be queued behind a slow retry |
+| `pip install` hangs on "Building wheel for dbus-fast" | Ctrl-C, re-run with `SKIP_CYTHON=1` (see above) |
 | `backend: simulated` badge | `bleak` failed to import — search the log for `bleak` and reinstall requirements |
 | Can't reach 192.168.4.1 | `nmcli con show --active` (or `systemctl status hostapd`), `ip addr show wlan0` |
 | Schedules never fire | Clock unset — see the red banner; use timers instead |

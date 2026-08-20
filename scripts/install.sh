@@ -25,7 +25,9 @@ if [[ ! -x "$APP_DIR/venv/bin/python" ]]; then
   python3 -m venv "$APP_DIR/venv"
 fi
 "$APP_DIR/venv/bin/pip" install --upgrade pip wheel
-"$APP_DIR/venv/bin/pip" install \
+# SKIP_CYTHON=1 keeps dbus-fast from compiling its Cython extensions, which on
+# an ARMv6 core takes the better part of an hour and can OOM. See requirements.txt.
+SKIP_CYTHON=1 "$APP_DIR/venv/bin/pip" install \
   --extra-index-url https://www.piwheels.org/simple \
   -r "$APP_DIR/requirements.txt"
 

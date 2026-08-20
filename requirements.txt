@@ -1,8 +1,17 @@
-# Pi Zero W (ARMv6) friendly: pure-Python or piwheels-prebuilt only.
-# Install with piwheels so nothing has to compile on the Pi:
-#   pip install --extra-index-url https://www.piwheels.org/simple -r requirements.txt
-# (Raspberry Pi OS already points pip at piwheels via /etc/pip.conf.)
+# Pi Zero W (ARMv6) friendly.
+#
+# IMPORTANT -- install with SKIP_CYTHON=1:
+#
+#   SKIP_CYTHON=1 pip install -r requirements.txt
+#
+# bleak depends on dbus-fast, which ships Cython extensions. piwheels does not
+# always have an ARMv6 wheel for the newest dbus-fast, so pip falls back to the
+# source tarball and spends 30-60+ minutes compiling on the Zero W's single
+# core -- often ending in an OOM kill on 512MB. SKIP_CYTHON=1 makes dbus-fast
+# install its pure-Python implementation instead, in seconds. It is slower at
+# marshalling D-Bus messages, which is irrelevant here: one BLE connection at a
+# time means the radio dominates by orders of magnitude.
 
-bleak>=0.21,<0.23        # BLE client; pulls dbus-fast (piwheels has armv6 wheels)
+bleak>=0.22,<4           # BLE client
 Flask>=2.2,<4            # pure Python
 waitress>=2.1,<4         # pure-Python WSGI server, steadier than the dev server
