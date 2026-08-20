@@ -11,6 +11,7 @@ frames you verify here are byte-for-byte the frames the service sends.
     ./elk_scan.py off   BE:FF:.. --variant all   # try each off encoding
     ./elk_scan.py all off                 # black out every controller in the config
     ./elk_scan.py identify                # light each controller in turn and name it
+    ./elk_scan.py modes BE:FF:..          # audition built-in patterns, name what they do
     ./elk_scan.py channels BE:FF:.. --save # detect swapped RGB wiring
     ./elk_scan.py frames                  # print every frame, no radio needed
     ./elk_scan.py adopt --out config.json # scan and write a starter config
@@ -497,6 +498,89 @@ async def cmd_unstick(args):
         print("A plain colour frame is enough, so patterns were never the problem.")
 
 
+async def cmd_modes(args):
+    """Audition the built-in patterns and record what they actually do.
+
+    The documented mode names do not describe this hardware -- 0x9a, listed as
+    "Flash 7 colour", flashes a single colour on these controllers. So watch each
+    one and write down what you see. Patterns run in the controller's own
+    firmware, which means they animate continuously at no BLE cost: the only way
+    to get real motion out of a sign that takes 4s per device to address.
+    """
+    require_bleak()
+    address = normalize_address(args.address)
+    store = _load_store(args.config, for_writing=True)
+    if store is None:
+        sys.exit("no config found -- pass --config PATH")
+    learned = store.mode_names()
+
+    if args.only:
+        values = []
+        for token in args.only.replace(",", " ").split():
+            try:
+                values.append(int(token, 0))
+            except ValueError:
+                sys.exit("not a mode value: %s" % token)
+    else:
+        values = [v for v in protocol.MODE_VALUES if v >= args.start]
+        if args.new_only:
+            values = [v for v in values if protocol.mode_key(v) not in learned]
+
+    if not values:
+        print("nothing to audition (all already recorded? drop --new-only)")
+        return
+
+    print("Auditioning %d pattern(s) on %s, %.0fs each, speed %d."
+          % (len(values), address, args.dwell, args.speed))
+    print("At each prompt: describe what you SEE, Enter to skip,")
+    print("'r' to watch it again, 'q' to stop.\n")
+
+    index = 0
+    while index < len(values):
+        value = values[index]
+        key = protocol.mode_key(value)
+        known = learned.get(key)
+        print("[%d/%d] %s  %s%s"
+              % (index + 1, len(values), key, protocol.MODES.get(value, "?"),
+                 ("  (recorded: '%s')" % known) if known else ""))
+        try:
+            await write_frames(address,
+                               [protocol.power_frame(True),
+                                protocol.mode_frame(value),
+                                protocol.speed_frame(args.speed)],
+                               args.timeout, verbose=False)
+        except Exception as exc:
+            print("   unreachable: %s" % exc)
+            index += 1
+            continue
+
+        await asyncio.sleep(args.dwell)
+        try:
+            answer = input("   what does it do? ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if answer.lower() in ("q", "quit"):
+            break
+        if answer.lower() in ("r", "repeat"):
+            continue                      # same index, watch it again
+        if answer:
+            learned[key] = answer[:60]
+            store.set_mode_name(value, answer)
+            print("   saved")
+        index += 1
+
+    recorded = store.mode_names()
+    print("\n%d of %d patterns recorded." % (len(recorded), len(protocol.MODE_VALUES)))
+    for key in sorted(recorded):
+        print("   %s  %s" % (key, recorded[key]))
+    if recorded:
+        print("\nThese names now show in the web UI's pattern picker. To make one a")
+        print("scene: Control tab -> pick the pattern -> Apply, then Scenes ->")
+        print("save. A pattern scene keeps animating with no further BLE traffic,")
+        print("so it costs nothing to leave running between rotations.")
+
+
 def cmd_frames(_args):
     print("solid #ff2d78 :", protocol.color_frame(0xFF, 0x2D, 0x78).hex(" "))
     print("power on      :", protocol.power_frame(True).hex(" "))
@@ -599,6 +683,20 @@ def main(argv=None):
                        help="find how this firmware leaves a built-in pattern")
     p.add_argument("address")
     p.set_defaults(fn=cmd_unstick, is_async=True)
+
+    p = sub.add_parser("modes",
+                       help="audition the built-in patterns and name what they do")
+    p.add_argument("address")
+    p.add_argument("--config", help="config.json to record the names in")
+    p.add_argument("--dwell", type=float, default=6.0,
+                   help="seconds to watch each pattern (default 6)")
+    p.add_argument("--speed", type=int, default=50, help="pattern speed 0-100")
+    p.add_argument("--start", type=lambda v: int(v, 0), default=0x80,
+                   help="begin at this mode value")
+    p.add_argument("--only", help="audition just these values, e.g. 0x89,0x91")
+    p.add_argument("--new-only", action="store_true",
+                   help="skip patterns already recorded")
+    p.set_defaults(fn=cmd_modes, is_async=True)
 
     p = sub.add_parser("frames", help="print every frame (no radio needed)")
     p.set_defaults(fn=cmd_frames, is_async=False)

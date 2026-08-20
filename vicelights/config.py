@@ -77,6 +77,10 @@ MIN_ROTATION_MINUTES = 2.0
 DEFAULT_CONFIG = {
     "settings": dict(DEFAULT_SETTINGS),
     "rotation": dict(DEFAULT_ROTATION),
+    # What each built-in pattern actually does on THIS hardware, keyed "0x89".
+    # The documented names do not describe these controllers, so this is filled
+    # in by watching: `elk_scan.py modes ADDR`.
+    "mode_names": {},
     "devices": [],
     "groups": [],
     "scenes": [],
@@ -131,6 +135,26 @@ def _rotation(raw) -> dict:
     except (TypeError, ValueError):
         value["hold_after_manual_minutes"] = 15.0
     return value
+
+
+def _mode_names(raw) -> dict:
+    """Normalise observed mode labels to '0xNN' keys, dropping junk."""
+    from .protocol import MODE_MIN, MODE_MAX, mode_key
+    names = {}
+    for key, label in (raw or {}).items():
+        try:
+            value = int(str(key), 0)
+        except (TypeError, ValueError):
+            log.warning("ignoring mode name with bad key %r", key)
+            continue
+        if not MODE_MIN <= value <= MODE_MAX:
+            log.warning("ignoring mode name outside 0x%02x-0x%02x: %r",
+                        MODE_MIN, MODE_MAX, key)
+            continue
+        label = str(label or "").strip()
+        if label:
+            names[mode_key(value)] = label[:60]
+    return names
 
 
 class ConfigError(Exception):
@@ -199,6 +223,7 @@ class ConfigStore:
         settings.update(raw.get("settings") or {})
         data["settings"] = settings
         data["rotation"] = _rotation(raw.get("rotation"))
+        data["mode_names"] = _mode_names(raw.get("mode_names"))
 
         seen = set()
         for entry in raw.get("devices") or []:
@@ -537,6 +562,27 @@ class ConfigStore:
             before = len(data["schedules"])
             data["schedules"] = [s for s in data["schedules"] if s["id"] != schedule_id]
             return len(data["schedules"]) != before
+
+        return self.mutate(apply)
+
+    def mode_names(self) -> dict:
+        with self._lock:
+            return dict(self._data.get("mode_names") or {})
+
+    def set_mode_name(self, value: int, label: str) -> dict:
+        """Record what a pattern really looks like on this hardware."""
+        from .protocol import mode_key
+
+        def apply(data):
+            names = dict(data.get("mode_names") or {})
+            key = mode_key(value)
+            label_clean = str(label or "").strip()[:60]
+            if label_clean:
+                names[key] = label_clean
+            else:
+                names.pop(key, None)
+            data["mode_names"] = _mode_names(names)
+            return data["mode_names"]
 
         return self.mutate(apply)
 

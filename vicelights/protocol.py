@@ -121,6 +121,33 @@ MODES = {
 }
 
 
+MODE_MIN, MODE_MAX = 0x80, 0x9D
+MODE_VALUES = tuple(range(MODE_MIN, MODE_MAX + 1))
+
+
+def mode_key(value: int) -> str:
+    """Config key for a mode value: '0x89'. JSON has no integer keys."""
+    return "0x%02x" % clamp(value, MODE_MIN, MODE_MAX)
+
+
+def mode_label(value: int, learned=None) -> str:
+    """What to call a mode, preferring what was observed over what is documented."""
+    learned = learned or {}
+    seen = learned.get(mode_key(value)) or learned.get(str(value))
+    if seen:
+        return seen
+    return MODES.get(value, "Mode %s" % mode_key(value))
+
+
+def mode_catalog(learned=None) -> list:
+    """Every mode with its best-known label, for pickers and listings."""
+    learned = learned or {}
+    return [{"value": value, "key": mode_key(value),
+             "name": mode_label(value, learned),
+             "observed": bool(learned.get(mode_key(value)))}
+            for value in MODE_VALUES]
+
+
 def _frame(cmd: int, a: int = 0, b: int = 0, c: int = 0, d: int = 0) -> bytes:
     return bytes([HEADER, 0x00, cmd, a & 0xFF, b & 0xFF, c & 0xFF, d & 0xFF, 0x00, TAIL])
 

@@ -549,10 +549,11 @@ Either way:
 
 The UI has five tabs.
 
-> **Built-in pattern names are unreliable.** The mode list comes from general
-> ELK-BLEDOM documentation, and on this hardware the values do something other
-> than their labels claim — 0x9a, documented as "Flash 7 colour", flashes a
-> single colour. The modes work; the names are guesses. Pick by trial.
+> **Built-in pattern names start as guesses.** The mode list comes from general
+> ELK-BLEDOM documentation and does not describe this hardware — 0x9a,
+> documented as "Flash 7 colour", flashes a single colour. Audition them and
+> record what they really do (below); the picker then shows your names, with
+> ● marking the ones someone has actually watched.
 
 **Control** — pick a target (All / a group / one controller), pick a colour and
 brightness, hit **Apply**. *Live apply* sends as you drag; it debounces in the
@@ -642,6 +643,40 @@ cannot see both at once), **Warm**, **Letters only** (drink goes dark), and
 
 Edit any of them from the Scenes tab, or add your own — new scenes join the
 rotation automatically unless you tick a specific playlist.
+
+### Built-in patterns: motion for free
+
+At ~4s per controller the Pi cannot animate the sign. The controllers can: a
+built-in pattern runs in their own firmware, so once set it animates
+continuously with **no further BLE traffic at all**. One 50s sweep buys motion
+that lasts until you change it — which makes a pattern scene the cheapest thing
+rotation can play.
+
+The catch is that the documented mode names are wrong for this hardware, so find
+out what the 30 values actually do:
+
+```bash
+sudo systemctl stop vice-lights
+python elk_scan.py modes BE:68:F1:BB:DB:04 --config /etc/vice-lights/config.json
+sudo systemctl start vice-lights
+```
+
+It sets each pattern in turn, waits `--dwell` seconds, and asks what you saw.
+Type a description to record it, Enter to skip, `r` to watch it again, `q` to
+stop. Useful flags: `--only 0x89,0x91` for specific values, `--new-only` to skip
+what is already recorded, `--speed` and `--start`.
+
+Or do it from the phone while standing at the sign, which is easier in the dark:
+**Control → pick a pattern → Apply pattern → Name this pattern.** Same store,
+same effect.
+
+Recorded names replace the documented ones everywhere, and the picker marks
+observed patterns with ● and unverified ones with ○.
+
+**Turn a good one into a scene:** Control tab → choose the pattern and speed →
+Apply → Scenes → save. Target a group and the rest of the sign keeps its solid
+colour, so "letters fading through the spectrum, cup and straw steady cyan" is
+one scene. Those scenes rotate like any other, and cost nothing to leave running.
 
 ### Timing without a clock
 
@@ -896,6 +931,7 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST/DELETE | `/api/scenes`, `/api/scenes/<id>` | |
 | POST/DELETE | `/api/schedules`, `/api/schedules/<id>` | |
 | POST/DELETE | `/api/timers`, `/api/timers/<id>` | `{scene, minutes}` |
+| GET/POST | `/api/modes` | `{value, name}` — record what a pattern really does |
 | GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |
 | POST | `/api/rotation/next` | Skip to the next scene now |
 | GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |

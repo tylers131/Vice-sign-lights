@@ -122,7 +122,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "next_runs": scheduler.next_runs(),
             "rotation": scheduler.rotation.status(),
             "time": timekeeper.info(),
-            "modes": [{"value": value, "name": name} for value, name in sorted(protocol.MODES.items())],
+            "modes": protocol.mode_catalog(store.mode_names()),
             "queue": {"queued": status["queued"], "busy": status["busy"],
                       "current": status["current"]},
             "jobs": [_slim_job(job) for job in status["jobs"][:6]],
@@ -271,6 +271,25 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
     @app.route("/api/schedules/<schedule_id>", methods=["DELETE"])
     def api_schedule_delete(schedule_id):
         return jsonify({"ok": True, "removed": store.delete_schedule(schedule_id)})
+
+    @app.route("/api/modes", methods=["GET", "POST"])
+    def api_modes():
+        """Record what a built-in pattern actually does on this hardware.
+
+        The documented names describe some other firmware, so the useful ones
+        come from someone standing in front of the sign watching it.
+        """
+        if request.method == "POST":
+            body = _body()
+            try:
+                value = int(str(body.get("value")), 0)
+            except (TypeError, ValueError):
+                return _json_error("mode value required, e.g. 137 or '0x89'")
+            if not protocol.MODE_MIN <= value <= protocol.MODE_MAX:
+                return _json_error("mode must be between 0x%02x and 0x%02x"
+                                   % (protocol.MODE_MIN, protocol.MODE_MAX))
+            store.set_mode_name(value, body.get("name", ""))
+        return jsonify({"ok": True, "modes": protocol.mode_catalog(store.mode_names())})
 
     @app.route("/api/rotation", methods=["GET", "POST"])
     def api_rotation():

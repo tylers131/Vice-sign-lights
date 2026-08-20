@@ -148,7 +148,11 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <label>Speed <span id="speedVal">50</span></label>
     <input type="range" id="speed" min="0" max="100" value="50"
            oninput="document.getElementById('speedVal').textContent=this.value">
-    <button class="btn" style="margin-top:10px" onclick="applyMode()">Apply pattern</button>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" onclick="applyMode()">Apply pattern</button>
+      <button class="btn ghost" onclick="nameMode()">Name this pattern</button>
+    </div>
+    <p class="muted" id="modeHint" style="margin-bottom:0"></p>
   </div>
 
   <div class="card">
@@ -417,12 +421,35 @@ function renderTargets(){
   if(prev){ sel.value=prev; if(!sel.value) sel.value="all"; }
 }
 function renderModes(){
-  var sel=$("mode");
-  if(sel.options.length>1) return;
-  STATE.modes.forEach(function(m){
+  var sel=$("mode"), prev=sel.value;
+  var signature=(STATE.modes||[]).map(function(m){ return m.value+":"+m.name; }).join("|");
+  if(sel._sig===signature) return;
+  sel._sig=signature;
+  sel.innerHTML='<option value="">- none (solid colour) -</option>';
+  (STATE.modes||[]).forEach(function(m){
     var o=document.createElement("option");
-    o.value=m.value; o.textContent=m.name;
+    o.value=m.value;
+    /* A dot marks patterns someone has actually watched and described. */
+    o.textContent=(m.observed?"\u25cf ":"\u25cb ")+m.name;
     sel.appendChild(o);
+  });
+  if(prev) sel.value=prev;
+  var seen=(STATE.modes||[]).filter(function(m){ return m.observed; }).length;
+  $("modeHint").textContent = seen
+    ? ("\u25cf = watched and named ("+seen+" of "+STATE.modes.length+")")
+    : "None named yet. Apply one, watch the sign, then tap Name this pattern.";
+}
+function nameMode(){
+  var value=$("mode").value;
+  if(!value){ toast("Pick a pattern first"); return; }
+  var current=null;
+  (STATE.modes||[]).forEach(function(m){ if(String(m.value)===String(value)) current=m; });
+  var name=prompt("What does this pattern actually do on the sign?",
+                  current && current.observed ? current.name : "");
+  if(name===null) return;
+  post("/api/modes",{value:parseInt(value,10), name:name}).then(function(j){
+    if(j.ok){ STATE.modes=j.modes; renderModes(); $("mode").value=value;
+              toast(name ? "Saved" : "Name cleared"); }
   });
 }
 function renderScenes(){
