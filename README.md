@@ -987,6 +987,42 @@ Cache = always
 A reconnect can then skip rediscovering services it already knows, which is part
 of what `connect` is paying for. Measure before and after.
 
+### Board comparison, measured
+
+Same twelve controllers, same code, same room:
+
+| | Pi Zero W | Pi 4 (2GB, 64-bit) |
+| --- | --- | --- |
+| connect | 3.18s | **1.79s** |
+| write | 0.09s | 0.07s |
+| per device (accounted) | 4.13s | **2.73s** |
+| 12-device sweep | 49.6s | **32.8s** |
+
+A 34% cut, all of it in `connect`. The estimate below said 0.5–1s per device;
+the real figure is 1.4s. More of `connect` was CPU and D-Bus than that reasoning
+credited — the irreducible radio floor is at most 1.79s, not the 1.5–2.5s
+guessed. The Pi 4 also has a newer BLE chip, so some of the gain is the radio
+rather than the processor; the two cannot be separated from these numbers alone.
+
+**Measure with only one host running.** A Zero W still powered and running the
+service will fight the Pi 4 for the same twelve controllers, and the symptom is
+specific: the phase totals stay low while `unmeasured` climbs, because the
+timings only record the attempt that succeeded and retries land outside them. A
+first Pi 4 reading showed `2.59s accounted, 7.02s actual (4.43s unmeasured)`
+with the Zero W still on; killing it gave `2.71 / 2.73 / 0.02`.
+
+**Tuning for a faster board.** Two defaults are sized for the Zero W's single
+core and shared antenna, and can be tightened where there is headroom:
+
+```jsonc
+"inter_device_delay": 0.1,   // was 0.35 -- the pause that let the AP breathe
+"disconnect_wait": 0.2       // was 0.5  -- how long to wait on a teardown
+```
+
+That is roughly another 6s off a sweep. Re-check AP responsiveness afterwards
+(§ AP / BLE contention) — the point of those delays was leaving the radio time
+to serve the web UI, and a Pi 4 has more CPU headroom but still one antenna.
+
 ### Would a Pi Zero 2 W help? Mostly no — this was asked and measured
 
 Final per-device breakdown at 49.6s for twelve controllers:
