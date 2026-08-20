@@ -72,6 +72,18 @@ def setup_logging(path, level="INFO"):
     return ring.buffer, resolved
 
 
+def _installed_from() -> str:
+    """The revision stamped by install.sh / update.sh, if there is one."""
+    stamp = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "INSTALLED_FROM")
+    try:
+        with open(stamp, "r", encoding="utf-8") as handle:
+            text = handle.read().strip()
+        return " (installed from %s)" % text if text else ""
+    except Exception:
+        return ""
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(prog="vicelights",
                                      description="ELK-BLEDOM sign controller")
@@ -92,6 +104,11 @@ def main(argv=None):
     log_buffer, log_path = setup_logging(args.log, store.setting("log_level", "INFO"))
     log = logging.getLogger("vicelights")
     log.info("vice-sign-lights %s starting (config %s)", VERSION, store.path)
+    # Which tree is actually running? The service runs from its installed copy,
+    # so a `git pull` in a checkout elsewhere changes nothing here -- say so
+    # plainly rather than leaving it to be inferred from missing log lines.
+    log.info("running from %s%s", os.path.dirname(os.path.abspath(__file__)),
+             _installed_from())
 
     timekeeper = TimeKeeper(args.state)
     timekeeper.start()

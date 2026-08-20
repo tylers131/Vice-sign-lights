@@ -140,6 +140,32 @@ downloaded sdist is cached, so the retry is immediate.
 
 **Budget 5–10 minutes** for the venv and the install even with `SKIP_CYTHON=1`.
 
+### Updating
+
+**The service runs from `/opt/vice-sign-lights`, not from your checkout.**
+`git pull` alone changes nothing about what is running — it updates the CLI in
+your working copy only. To ship code changes to the service:
+
+```bash
+cd ~/vice-sign-lights && git pull && sudo ./scripts/update.sh
+```
+
+`update.sh` copies the code across, reinstalls the unit file if it changed,
+restarts, and prints the tail of the log. It skips apt and pip, so it takes
+seconds; use `install.sh` when dependencies change.
+
+Every startup logs which tree it is running and the revision that was
+installed, so this is never a guess:
+
+```
+running from /opt/vice-sign-lights/vicelights (installed from 8c41948 Log the frames a job actually sends)
+```
+
+Running an old service against a new config is worth avoiding for a second
+reason: the config store drops fields it does not recognise, and it rewrites the
+file after the first successful write to each device. A `channels` order saved
+by a newer CLI would be silently erased by an older service.
+
 ### Find your controllers
 
 Stop the service first — only one process may own the radio. `install.sh` hands

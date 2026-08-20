@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Push the current checkout into the installed service and restart it.
+#
+# The service runs from /opt/vice-sign-lights, so `git pull` alone changes
+# nothing about what is running. This copies the code across and restarts,
+# without re-running apt or pip -- use install.sh when dependencies change.
+#
+#   cd ~/vice-sign-lights && git pull && sudo ./scripts/update.sh
+set -euo pipefail
+
+APP_DIR=/opt/vice-sign-lights
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+[[ $EUID -eq 0 ]] || { echo "run me with sudo" >&2; exit 1; }
+[[ -d "$APP_DIR/venv" ]] || { echo "$APP_DIR/venv missing -- run install.sh first" >&2; exit 1; }
+
+echo "==> $SRC_DIR -> $APP_DIR"
+for item in vicelights elk_scan.py requirements.txt config.example.json README.md scripts; do
+  [[ -e "$SRC_DIR/$item" ]] || continue
+  rm -rf "${APP_DIR:?}/$item"
+  cp -r "$SRC_DIR/$item" "$APP_DIR/"
+done
+find "$APP_DIR/vicelights" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Record what was installed, so the service can say so at startup.
+REVISION="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+DESCRIBED="$(git -C "$SRC_DIR" log -1 --format=%s 2>/dev/null || echo '')"
+printf '%s %s\n' "$REVISION" "$DESCRIBED" > "$APP_DIR/INSTALLED_FROM"
+
+if ! cmp -s "$SRC_DIR/systemd/vice-lights.service" /etc/systemd/system/vice-lights.service; then
+  echo "==> unit file changed, reinstalling it"
+  install -m 0644 "$SRC_DIR/systemd/vice-lights.service" /etc/systemd/system/vice-lights.service
+  systemctl daemon-reload
+fi
+
+echo "==> restarting"
+systemctl restart vice-lights
+sleep 4
+journalctl -u vice-lights -n 12 --no-pager | sed 's/^/    /'
+echo
+echo "Now running $REVISION"

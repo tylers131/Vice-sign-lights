@@ -47,6 +47,10 @@ fi
 chmod 0755 "$CONF_DIR"
 [[ -f "$CONF_DIR/config.json" ]] && chmod 0644 "$CONF_DIR/config.json"
 
+REVISION="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+printf '%s %s\n' "$REVISION" "$(git -C "$SRC_DIR" log -1 --format=%s 2>/dev/null || true)" \
+  > "$APP_DIR/INSTALLED_FROM"
+
 echo "==> systemd unit"
 install -m 0644 "$SRC_DIR/systemd/vice-lights.service" /etc/systemd/system/vice-lights.service
 systemctl daemon-reload
@@ -57,5 +61,8 @@ sleep 3
 systemctl --no-pager --lines=15 status vice-lights.service || true
 echo
 echo "Done. Web UI: http://192.168.4.1/ once the access point is up."
+echo
+echo "The service runs from $APP_DIR, not from your checkout. To ship code changes:"
+echo "    cd $SRC_DIR && git pull && sudo ./scripts/update.sh"
 echo "Set up the AP with:  sudo ./scripts/setup_ap_networkmanager.sh   (Bookworm)"
 echo "                or:  sudo ./scripts/setup_ap_hostapd.sh          (Bullseye)"
