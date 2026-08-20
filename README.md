@@ -853,6 +853,18 @@ can cut `connect` substantially. **Test AP responsiveness afterwards** — more
 frequent BLE events mean more airtime on the one antenna the wifi AP shares, so
 this trades UI latency for sweep speed. Measure both before keeping it.
 
+A job that reports `12 ok / 0 failed` but takes twice as long as it should is
+usually retries. Only the attempt that succeeded contributes phase timings, so a
+device that timed out once and connected on the second try looks fast while
+having cost a whole `connect_timeout`. That shows up as unmeasured time, and the
+log now names the devices responsible:
+
+```
+2 device(s) needed a retry (most of the unmeasured time): A_C on attempt 2, B_V on attempt 2
+```
+
+Repeat offenders are a range or placement problem, not a software one.
+
 Read your own numbers before believing anything about how to speed this up:
 
 ```bash

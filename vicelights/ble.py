@@ -459,6 +459,7 @@ class BleWorker:
                     self._connect_and_write(address, frames, settings, phases),
                     timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
                 )
+                phases["attempts"] = attempt
                 return True, "ok on attempt %d" % attempt, char_uuid, phases
             except asyncio.TimeoutError:
                 last_error = "timeout (attempt %d/%d)" % (attempt, attempts)
@@ -666,6 +667,17 @@ def _log_phase_summary(job, gap: float):
              len(samples),
              "  ".join("%s %.2fs" % (name, totals[name]) for name in PHASE_ORDER),
              gap, accounted, actual, max(0.0, actual - accounted))
+
+    # Only the attempt that worked contributes phase timings, so a device that
+    # failed once and succeeded on the retry looks fast while having cost a
+    # whole connect timeout. Without naming them, "12 ok" hides the problem.
+    retried = [(item["name"], (item.get("phases") or {}).get("attempts", 1))
+               for item in job.items
+               if (item.get("phases") or {}).get("attempts", 1) > 1]
+    if retried:
+        log.warning("%d device(s) needed a retry (most of the unmeasured time): %s",
+                    len(retried),
+                    ", ".join("%s on attempt %d" % pair for pair in retried))
 
 
 def _spaced(frames) -> str:
