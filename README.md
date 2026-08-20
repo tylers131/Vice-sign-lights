@@ -104,7 +104,13 @@ sudo apt update && sudo apt install -y git python3-venv bluez
 git clone <this repo> vice-sign-lights
 cd vice-sign-lights
 sudo ./scripts/install.sh
+sudo cp config.example.json /etc/vice-lights/config.json
+sudo systemctl restart vice-lights
 ```
+
+`install.sh` chooses the `dbus-fast` build by architecture — pure Python on
+armv6 where no wheel exists, compiled everywhere else. You do not need to think
+about `SKIP_CYTHON` unless you are installing by hand on a Zero W.
 
 `install.sh` copies the app to `/opt/vice-sign-lights`, builds a venv, installs
 the requirements from piwheels, seeds `/etc/vice-lights/config.json` from the
@@ -121,7 +127,9 @@ sudo cp systemd/vice-lights.service /etc/systemd/system/
 sudo systemctl enable --now vice-lights
 ```
 
-### Why `SKIP_CYTHON=1`
+### Why `SKIP_CYTHON=1` (Pi Zero / Zero W only)
+
+`install.sh` handles this for you; it matters when installing by hand.
 
 **Do not `pip install bleak` bare on a Zero W.** bleak depends on `dbus-fast`,
 which ships Cython extensions. When piwheels has no ARMv6 wheel for the version

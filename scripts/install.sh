@@ -25,9 +25,25 @@ if [[ ! -x "$APP_DIR/venv/bin/python" ]]; then
   python3 -m venv "$APP_DIR/venv"
 fi
 "$APP_DIR/venv/bin/pip" install --upgrade pip wheel
-# SKIP_CYTHON=1 keeps dbus-fast from compiling its Cython extensions, which on
-# an ARMv6 core takes the better part of an hour and can OOM. See requirements.txt.
-SKIP_CYTHON=1 "$APP_DIR/venv/bin/pip" install \
+
+# dbus-fast ships Cython extensions. On armv6 no prebuilt wheel exists anywhere,
+# so pip compiles for the better part of an hour on a 1GHz core and may OOM --
+# SKIP_CYTHON=1 takes the pure-Python implementation instead. On armv7 (piwheels)
+# and arm64 (PyPI manylinux) a compiled wheel exists, and skipping it would throw
+# away the faster implementation for nothing.
+ARCH="$(uname -m)"
+PIP_ENV=()
+case "$ARCH" in
+  armv6l)
+    echo "==> $ARCH: no compiled dbus-fast exists; installing the pure-Python build"
+    PIP_ENV=(SKIP_CYTHON=1)
+    ;;
+  *)
+    echo "==> $ARCH: using compiled wheels where they exist"
+    ;;
+esac
+
+env "${PIP_ENV[@]}" "$APP_DIR/venv/bin/pip" install \
   --extra-index-url https://www.piwheels.org/simple \
   -r "$APP_DIR/requirements.txt"
 

@@ -1,16 +1,15 @@
-# Pi Zero W (ARMv6) friendly.
+# Dependencies. All pure-Python except dbus-fast, which bleak pulls in.
 #
-# IMPORTANT -- install with SKIP_CYTHON=1:
+# scripts/install.sh picks the right build automatically:
 #
-#   SKIP_CYTHON=1 pip install -r requirements.txt
+#   armv6  (Pi Zero / Zero W)  -> SKIP_CYTHON=1, pure Python. No compiled wheel
+#                                 exists for armv6 anywhere, and building it
+#                                 takes the better part of an hour on that core.
+#   armv7  (Pi Zero 2 W, Pi 3) -> piwheels serves a compiled wheel.
+#   arm64  (Pi 4/5, 64-bit OS) -> PyPI manylinux serves a compiled wheel.
 #
-# bleak depends on dbus-fast, which ships Cython extensions. piwheels does not
-# always have an ARMv6 wheel for the newest dbus-fast, so pip falls back to the
-# source tarball and spends 30-60+ minutes compiling on the Zero W's single
-# core -- often ending in an OOM kill on 512MB. SKIP_CYTHON=1 makes dbus-fast
-# install its pure-Python implementation instead, in seconds. It is slower at
-# marshalling D-Bus messages, which is irrelevant here: one BLE connection at a
-# time means the radio dominates by orders of magnitude.
+# Installing by hand on a Zero W? Prefix it: SKIP_CYTHON=1 pip install -r ...
+# Anywhere else, plain pip is correct and faster.
 
 bleak>=0.22,<4           # BLE client
 Flask>=2.2,<4            # pure Python
