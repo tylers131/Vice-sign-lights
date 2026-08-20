@@ -10,26 +10,70 @@
     "attempts": 3,
     "retry_backoff": 0.8,
     "inter_frame_delay": 0.06,
-    "inter_device_delay": 0.35,
-    "disconnect_wait": 0.5,
-    "cooldown_after": 2,
-    "failure_cooldown": 180.0,
+    "inter_device_delay": 0.1,
+    "disconnect_wait": 0.2,
+    "cooldown_after": 1,
+    "failure_cooldown": 900.0,
     "scan_seconds": 8.0,
     "log_level": "INFO",
     "apply_on_boot": "Vice"
   },
-  "groups": [
-    "letters",
-    "drink",
-    "cup",
-    "straw",
-    "side-a",
-    "side-b",
-    "V",
-    "I",
-    "C",
-    "E"
-  ],
+  "rotation": {
+    "enabled": true,
+    "playlist": [
+      "Drift",
+      "Slow burn",
+      "Carousel",
+      "Pulse",
+      "Heartbeat",
+      "Neon drift",
+      "Ocean",
+      "Ember",
+      "Counterpoint",
+      "Two faces",
+      "Jump cut"
+    ],
+    "exclude": [
+      "All off",
+      "Rave"
+    ],
+    "interval_minutes": 5.0,
+    "order": "shuffle",
+    "avoid_repeat": true,
+    "hold_after_manual_minutes": 15.0
+  },
+  "mode_names": {
+    "0x80": "static red",
+    "0x81": "static blue",
+    "0x82": "static green",
+    "0x83": "static cyan",
+    "0x84": "static yellow",
+    "0x85": "static magenta",
+    "0x86": "static white",
+    "0x87": "flash 7 colours",
+    "0x88": "jump 7 colours",
+    "0x89": "fade RGB",
+    "0x8a": "fade 7 colours",
+    "0x8b": "fade red",
+    "0x8c": "fade green",
+    "0x8d": "fade blue",
+    "0x8e": "fade yellow",
+    "0x8f": "fade cyan",
+    "0x90": "fade magenta",
+    "0x91": "fade white",
+    "0x92": "fade RGB (2)",
+    "0x93": "fade RGB (3)",
+    "0x94": "fade RGB (4)",
+    "0x95": "strobe 7 colours",
+    "0x96": "strobe red",
+    "0x97": "strobe green",
+    "0x98": "strobe blue",
+    "0x99": "strobe yellow",
+    "0x9a": "flash cyan",
+    "0x9b": "strobe magenta",
+    "0x9c": "strobe white",
+    "0x9d": "solid white"
+  },
   "devices": [
     {
       "address": "BE:27:96:00:1C:AE",
@@ -40,7 +84,8 @@
         "V"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -52,7 +97,8 @@
         "I"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -64,7 +110,8 @@
         "C"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -76,7 +123,8 @@
         "E"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -88,7 +136,8 @@
         "V"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -100,7 +149,8 @@
         "I"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -112,7 +162,8 @@
         "C"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": "weak signal from the Pi's test position (-81 dBm)"
     },
     {
@@ -124,7 +175,8 @@
         "E"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": "weak signal from the Pi's test position (-83 dBm)"
     },
     {
@@ -136,7 +188,8 @@
         "side-a"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -148,7 +201,8 @@
         "side-a"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -160,7 +214,8 @@
         "side-b"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     },
     {
@@ -172,9 +227,22 @@
         "side-b"
       ],
       "enabled": true,
-      "char_uuid": null,
+      "char_uuid": "0000fff3-0000-1000-8000-00805f9b34fb",
+      "channels": "rgb",
       "notes": ""
     }
+  ],
+  "groups": [
+    "letters",
+    "drink",
+    "cup",
+    "straw",
+    "side-a",
+    "side-b",
+    "V",
+    "I",
+    "C",
+    "E"
   ],
   "scenes": [
     {
@@ -894,60 +962,5 @@
       "last_fired": ""
     }
   ],
-  "rotation": {
-    "enabled": true,
-    "playlist": [
-      "Drift",
-      "Slow burn",
-      "Carousel",
-      "Pulse",
-      "Heartbeat",
-      "Neon drift",
-      "Ocean",
-      "Ember",
-      "Counterpoint",
-      "Two faces",
-      "Jump cut"
-    ],
-    "exclude": [
-      "All off",
-      "Rave"
-    ],
-    "interval_minutes": 8.0,
-    "order": "shuffle",
-    "avoid_repeat": true,
-    "hold_after_manual_minutes": 15.0
-  },
-  "mode_names": {
-    "0x80": "static red",
-    "0x81": "static blue",
-    "0x82": "static green",
-    "0x83": "static cyan",
-    "0x84": "static yellow",
-    "0x85": "static magenta",
-    "0x86": "static white",
-    "0x87": "flash 7 colours",
-    "0x88": "jump 7 colours",
-    "0x89": "fade RGB",
-    "0x8a": "fade 7 colours",
-    "0x8b": "fade red",
-    "0x8c": "fade green",
-    "0x8d": "fade blue",
-    "0x8e": "fade yellow",
-    "0x8f": "fade cyan",
-    "0x90": "fade magenta",
-    "0x91": "fade white",
-    "0x92": "fade RGB (2)",
-    "0x93": "fade RGB (3)",
-    "0x94": "fade RGB (4)",
-    "0x95": "strobe 7 colours",
-    "0x96": "strobe red",
-    "0x97": "strobe green",
-    "0x98": "strobe blue",
-    "0x99": "strobe yellow",
-    "0x9a": "flash cyan",
-    "0x9b": "strobe magenta",
-    "0x9c": "strobe white",
-    "0x9d": "solid white"
-  }
+  "timers": []
 }
