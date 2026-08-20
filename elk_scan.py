@@ -40,24 +40,65 @@ def require_bleak():
         sys.exit("bleak is not installed. pip install -r requirements.txt")
 
 
+def merge_scan(merged: dict, rows: list) -> dict:
+    """Fold one scan pass into the running union, keyed by address.
+
+    A controller at the edge of range advertises intermittently, so a single
+    pass under-reports.  Keep the best RSSI seen, the first real name seen (a
+    pass can catch the advertisement without the scan response, which is where
+    the name lives), and count how many passes each unit appeared in -- that
+    count is the useful signal for "which of these is marginal".
+    """
+    for row in rows:
+        entry = merged.setdefault(row["address"], {
+            "address": row["address"], "name": "", "rssi": None, "seen": 0})
+        entry["seen"] += 1
+        if row.get("name") and not entry["name"]:
+            entry["name"] = row["name"]
+        rssi = row.get("rssi")
+        if rssi is not None and (entry["rssi"] is None or rssi > entry["rssi"]):
+            entry["rssi"] = rssi
+    return merged
+
+
 async def cmd_scan(args):
     require_bleak()
-    print("scanning %.0fs ..." % args.seconds)
-    try:
-        discovered = await BleakScanner.discover(timeout=args.seconds, return_adv=True)
-    except TypeError:
-        discovered = await BleakScanner.discover(timeout=args.seconds)
-    seen = [(row["address"], row["name"], row["rssi"]) for row in normalize_scan(discovered)]
+    passes = max(1, int(getattr(args, "repeat", 1) or 1))
+    merged = {}
+    for index in range(passes):
+        label = ("pass %d/%d: " % (index + 1, passes)) if passes > 1 else ""
+        print("%sscanning %.0fs ..." % (label, args.seconds))
+        try:
+            discovered = await BleakScanner.discover(timeout=args.seconds, return_adv=True)
+        except TypeError:
+            discovered = await BleakScanner.discover(timeout=args.seconds)
+        merge_scan(merged, normalize_scan(discovered))
+        if passes > 1:
+            elk_so_far = sum(1 for e in merged.values() if protocol.looks_like_elk(e["name"]))
+            print("  %d device(s) so far, %d look like ELK-BLEDOM" % (len(merged), elk_so_far))
 
-    seen.sort(key=lambda row: (not protocol.looks_like_elk(row[1]), -(row[2] or -999)))
-    print("%-20s %-6s %-28s %s" % ("ADDRESS", "RSSI", "NAME", ""))
-    for address, name, rssi in seen:
-        mark = "<- ELK-BLEDOM" if protocol.looks_like_elk(name) else ""
-        print("%-20s %-6s %-28s %s" % (address, rssi if rssi is not None else "?",
-                                       name or "(no name)", mark))
-    elk = [row for row in seen if protocol.looks_like_elk(row[1])]
-    print("\n%d device(s), %d look like ELK-BLEDOM" % (len(seen), len(elk)))
-    return seen
+    rows = list(merged.values())
+    if getattr(args, "elk_only", False):
+        rows = [e for e in rows if protocol.looks_like_elk(e["name"])]
+    rows.sort(key=lambda e: (not protocol.looks_like_elk(e["name"]), -(e["rssi"] or -999)))
+
+    seen_col = "SEEN" if passes > 1 else ""
+    print("\n%-20s %-6s %-6s %-28s" % ("ADDRESS", "RSSI", seen_col, "NAME"))
+    for entry in rows:
+        mark = "<- ELK-BLEDOM" if protocol.looks_like_elk(entry["name"]) else ""
+        seen = ("%d/%d" % (entry["seen"], passes)) if passes > 1 else ""
+        print("%-20s %-6s %-6s %-28s %s" % (
+            entry["address"], entry["rssi"] if entry["rssi"] is not None else "?",
+            seen, entry["name"] or "(no name)", mark))
+
+    elk = [e for e in rows if protocol.looks_like_elk(e["name"])]
+    print("\n%d device(s), %d look like ELK-BLEDOM" % (len(rows), len(elk)))
+    if passes > 1 and elk:
+        flaky = [e for e in elk if e["seen"] < passes]
+        if flaky:
+            print("marginal (missed at least one pass): %s"
+                  % ", ".join("%s %d/%d" % (e["address"], e["seen"], passes) for e in flaky))
+    return [(e["address"], e["name"], e["rssi"]) for e in rows]
 
 
 async def cmd_probe(args):
@@ -176,6 +217,9 @@ def main(argv=None):
 
     p = sub.add_parser("scan", help="discover BLE devices")
     p.add_argument("--seconds", type=float, default=8.0)
+    p.add_argument("--repeat", type=int, default=1,
+                   help="run N passes and union the results (finds marginal units)")
+    p.add_argument("--elk-only", action="store_true", help="hide non-ELK devices")
     p.set_defaults(fn=cmd_scan, is_async=True)
 
     p = sub.add_parser("probe", help="list characteristics on one device")
@@ -206,6 +250,9 @@ def main(argv=None):
 
     p = sub.add_parser("adopt", help="scan and write a starter config.json")
     p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--repeat", type=int, default=3,
+                   help="scan passes to union before adopting (default 3)")
+    p.add_argument("--elk-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--out", default="config.json")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_adopt, is_async=True)

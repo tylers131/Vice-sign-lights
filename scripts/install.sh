@@ -34,8 +34,8 @@ SKIP_CYTHON=1 "$APP_DIR/venv/bin/pip" install \
 if [[ ! -f "$CONF_DIR/config.json" ]]; then
   echo "==> seeding $CONF_DIR/config.json from the example"
   cp "$APP_DIR/config.example.json" "$CONF_DIR/config.json"
-  echo "    EDIT IT: the example has placeholder BLE addresses."
-  echo "    Or run: sudo $APP_DIR/venv/bin/python $APP_DIR/elk_scan.py adopt --out $CONF_DIR/config.json --force"
+  echo "    It carries the sign's 12 known BLE addresses; rename them from the UI."
+  echo "    To re-detect instead: sudo $APP_DIR/venv/bin/python $APP_DIR/elk_scan.py adopt --out $CONF_DIR/config.json --force"
 fi
 
 echo "==> systemd unit"

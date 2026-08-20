@@ -14,170 +14,128 @@
     "apply_on_boot": "Warm on"
   },
   "groups": [
-    "letters",
-    "border",
-    "base"
+    "sign"
   ],
   "devices": [
     {
-      "address": "BE:FF:00:00:00:01",
-      "name": "Letters 1",
+      "address": "BE:27:96:00:1C:AE",
+      "name": "Light 01",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:02",
-      "name": "Letters 2",
+      "address": "BE:27:49:00:06:95",
+      "name": "Light 02",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:03",
-      "name": "Letters 3",
+      "address": "BE:27:96:00:3E:40",
+      "name": "Light 03",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:04",
-      "name": "Letters 4",
+      "address": "BE:27:D3:00:20:99",
+      "name": "Light 04",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:05",
-      "name": "Letters 5",
+      "address": "BE:27:D3:00:3D:6C",
+      "name": "Light 05",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:06",
-      "name": "Letters 6",
+      "address": "BE:27:96:00:19:CB",
+      "name": "Light 06",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:07",
-      "name": "Letters 7",
+      "address": "BE:27:96:00:05:4D",
+      "name": "Light 07",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:08",
-      "name": "Letters 8",
+      "address": "BE:27:D2:00:36:C3",
+      "name": "Light 08",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as plain ELK-BLEDOM"
     },
     {
-      "address": "BE:FF:00:00:00:09",
-      "name": "Letters 9",
+      "address": "BE:68:3F:17:1D:0B",
+      "name": "Light A4",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as ELK-BLEDOM A4"
     },
     {
-      "address": "BE:FF:00:00:00:0A",
-      "name": "Letters 10",
+      "address": "BE:68:F1:BB:DB:04",
+      "name": "Light B1",
       "groups": [
-        "letters"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as ELK-BLEDOM B1"
     },
     {
-      "address": "BE:FF:00:00:00:0B",
-      "name": "Border 1",
+      "address": "BE:68:4B:08:3D:0B",
+      "name": "Light C1",
       "groups": [
-        "border"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as ELK-BLEDOM C1"
     },
     {
-      "address": "BE:FF:00:00:00:0C",
-      "name": "Border 2",
+      "address": "BE:68:23:C9:C8:01",
+      "name": "Light DB",
       "groups": [
-        "border"
+        "sign"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": ""
-    },
-    {
-      "address": "BE:FF:00:00:00:0D",
-      "name": "Border 3",
-      "groups": [
-        "border"
-      ],
-      "enabled": true,
-      "char_uuid": null,
-      "notes": ""
-    },
-    {
-      "address": "BE:FF:00:00:00:0E",
-      "name": "Border 4",
-      "groups": [
-        "border"
-      ],
-      "enabled": true,
-      "char_uuid": null,
-      "notes": ""
-    },
-    {
-      "address": "BE:FF:00:00:00:0F",
-      "name": "Base 1",
-      "groups": [
-        "base"
-      ],
-      "enabled": true,
-      "char_uuid": null,
-      "notes": ""
-    },
-    {
-      "address": "BE:FF:00:00:00:10",
-      "name": "Base 2",
-      "groups": [
-        "base"
-      ],
-      "enabled": true,
-      "char_uuid": null,
-      "notes": ""
+      "notes": "advertises as ELK-BLEDOM DB"
     }
   ],
   "scenes": [
@@ -200,26 +158,10 @@
       "name": "Vice",
       "steps": [
         {
-          "target": "group:letters",
+          "target": "all",
           "power": true,
           "color": "#ff2d78",
           "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:border",
-          "power": true,
-          "color": "#22d3ee",
-          "brightness": 90,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:base",
-          "power": true,
-          "color": "#8000ff",
-          "brightness": 60,
           "mode": null,
           "speed": null
         }
@@ -236,20 +178,6 @@
           "brightness": 25,
           "mode": null,
           "speed": null
-        }
-      ]
-    },
-    {
-      "id": "party",
-      "name": "Fade party",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 145,
-          "speed": 40
         }
       ]
     },

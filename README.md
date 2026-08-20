@@ -1,15 +1,15 @@
 # Vice Sign Lights
 
-Headless controller for 16 ELK-BLEDOM Bluetooth LE RGB controllers, driven from
+Headless controller for the sign's 12 ELK-BLEDOM Bluetooth LE RGB controllers, driven from
 a phone over the Raspberry Pi's own wifi network. Built for an off-grid art sign:
 no internet, no cloud, no CDN, no NTP.
 
 * Runs on a **Pi Zero W (ARMv6), Raspberry Pi OS Lite 32-bit**
 * The Pi **broadcasts its own wifi AP**; the UI lives at **http://192.168.4.1/**
 * All BLE is **serialized** through one worker: connect &rarr; write &rarr; disconnect,
-  one device at a time. Never 16 open connections.
+  one device at a time. Never 12 open connections.
 * The web UI **never blocks**: commands are queued and you watch progress.
-* One dead controller is skipped and logged; the other 15 still get their colour.
+* One dead controller is skipped and logged; the other 11 still get their colour.
 
 ---
 
@@ -30,7 +30,7 @@ no internet, no cloud, no CDN, no NTP.
 | `scripts/install.sh` | Installer for Pi OS Lite. |
 | `scripts/setup_ap_networkmanager.sh` | Access point via NetworkManager (Bookworm). |
 | `scripts/setup_ap_hostapd.sh` | Access point via hostapd + dnsmasq (Bullseye). |
-| `config.example.json` | 16-device starter config with placeholder addresses. |
+| `config.example.json` | Starter config carrying the sign's 12 real BLE addresses. |
 
 ---
 
@@ -136,8 +136,35 @@ sudo systemctl start vice-lights
 ```
 
 `adopt` writes a ready config with every ELK unit it found, all in one group,
-plus a few starter scenes. Rename them in the UI afterwards — walk the sign and
-hit **Test** on each row to see which physical light it is.
+plus a few starter scenes. `config.example.json` already carries the sign's 12
+addresses, so you only need `adopt` if a controller is replaced. Either way,
+rename them in the UI afterwards — walk the sign and hit **Test** on each row to
+see which physical light it is.
+
+A controller at the edge of range advertises intermittently, so one pass
+under-reports. `--repeat` unions several passes and flags the marginal units:
+
+```bash
+python elk_scan.py scan --seconds 10 --repeat 3 --elk-only
+```
+
+The `SEEN` column shows how many passes each unit appeared in. Anything below
+3/3, or weaker than about -80 dBm, is worth moving the Pi or the controller for
+before you rely on it.
+
+### Two firmware families
+
+The sign's 12 controllers are not identical:
+
+| Addresses | Advertised name | Count |
+| --- | --- | --- |
+| `BE:27:xx:00:xx:xx` | `ELK-BLEDOM` | 8 |
+| `BE:68:xx:xx:xx:xx` | `ELK-BLEDOM A4` / `B1` / `C1` / `DB` | 4 |
+
+Different OUI blocks and naming schemes mean different firmware, so they may
+expose different write characteristics. `probe` one of each before trusting the
+whole fleet. The detected UUID is cached per device in `config.json`, so a mixed
+fleet is handled automatically once each unit has been written to once.
 
 You can also do all of this from the UI: **Devices &rarr; Scan**, then **Add**.
 
@@ -227,7 +254,7 @@ banner. Timers keep working.
 ### Speed expectations
 
 A connect/write/disconnect cycle is roughly 1.5–2.5s per controller on a Zero W,
-so **a full 16-device change takes 25–40s**. That's the radio, not the code. The
+so **a full 12-device change takes 20–30s**. That's the radio, not the code. The
 UI stays responsive throughout; nothing waits on BLE.
 
 ---
@@ -329,7 +356,7 @@ app already: serializes all BLE, holds at most one connection, and waits
 `inter_device_delay` between devices.
 
 **Test for contention** — from your phone or a laptop on the AP, ping the Pi
-while a full 16-device scene is applying:
+while a full 12-device scene is applying:
 
 ```bash
 ping -i 0.2 192.168.4.1        # in one terminal
