@@ -40,17 +40,17 @@ Every frame is 9 bytes: `7e 00 <cmd> <a> <b> <c> <d> 00 ef`.
 
 | Command | Bytes | Status |
 | --- | --- | --- |
-| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | Accepted by the hardware; visual check pending |
-| Power on | `7e 00 04 f0 00 01 ff 00 ef` | Accepted by the hardware; visual check pending |
-| Power off | `7e 00 04 00 00 00 ff 00 ef` | Accepted by the hardware; visual check pending |
+| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | **Lights up** — per-channel mapping not yet eyeballed |
+| Power on | `7e 00 04 f0 00 01 ff 00 ef` | **Confirmed on the sign** |
+| Power off | `7e 00 04 00 00 00 ff 00 ef` | **Confirmed on the sign** — 12/12 went dark |
 | Brightness | `7e 00 01 BB 00 00 00 00 ef` (`BB` = 0–100, **not** 0–255) | Common, not universal |
 | Pattern / mode | `7e 00 03 MM 03 00 00 00 ef` (`MM` = `0x80`–`0x9d`) | Common, not universal |
 | Pattern speed | `7e 00 02 SS 00 00 00 00 ef` (`SS` = 0–100) | Common, not universal |
 
 `fff3` is **write-without-response**, so the controller acknowledges nothing: a
 write that "succeeds" only proves the connection and characteristic are right,
-never that the bytes meant anything. These frames are confirmed as far as the
-transport goes — only watching a strand actually turn red confirms the rest.
+never that the bytes meant anything. Everything marked confirmed above was
+confirmed by watching lights, not by a return code.
 
 Print them all, no radio needed:
 
@@ -209,10 +209,15 @@ python elk_scan.py off BE:27:96:00:1C:AE --variant all
 | 1 | `7e 00 04 00 00 00 00 00 ef` | trailing byte differs |
 | 2 | `7e 00 05 03 00 00 00 00 ef` | sets black, does not power off |
 
-Whichever one blacks it out is what your units speak. Variant 2 always works
-because it's just the colour frame with zeros — but it leaves the controller
-powered, so it draws standby current and any later colour command takes effect
-immediately. Fine for a scene, wrong for "off for the night".
+The command lights the controller white before each attempt — an off frame is
+invisible on an already-dark light, so without that every variant looks like it
+worked. Watch for white → dark.
+
+**On this sign, variant 0 is correct**: `all off` blacked out all 12. The
+alternates are here for a replacement controller that behaves differently.
+Variant 2 always appears to work because it's just the colour frame with zeros,
+but it leaves the controller powered — fine for a scene, wrong for "off for the
+night".
 
 ### Two firmware families
 

@@ -159,12 +159,21 @@ async def cmd_color(args):
 async def cmd_off(args):
     variant = getattr(args, "variant", 0)
     if variant == "all":
+        # An off frame is only observable on a lit controller, so light it
+        # white before each attempt. Otherwise every variant "works".
         for index in range(len(protocol.POWER_OFF_VARIANTS)):
-            print("variant %d:" % index)
-            await write_frames(args.address, [protocol.power_frame(False, index)],
-                               args.timeout)
-            await asyncio.sleep(2.0)
+            print("\nvariant %d -- lighting it white first ..." % index)
+            await write_frames(args.address,
+                               [protocol.power_frame(True),
+                                protocol.color_frame(255, 255, 255)],
+                               args.timeout, verbose=False)
+            await asyncio.sleep(1.5)
+            frame = protocol.power_frame(False, index)
+            print("  sending off: %s" % frame.hex(" "))
+            await write_frames(args.address, [frame], args.timeout, verbose=False)
+            await asyncio.sleep(2.5)
         print("\nWhichever variant blacked it out is the one these units speak.")
+        print("(Watch for white -> dark. If it stayed white, that variant is wrong.)")
         return
     await write_frames(args.address, [protocol.power_frame(False, int(variant))],
                        args.timeout)
