@@ -112,6 +112,9 @@ class BleWorker:
         # Devices whose last queued command put them into a built-in pattern.
         # A solid colour aimed at one of these needs help getting out first.
         self._in_pattern = set()
+        # Disconnects we stopped waiting on. Held so they are not garbage
+        # collected mid-flight, discarded as they finish.
+        self._pending_disconnects = set()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -460,11 +463,34 @@ class BleWorker:
             return char_uuid
         finally:
             mark = time.monotonic()
-            try:
-                await asyncio.wait_for(client.disconnect(), timeout=8.0)
-            except Exception:
-                log.debug("disconnect from %s did not complete cleanly", address)
+            await self._release(client, address, settings)
             phases["disconnect"] = time.monotonic() - mark
+
+    async def _release(self, client, address, settings):
+        """Disconnect, but don't sit through the whole teardown.
+
+        A clean BlueZ disconnect measures ~2.4s on this hardware -- 40% of the
+        time spent per controller -- and nothing downstream depends on it having
+        finished. Start it, give it a moment, then move on and let it complete in
+        the background while the next device is being connected.
+        """
+        task = asyncio.ensure_future(client.disconnect())
+        self._pending_disconnects.add(task)
+
+        def _finished(done_task):
+            self._pending_disconnects.discard(done_task)
+            if not done_task.cancelled() and done_task.exception() is not None:
+                log.debug("disconnect from %s ended with %s",
+                          address, done_task.exception())
+
+        task.add_done_callback(_finished)
+        wait = float(settings.get("disconnect_wait", 0.5))
+        if wait <= 0:
+            return
+        done, _pending = await asyncio.wait({task}, timeout=wait)
+        if not done:
+            log.debug("%s still disconnecting after %.1fs; carrying on",
+                      address, wait)
 
     async def _fake_write(self, address, frames, settings, phases=None):
         """Simulation backend so the UI can be developed off-Pi."""

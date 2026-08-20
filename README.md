@@ -478,16 +478,23 @@ Every job logs a phase breakdown, because the split decides whether anything can
 be done about it:
 
 ```
-phase averages over 12 device(s): connect 2.10s  discover 2.80s  write 0.12s
-  disconnect 0.55s | inter-device gap 0.35s | 5.92s/device accounted
+phase averages over 11 device(s): connect 3.34s  discover 0.00s  write 0.10s
+  disconnect 2.43s | inter-device gap 0.35s | 6.21s/device accounted
 ```
 
-* **connect** and **discover** are ATT round trips gated by the BLE connection
-  interval and the peripheral's advertising rate. A faster CPU barely moves
-  them.
-* the Python and D-Bus marshalling wrapped around them *is* CPU-bound, and on
-  this Pi `dbus-fast` runs as pure Python (see `SKIP_CYTHON` above), which is
-  the slowest it can be.
+That is the real measurement from the sign, and it says two useful things.
+
+**`discover` is 0.00s** because BlueZ resolves services as part of connecting —
+bleak's `connect()` waits for `ServicesResolved`. The ATT round trips are real,
+they are just billed to `connect`. Do not read a zero here as "discovery is
+free"; a GATT cache experiment would show up as a shorter `connect`, not a
+shorter `discover`.
+
+**`disconnect` was 2.43s** — 40% of every controller's time, spent waiting for a
+teardown nothing downstream depends on. The worker now starts the disconnect,
+waits `disconnect_wait` (default 0.5s), and moves on while it finishes in the
+background. On twelve devices that is roughly 23 seconds off a full sweep. Set
+`disconnect_wait` to 0 to never wait, or raise it if a radio misbehaves.
 
 Read your own numbers before believing anything about how to speed this up:
 
@@ -495,25 +502,27 @@ Read your own numbers before believing anything about how to speed this up:
 journalctl -u vice-lights --no-pager | grep "phase averages"
 ```
 
-**If discover dominates**, try making BlueZ keep its GATT cache for unbonded
-devices — add to `/etc/bluetooth/main.conf`, then `sudo systemctl restart
-bluetooth`:
+**If `connect` dominates** (it does here), try making BlueZ keep its GATT cache
+for unbonded devices — add to `/etc/bluetooth/main.conf`, then `sudo systemctl
+restart bluetooth`:
 
 ```ini
 [GATT]
 Cache = always
 ```
 
-That lets a reconnect skip rediscovering services it already knows. Measure
-before and after; it is the one change that could cut the largest slice without
-new hardware.
+A reconnect can then skip rediscovering services it already knows, which is part
+of what `connect` is paying for. Measure before and after.
 
 **On a Pi Zero 2 W**, the CPU-bound share should shrink substantially: a
 Cortex-A53 has roughly 2–3× the per-core throughput of the Zero W's ARM1176,
 there are four cores so the wifi AP stops competing with the service, and it is
 armv7 — so piwheels serves a *compiled* `dbus-fast` and `SKIP_CYTHON` is no
-longer needed. The radio-bound share does not change. How much that helps
-depends entirely on the breakdown above.
+longer needed. The radio-bound share does not change.
+
+Worth doing the free things first. Not blocking on disconnect costs nothing and
+takes ~23s off a sweep; the GATT cache may take more off `connect`. Re-measure
+after both before deciding whether new hardware buys anything.
 
 ---
 

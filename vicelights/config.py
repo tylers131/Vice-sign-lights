@@ -38,6 +38,11 @@ DEFAULT_SETTINGS = {
     "retry_backoff": 0.8,            # seconds, doubled each retry
     "inter_frame_delay": 0.06,       # gap between frames on one device
     "inter_device_delay": 0.35,      # gap between devices: lets wifi breathe
+    # Measured on this sign: a clean BlueZ disconnect takes ~2.4s, 40% of the
+    # time per controller, and nothing depends on its completing. Wait this long
+    # then move on, letting it finish in the background. 0 = never wait; raise it
+    # to restore the old blocking behaviour if a radio gets upset.
+    "disconnect_wait": 0.5,
     "scan_seconds": 8.0,
     "log_level": "INFO",
     "apply_on_boot": "",             # scene name to apply at startup, "" = none
