@@ -786,15 +786,41 @@ Cache = always
 A reconnect can then skip rediscovering services it already knows, which is part
 of what `connect` is paying for. Measure before and after.
 
-**On a Pi Zero 2 W**, the CPU-bound share should shrink substantially: a
-Cortex-A53 has roughly 2–3× the per-core throughput of the Zero W's ARM1176,
-there are four cores so the wifi AP stops competing with the service, and it is
-armv7 — so piwheels serves a *compiled* `dbus-fast` and `SKIP_CYTHON` is no
-longer needed. The radio-bound share does not change.
+### Would a Pi Zero 2 W help? Mostly no — this was asked and measured
 
-Worth doing the free things first. Not blocking on disconnect costs nothing and
-takes ~23s off a sweep; the GATT cache may take more off `connect`. Re-measure
-after both before deciding whether new hardware buys anything.
+Final per-device breakdown at 49.6s for twelve controllers:
+
+| Phase | Time | Share | What it is |
+| --- | --- | --- | --- |
+| connect | 3.18s | 77% | catching an advertisement, link setup, service resolution |
+| disconnect | 0.50s | 12% | capped; the real teardown finishes in the background |
+| inter-device gap | 0.35s | 8% | our own deliberate pause, to let the AP breathe |
+| write | 0.09s | 2% | the actual frames |
+
+The telling number is that accounted and actual agree to **0.01s per device**.
+There is essentially no Python time outside the awaited BLE calls, so the
+interpreter is not the bottleneck. What is left inside `connect` is a mix of ATT
+round trips gated by the connection interval — which no CPU can speed up — and
+BlueZ/D-Bus marshalling, which one can. Best guess at the split puts 1.5–2.5s of
+that 3.18s in the radio.
+
+So a Zero 2 W plausibly saves **0.5–1s per device, ~6–12s off a sweep**: call it
+50s → 40s. Real, but not transformative, and irrelevant at an 8-minute rotation
+interval where nobody is watching the transition.
+
+The genuine reasons to switch are not speed:
+
+* **Four cores.** The wifi AP stops competing with the service for the one core,
+  which is the AP/BLE contention this project was warned about from the start.
+* **armv7**, so piwheels serves a compiled `dbus-fast` and `SKIP_CYTHON` stops
+  being necessary.
+
+Against: slightly higher idle draw, which matters on battery, and a reinstall.
+
+**What actually cost time was never the CPU** — one flaky controller burning
+~60s of retries every sweep, and a 2.4s teardown nobody needed to wait for.
+Both were fixed in software, for nothing, and together took 131.3s → 49.6s.
+Measure before buying.
 
 ---
 
