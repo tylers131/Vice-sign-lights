@@ -223,6 +223,22 @@ Variant 2 always appears to work because it's just the colour frame with zeros,
 but it leaves the controller powered — fine for a scene, wrong for "off for the
 night".
 
+### The sign
+
+Twelve controllers: **VICE** spelled once per face, plus a cup and a straw per
+face. `config.example.json` carries the map, so the groups below already exist:
+
+| Group | Members |
+| --- | --- |
+| `letters` | A_V A_I A_C A_E B_V B_I B_C B_E |
+| `drink` | A_Cup A_Straw B_Cup B_Straw |
+| `cup` / `straw` | the two of each |
+| `side-a` / `side-b` | everything on one face |
+| `V` `I` `C` `E` | both faces of one letter — for chases across the word |
+
+A controller belongs to as many groups as you like, so `A_Cup` is in `drink`,
+`cup` and `side-a` at once. Delete any you don't want from the Devices tab.
+
 ### Two firmware families
 
 The sign's 12 controllers are not identical:

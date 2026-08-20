@@ -11,157 +11,236 @@
     "inter_device_delay": 0.35,
     "scan_seconds": 8.0,
     "log_level": "INFO",
-    "apply_on_boot": "Warm on"
+    "apply_on_boot": "Vice"
   },
   "groups": [
-    "sign"
+    "letters",
+    "drink",
+    "cup",
+    "straw",
+    "side-a",
+    "side-b",
+    "V",
+    "I",
+    "C",
+    "E"
   ],
   "devices": [
     {
       "address": "BE:27:96:00:1C:AE",
-      "name": "Light 01",
+      "name": "A_V",
       "groups": [
-        "sign"
+        "letters",
+        "side-a",
+        "V"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:49:00:06:95",
-      "name": "Light 02",
+      "name": "A_I",
       "groups": [
-        "sign"
+        "letters",
+        "side-a",
+        "I"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:96:00:3E:40",
-      "name": "Light 03",
+      "name": "A_C",
       "groups": [
-        "sign"
+        "letters",
+        "side-a",
+        "C"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:D3:00:20:99",
-      "name": "Light 04",
+      "name": "A_E",
       "groups": [
-        "sign"
+        "letters",
+        "side-a",
+        "E"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:D3:00:3D:6C",
-      "name": "Light 05",
+      "name": "B_V",
       "groups": [
-        "sign"
+        "letters",
+        "side-b",
+        "V"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:96:00:19:CB",
-      "name": "Light 06",
+      "name": "B_I",
       "groups": [
-        "sign"
+        "letters",
+        "side-b",
+        "I"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": ""
     },
     {
       "address": "BE:27:96:00:05:4D",
-      "name": "Light 07",
+      "name": "B_C",
       "groups": [
-        "sign"
+        "letters",
+        "side-b",
+        "C"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": "weak signal from the Pi's test position (-81 dBm)"
     },
     {
       "address": "BE:27:D2:00:36:C3",
-      "name": "Light 08",
+      "name": "B_E",
       "groups": [
-        "sign"
+        "letters",
+        "side-b",
+        "E"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as plain ELK-BLEDOM"
+      "notes": "weak signal from the Pi's test position (-83 dBm)"
     },
     {
       "address": "BE:68:3F:17:1D:0B",
-      "name": "Light A4",
+      "name": "A_Cup",
       "groups": [
-        "sign"
+        "drink",
+        "cup",
+        "side-a"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as ELK-BLEDOM A4"
+      "notes": ""
     },
     {
       "address": "BE:68:F1:BB:DB:04",
-      "name": "Light B1",
+      "name": "A_Straw",
       "groups": [
-        "sign"
+        "drink",
+        "straw",
+        "side-a"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as ELK-BLEDOM B1"
+      "notes": ""
     },
     {
       "address": "BE:68:4B:08:3D:0B",
-      "name": "Light C1",
+      "name": "B_Cup",
       "groups": [
-        "sign"
+        "drink",
+        "cup",
+        "side-b"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as ELK-BLEDOM C1"
+      "notes": ""
     },
     {
       "address": "BE:68:23:C9:C8:01",
-      "name": "Light DB",
+      "name": "B_Straw",
       "groups": [
-        "sign"
+        "drink",
+        "straw",
+        "side-b"
       ],
       "enabled": true,
       "char_uuid": null,
-      "notes": "advertises as ELK-BLEDOM DB"
+      "notes": ""
     }
   ],
   "scenes": [
     {
-      "id": "warm",
-      "name": "Warm on",
+      "id": "vice",
+      "name": "Vice",
       "steps": [
         {
-          "target": "all",
+          "target": "group:letters",
           "power": true,
-          "color": "#ff8c2a",
-          "brightness": 80,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 90,
           "mode": null,
           "speed": null
         }
       ]
     },
     {
-      "id": "vice",
-      "name": "Vice",
+      "id": "neon",
+      "name": "Neon",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#8000ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "warm",
+      "name": "Warm",
       "steps": [
         {
           "target": "all",
           "power": true,
-          "color": "#ff2d78",
-          "brightness": 100,
+          "color": "#ff8c2a",
+          "brightness": 80,
           "mode": null,
           "speed": null
         }
@@ -176,6 +255,28 @@
           "power": true,
           "color": "#ff4000",
           "brightness": 25,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "lettersonly",
+      "name": "Letters only",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:drink",
+          "power": false,
+          "color": "#000000",
+          "brightness": 0,
           "mode": null,
           "speed": null
         }
