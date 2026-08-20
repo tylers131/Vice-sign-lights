@@ -40,7 +40,7 @@ Every frame is 9 bytes: `7e 00 <cmd> <a> <b> <c> <d> 00 ef`.
 
 | Command | Bytes | Status |
 | --- | --- | --- |
-| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | **Lights up** — per-channel mapping not yet eyeballed |
+| Solid colour | `7e 00 05 03 RR GG BB 00 ef` | **Confirmed on the sign** — all 12 lit and were named |
 | Power on | `7e 00 04 f0 00 01 ff 00 ef` | **Confirmed on the sign** |
 | Power off | `7e 00 04 00 00 00 ff 00 ef` | **Confirmed on the sign** — 12/12 went dark |
 | Brightness | `7e 00 01 BB 00 00 00 00 ef` (`BB` = 0–100, **not** 0–255) | Common, not universal |
@@ -164,8 +164,12 @@ controllers are identical to look at. `identify` walks the fleet lighting one
 controller at a time and writes the name you type straight into the config:
 
 ```bash
-python elk_scan.py identify --config config.json
+python elk_scan.py identify
 ```
+
+It writes to `config.json`, which is gitignored. If only the tracked
+`config.example.json` exists it forks a copy first, so your names never end up
+in a file that blocks the next `git pull`.
 
 ```
 [1/12] BE:27:96:00:1C:AE  (currently 'Light 01')

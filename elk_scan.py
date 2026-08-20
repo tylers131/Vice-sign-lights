@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -247,12 +248,28 @@ DEFAULT_CONFIG_PATHS = ("/etc/vice-lights/config.json", "config.json",
                         "config.example.json")
 
 
-def _load_store(path=None):
-    """Open the first config that exists, so identify works before install."""
+def _load_store(path=None, for_writing=False):
+    """Open the first config that exists, so identify works before install.
+
+    config.example.json is tracked in git. Writing names into it means the next
+    `git pull` refuses to fast-forward over your own work, so when a command is
+    going to write, fork the example into config.json (gitignored) first and
+    work there instead.
+    """
     for candidate in ([path] if path else list(DEFAULT_CONFIG_PATHS)):
-        if candidate and os.path.exists(candidate):
-            print("using config %s" % candidate)
-            return ConfigStore(candidate)
+        if not candidate or not os.path.exists(candidate):
+            continue
+        if for_writing and os.path.basename(candidate) == "config.example.json":
+            target = os.path.join(os.path.dirname(candidate) or ".", "config.json")
+            if not os.path.exists(target):
+                shutil.copyfile(candidate, target)
+                print("copied %s -> %s (leaving the tracked example alone)"
+                      % (candidate, target))
+            else:
+                print("%s is tracked in git; using %s instead" % (candidate, target))
+            candidate = target
+        print("using config %s" % candidate)
+        return ConfigStore(candidate)
     return None
 
 
@@ -270,7 +287,7 @@ async def cmd_identify(args):
     if args.addresses:
         addresses = [normalize_address(a) for a in args.addresses]
     else:
-        store = _load_store(args.config)
+        store = _load_store(args.config, for_writing=True)
         if store is None:
             sys.exit("no config found -- pass --addresses AA:.. or --config PATH")
         addresses = [d["address"] for d in store.devices()]

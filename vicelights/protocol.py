@@ -12,8 +12,8 @@ Confirmed on the sign's hardware (lights observed changing)
 ----------------------------------------------------------
 power on       7e 00 04 f0 00 01 ff 00 ef
 power off      7e 00 04 00 00 00 ff 00 ef      variant 0, all 12 went dark
-solid colour   7e 00 05 03 RR GG BB 00 ef      lights lit; RR/GG/BB mapping
-                                               not yet checked against the eye
+solid colour   7e 00 05 03 RR GG BB 00 ef      all 12 lit one at a time
+                                               during the identify walk
 
 0000fff3 is write-without-response, so nothing is acknowledged and an encoding
 a unit does not recognise is dropped in silence. That is why these are marked
