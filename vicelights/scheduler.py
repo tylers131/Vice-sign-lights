@@ -92,7 +92,10 @@ class Rotation:
         hold = float(rotation.get("hold_after_manual_minutes", 0)) * 60.0
         if hold <= 0:
             return 0.0
-        since = time.time() - (self.worker.last_manual_at or 0)
+        last = self.worker.last_manual_at
+        if last is None:            # nothing touched since boot
+            return 0.0
+        since = time.monotonic() - last
         return max(0.0, hold - since)
 
     # ------------------------------------------------------------------- play

@@ -117,7 +117,11 @@ class BleWorker:
         self._pending_disconnects = set()
         # When someone last drove the sign by hand. Rotation backs off after it
         # so the sign is not changing under you while you are looking at it.
-        self.last_manual_at = 0.0
+        # Monotonic, not wall clock -- see note_manual. None, not 0.0: on the
+        # monotonic clock 0.0 is boot, so a zero here would read as "touched
+        # at startup" and hold rotation for the first quarter hour of every
+        # power-on.
+        self.last_manual_at = None
 
     # ------------------------------------------------------------ lifecycle
 
@@ -265,7 +269,14 @@ class BleWorker:
                 job.state == "queued" for job in self._jobs.values())
 
     def note_manual(self):
-        self.last_manual_at = time.time()
+        """Stamp the last hands-on command, on the monotonic clock.
+
+        Wall clock would be wrong here: this Pi has no RTC and the time gets
+        set from a phone at the sign, so time.time() can jump hours in either
+        direction. A backward jump would extend the rotation hold by the size
+        of the jump and stop the sign rotating for the rest of the night.
+        """
+        self.last_manual_at = time.monotonic()
 
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""
