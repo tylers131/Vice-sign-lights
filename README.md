@@ -501,11 +501,22 @@ Every job logs a phase breakdown, because the split decides whether anything can
 be done about it:
 
 ```
-phase averages over 11 device(s): connect 3.34s  discover 0.00s  write 0.10s
-  disconnect 2.43s | inter-device gap 0.35s | 6.21s/device accounted
+phase averages over 12 device(s): connect 4.01s  discover 0.00s  write 0.09s
+  disconnect 0.50s | inter-device gap 0.35s | 4.95s/device accounted,
+  5.47s actual (0.52s unmeasured)
 ```
 
-That is the real measurement from the sign, and it says two useful things.
+Measured on the sign, after both fixes below. The **actual** figure is the one
+that matters: the phases do not cover the Python and D-Bus work between them, or
+a failed device's retries, so quoting only the accounted number understates a
+sweep. The history so far:
+
+| | scene: Vice |
+| --- | --- |
+| one unreachable unit, blocking disconnect | 131.3s |
+| after skipping dead units and capping disconnect | **65.6s** |
+
+Two useful things fall out of the breakdown.
 
 **`discover` is 0.00s** because BlueZ resolves services as part of connecting —
 bleak's `connect()` waits for `ServicesResolved`. The ATT round trips are real,
@@ -516,8 +527,30 @@ shorter `discover`.
 **`disconnect` was 2.43s** — 40% of every controller's time, spent waiting for a
 teardown nothing downstream depends on. The worker now starts the disconnect,
 waits `disconnect_wait` (default 0.5s), and moves on while it finishes in the
-background. On twelve devices that is roughly 23 seconds off a full sweep. Set
-`disconnect_wait` to 0 to never wait, or raise it if a radio misbehaves.
+background. Measured effect: 2.43s → 0.50s. Set `disconnect_wait` to 0 to never
+wait, or raise it if a radio misbehaves.
+
+Note that `connect` rose from 3.34s to 4.01s across the same change. That may be
+the lingering disconnect competing with the next connection — or simply that the
+earlier average excluded the one device that would not connect, and a flaky unit
+connects slowly. The two are not separable from a fleet average; per-device
+phases in `/api/status` would settle it.
+
+**`connect` is now ~80% of the remaining time.** If you want to chase it, BlueZ's
+connection interval is the next knob — in `/etc/bluetooth/main.conf`:
+
+```ini
+[LE]
+MinConnectionInterval=6
+MaxConnectionInterval=12
+ConnectionLatency=0
+```
+
+Those are 1.25ms units, so 7.5–15ms against a default nearer 30–50ms. Service
+resolution is a sequence of round trips gated by that interval, so a shorter one
+can cut `connect` substantially. **Test AP responsiveness afterwards** — more
+frequent BLE events mean more airtime on the one antenna the wifi AP shares, so
+this trades UI latency for sweep speed. Measure both before keeping it.
 
 Read your own numbers before believing anything about how to speed this up:
 

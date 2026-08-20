@@ -634,8 +634,10 @@ PHASE_ORDER = ("connect", "discover", "write", "disconnect")
 def _log_phase_summary(job, gap: float):
     """Where the wall clock went, averaged over the devices that succeeded.
 
-    This is the number that answers whether faster hardware would help: connect
-    and discover are radio-bound, the Python around them is not.
+    Reports measured-vs-actual, because the phases do not cover everything: a
+    failed device's retries, and the Python and D-Bus work between phases, land
+    in the gap between the two numbers. Quoting only the accounted figure would
+    understate what a sweep really costs.
     """
     samples = [item.get("phases") or {} for item in job.items
                if item.get("status") == "ok" and item.get("phases")]
@@ -643,12 +645,15 @@ def _log_phase_summary(job, gap: float):
         return
     totals = {name: sum(s.get(name, 0.0) for s in samples) / len(samples)
               for name in PHASE_ORDER}
-    accounted = sum(totals.values())
+    accounted = sum(totals.values()) + gap
+    attempted = [item for item in job.items if item.get("status") in ("ok", "failed")]
+    elapsed = time.time() - (job.started or time.time())
+    actual = elapsed / len(attempted) if attempted else 0.0
     log.info("phase averages over %d device(s): %s | inter-device gap %.2fs "
-             "| %.2fs/device accounted",
+             "| %.2fs/device accounted, %.2fs actual (%.2fs unmeasured)",
              len(samples),
              "  ".join("%s %.2fs" % (name, totals[name]) for name in PHASE_ORDER),
-             gap, accounted + gap)
+             gap, accounted, actual, max(0.0, actual - accounted))
 
 
 def _spaced(frames) -> str:
