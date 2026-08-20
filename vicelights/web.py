@@ -90,6 +90,17 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             version=app.config.get("VERSION", "1.0"),
         )
 
+    @app.route("/kiosk")
+    def kiosk():
+        """Touch UI for the panel on the sign itself.
+
+        Deliberately not the phone UI shrunk down: no text entry, no config,
+        no scanning -- only the things worth doing while standing in front of
+        the sign, with targets big enough for a dusty finger.
+        """
+        return render_template("kiosk.html",
+                               version=app.config.get("VERSION", "1.0"))
+
     @app.route("/healthz")
     def healthz():
         return jsonify({"ok": True, "backend": worker.status()["backend"]})
