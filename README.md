@@ -382,6 +382,11 @@ advertises AP mode, installs `dnsmasq-base` if missing, and gives up after 30
 seconds rather than hanging — printing the NetworkManager log and the likely
 cause if activation fails.
 
+`autoconnect` is deliberately left **off** until the profile activates
+successfully at least once. A broken AP profile that starts at boot takes the Pi
+off every network it knows, on every boot, and the only way back in is the SD
+card — so the script only makes it persistent after it has proven it works.
+
 **If it fails to come up**, the usual reasons in order:
 
 | Symptom | Cause |
@@ -434,6 +439,29 @@ whatever address your router gives it; going **to** the AP, it is always
 
 If you are locked out with the AP up: join **ViceSign** from a laptop and
 `ssh <user>@192.168.4.1`.
+
+### Locked out with no network at all
+
+If the AP failed *and* the Pi will not rejoin your wifi — NetworkManager
+retrying a broken `vice-ap` instead of falling back — recover in this order:
+
+1. **Power cycle**, wait three minutes, then check your router's client list and
+   for the `ViceSign` network. NetworkManager often falls back after enough
+   failed attempts.
+2. **SD card in a Linux machine** (WSL counts). Delete the profile from the
+   rootfs partition and boot the Pi again:
+   ```bash
+   sudo rm /mnt/rootfs/etc/NetworkManager/system-connections/vice-ap.nmconnection
+   ```
+3. **No Linux machine?** The boot partition is FAT32 and editable anywhere.
+   Append `dtoverlay=dwc2` to `config.txt`, and add `modules-load=dwc2,g_ether`
+   after `rootwait` in `cmdline.txt` (one line, space separated). Connect a USB
+   cable to the Pi's **USB** port — not PWR — and `ssh <user>@raspberrypi.local`
+   over the gadget interface, then delete the profile.
+
+Current versions of the setup script avoid this by not enabling autoconnect
+until the AP has come up once, but a profile made by an older version can still
+strand you.
 
 Either way:
 

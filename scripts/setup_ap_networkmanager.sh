@@ -48,7 +48,10 @@ rfkill unblock wifi || true
 
 echo "==> creating NetworkManager AP profile '$CON'"
 nmcli connection delete "$CON" >/dev/null 2>&1 || true
-nmcli connection add type wifi ifname "$IFACE" con-name "$CON" autoconnect yes ssid "$SSID"
+# autoconnect stays OFF until the profile proves it can actually come up. A
+# broken AP profile with autoconnect on and priority 100 locks the Pi out of
+# every network it knows, on every boot, with no way in short of the SD card.
+nmcli connection add type wifi ifname "$IFACE" con-name "$CON" autoconnect no ssid "$SSID"
 nmcli connection modify "$CON" \
   802-11-wireless.mode ap \
   802-11-wireless.band bg \
@@ -63,7 +66,7 @@ nmcli connection modify "$CON" \
   ipv4.addresses "$ADDR" \
   ipv6.method disabled \
   connection.autoconnect-priority 100 \
-  connection.autoconnect-retries 0
+  connection.autoconnect-retries 3
 
 echo "==> bringing it up (30s limit -- it should not take that long)"
 if ! nmcli --wait 30 connection up "$CON"; then
@@ -78,7 +81,9 @@ Common causes:
   * wifi still soft-blocked         -> sudo rfkill unblock wifi
   * regulatory domain unset         -> sudo raspi-config nonint do_wifi_country $COUNTRY
 
-The profile is left in place but not active. Undo it with:
+The profile is left in place, NOT active, and NOT set to autoconnect -- so a
+reboot returns the Pi to your normal wifi rather than locking you out. Undo it
+entirely with:
   sudo nmcli connection delete $CON
 Or fall back to the hostapd path:
   sudo ./scripts/setup_ap_hostapd.sh "$SSID" "<passphrase>" $CHANNEL
@@ -86,6 +91,10 @@ HINT
   exit 1
 fi
 sleep 3
+
+# It came up. Only now is it safe to have it start on its own at boot.
+echo "==> activation succeeded; enabling autoconnect at boot"
+nmcli connection modify "$CON" connection.autoconnect yes
 nmcli -f GENERAL.STATE,IP4.ADDRESS device show "$IFACE" || true
 
 cat <<MSG
