@@ -377,6 +377,23 @@ Creates a saved connection profile named `vice-ap` with `802-11-wireless.mode ap
 and `ipv4.method shared` (NetworkManager runs its own dnsmasq for DHCP), pinned
 to `192.168.4.1/24`, autoconnect on. It comes back on its own after a reboot.
 
+The script warns before switching (five seconds to Ctrl-C), checks the adapter
+advertises AP mode, installs `dnsmasq-base` if missing, and gives up after 30
+seconds rather than hanging — printing the NetworkManager log and the likely
+cause if activation fails.
+
+**If it fails to come up**, the usual reasons in order:
+
+| Symptom | Cause |
+| --- | --- |
+| Activation hangs, then fails | `dnsmasq-base` missing — `ipv4.method shared` cannot serve DHCP |
+| `iw list` shows no `* AP` | The adapter will not host an AP; use the hostapd path |
+| No network appears at all | wifi soft-blocked (`sudo rfkill unblock wifi`) or no regulatory domain set |
+
+The profile is left saved but inactive on failure, so nothing is half-applied.
+Remove it with `sudo nmcli connection delete vice-ap`, or fall back to
+`setup_ap_hostapd.sh`.
+
 ### Bullseye, or if NM AP mode misbehaves — hostapd + dnsmasq
 
 ```bash
