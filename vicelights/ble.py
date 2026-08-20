@@ -220,11 +220,10 @@ class BleWorker:
         addresses = self.store.resolve_target(target)
         items = [self._item(address, self._frames_for(state, address))
                  for address in addresses]
-        frames = items[0]["frames"] if items else []
         label = label or ("%s -> %s" % (self.store.target_label(target), _describe(state)))
         job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
         log.info("queued %s: %d device(s), frames %s",
-                 label, len(items), " ".join(frames))
+                 label, len(items), _describe_items(items))
         return self._register(job)
 
     def submit_scene(self, scene: dict) -> Job:
@@ -503,6 +502,22 @@ def normalize_scan(discovered) -> list:
             rssi = getattr(device, "rssi", None)
         results.append({"address": address.upper(), "name": name.strip(), "rssi": rssi})
     return results
+
+
+def _spaced(frames) -> str:
+    """Byte-spaced hex, so a log line can be compared against the frame table."""
+    return " | ".join(bytes.fromhex(f).hex(" ") for f in frames)
+
+
+def _describe_items(items) -> str:
+    """Frames for the job, saying so when channel order makes them differ."""
+    if not items:
+        return "(none)"
+    unique = {_spaced(item["frames"]) for item in items}
+    if len(unique) == 1:
+        return unique.pop()
+    return "%s (+%d other variant(s), per-device channel order)" % (
+        _spaced(items[0]["frames"]), len(unique) - 1)
 
 
 def _describe(state: dict) -> str:

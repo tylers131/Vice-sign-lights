@@ -410,8 +410,18 @@ async def cmd_channels(args):
     if sorted(observed) == ["b", "g", "r"]:
         order = "".join(observed)
         if order == "rgb":
-            print("Channels are wired correctly. The colour problem is something"
-                  " else -- see the notes below.")
+            print("Channels are wired correctly: this controller shows the colour"
+                  " it is asked for.")
+            print("\nSo a colour problem in the web app is in the app's path, not")
+            print("the wiring. Set a colour from the UI, then compare what it put")
+            print("on the wire with what this command just sent:")
+            print("  journalctl -u vice-lights -n 20 --no-pager | grep queued")
+            print("A solid colour should log 7e 00 05 03 RR GG BB 00 ef with your")
+            print("RR GG BB in it. If it logs 7e 00 03 .. instead, a built-in")
+            print("pattern is selected in the UI and it overrides solid colour.")
+            print("\nIf the bytes are right and the colour still looks wrong, that")
+            print("is the strip, not the software: analog RGB blends never match a")
+            print("phone screen exactly, and pale colours drift worst.")
         else:
             print("Channel order for this controller is '%s'." % order)
             print("Frames will be permuted so asking for red gives red.")
