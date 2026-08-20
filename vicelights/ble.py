@@ -381,17 +381,20 @@ class BleWorker:
             item["status"] = "working"
             frames = [bytes.fromhex(h) for h in item["frames"]]
             started = time.time()
-            ok, detail, char_uuid = await self._write_device(item["address"], frames, settings)
+            ok, detail, char_uuid, phases = await self._write_device(
+                item["address"], frames, settings)
             elapsed = time.time() - started
             item["status"] = "ok" if ok else "failed"
             item["detail"] = detail
             item["ms"] = int(elapsed * 1000)
+            item["phases"] = phases
             self._note_device(item["address"], ok, detail, char_uuid, elapsed)
             if not ok:
                 # One dead unit never blocks the rest: log it and move on.
                 log.warning("%s (%s) unreachable: %s", item["name"], item["address"], detail)
             # Breathe between devices so the shared radio can serve the AP.
             await asyncio.sleep(gap)
+        _log_phase_summary(job, gap)
 
     async def _write_device(self, address, frames, settings):
         attempts = int(settings.get("attempts", 3))
@@ -399,11 +402,12 @@ class BleWorker:
         last_error = "no attempt made"
         for attempt in range(1, attempts + 1):
             try:
+                phases = {}
                 char_uuid = await asyncio.wait_for(
-                    self._connect_and_write(address, frames, settings),
+                    self._connect_and_write(address, frames, settings, phases),
                     timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
                 )
-                return True, "ok on attempt %d" % attempt, char_uuid
+                return True, "ok on attempt %d" % attempt, char_uuid, phases
             except asyncio.TimeoutError:
                 last_error = "timeout (attempt %d/%d)" % (attempt, attempts)
             except Exception as exc:
@@ -411,11 +415,19 @@ class BleWorker:
             log.debug("write to %s failed: %s", address, last_error)
             if attempt < attempts:
                 await asyncio.sleep(backoff * (2 ** (attempt - 1)))
-        return False, last_error, None
+        return False, last_error, None, {}
 
-    async def _connect_and_write(self, address, frames, settings):
+    async def _connect_and_write(self, address, frames, settings, phases=None):
+        """Connect, write, disconnect -- timing each phase into ``phases``.
+
+        The split matters: connect and discover are ATT round trips gated by the
+        BLE connection interval, so a faster CPU barely touches them, while the
+        D-Bus marshalling around them is pure Python and scales with the core.
+        Without the breakdown, "would better hardware help?" is unanswerable.
+        """
+        phases = {} if phases is None else phases
         if not HAVE_BLEAK:
-            return await self._fake_write(address, frames, settings)
+            return await self._fake_write(address, frames, settings, phases)
 
         connect_timeout = float(settings.get("connect_timeout", 12.0))
         frame_delay = float(settings.get("inter_frame_delay", 0.06))
@@ -424,14 +436,19 @@ class BleWorker:
         cached = device.get("char_uuid")
 
         client = BleakClient(address, timeout=connect_timeout)
+        mark = time.monotonic()
         await asyncio.wait_for(client.connect(), timeout=connect_timeout)
+        phases["connect"] = time.monotonic() - mark
         try:
-            char_uuid, without_response = resolve_characteristic(
-                await get_services(client), cached)
+            mark = time.monotonic()
+            services = await get_services(client)
+            char_uuid, without_response = resolve_characteristic(services, cached)
+            phases["discover"] = time.monotonic() - mark
             if char_uuid is None:
                 raise RuntimeError("no writable characteristic on %s" % address)
             if char_uuid != cached:
                 self.store.remember_characteristic(address, char_uuid)
+            mark = time.monotonic()
             for index, frame in enumerate(frames):
                 await asyncio.wait_for(
                     client.write_gatt_char(char_uuid, frame, response=not without_response),
@@ -439,15 +456,21 @@ class BleWorker:
                 )
                 if index + 1 < len(frames):
                     await asyncio.sleep(frame_delay)
+            phases["write"] = time.monotonic() - mark
             return char_uuid
         finally:
+            mark = time.monotonic()
             try:
                 await asyncio.wait_for(client.disconnect(), timeout=8.0)
             except Exception:
                 log.debug("disconnect from %s did not complete cleanly", address)
+            phases["disconnect"] = time.monotonic() - mark
 
-    async def _fake_write(self, address, frames, settings):
+    async def _fake_write(self, address, frames, settings, phases=None):
         """Simulation backend so the UI can be developed off-Pi."""
+        if phases is not None:
+            phases.update({"connect": 0.25, "discover": 0.1,
+                           "write": 0.05 * len(frames), "disconnect": 0.05})
         await asyncio.sleep(0.4 + 0.05 * len(frames))
         if address.upper().endswith("FF:FF"):
             raise RuntimeError("simulated unreachable device")
@@ -540,6 +563,29 @@ def normalize_scan(discovered) -> list:
             rssi = getattr(device, "rssi", None)
         results.append({"address": address.upper(), "name": name.strip(), "rssi": rssi})
     return results
+
+
+PHASE_ORDER = ("connect", "discover", "write", "disconnect")
+
+
+def _log_phase_summary(job, gap: float):
+    """Where the wall clock went, averaged over the devices that succeeded.
+
+    This is the number that answers whether faster hardware would help: connect
+    and discover are radio-bound, the Python around them is not.
+    """
+    samples = [item.get("phases") or {} for item in job.items
+               if item.get("status") == "ok" and item.get("phases")]
+    if not samples:
+        return
+    totals = {name: sum(s.get(name, 0.0) for s in samples) / len(samples)
+              for name in PHASE_ORDER}
+    accounted = sum(totals.values())
+    log.info("phase averages over %d device(s): %s | inter-device gap %.2fs "
+             "| %.2fs/device accounted",
+             len(samples),
+             "  ".join("%s %.2fs" % (name, totals[name]) for name in PHASE_ORDER),
+             gap, accounted + gap)
 
 
 def _spaced(frames) -> str:
