@@ -139,11 +139,26 @@ def mode_label(value: int, learned=None) -> str:
     return MODES.get(value, "Mode %s" % mode_key(value))
 
 
+# A mode either holds one colour or it moves. Decided from the mode's label
+# rather than its value, because the documented table and this hardware
+# disagree about where the boundary is: 0x9d is listed as "Flash blue" and is
+# actually solid white. Observed names win in mode_label, so a mode that gets
+# auditioned and renamed reclassifies itself with no table to keep in sync.
+STILL_MODE_PREFIXES = ("static", "solid")
+
+
+def mode_animates(value: int, learned=None) -> bool:
+    """True if the mode moves on its own, false if it holds a single colour."""
+    label = mode_label(value, learned).strip().lower()
+    return not label.startswith(STILL_MODE_PREFIXES)
+
+
 def mode_catalog(learned=None) -> list:
     """Every mode with its best-known label, for pickers and listings."""
     learned = learned or {}
     return [{"value": value, "key": mode_key(value),
              "name": mode_label(value, learned),
+             "animates": mode_animates(value, learned),
              "observed": bool(learned.get(mode_key(value)))}
             for value in MODE_VALUES]
 

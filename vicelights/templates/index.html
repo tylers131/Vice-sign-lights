@@ -82,6 +82,11 @@ pre.log{background:#0a0c11;border:1px solid var(--line);border-radius:10px;paddi
   border-radius:8px;padding:9px 0;font-size:12px;font-weight:600}
 .days button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .muted{color:var(--muted);font-size:12px}
+.subhead{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px;font-size:12px;
+  text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.subhead:first-child{margin-top:0}
+.subhead b{font-weight:600;color:var(--ink)}
+.subhead span{font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0}
 .right{text-align:right}
 .toast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:50;
   background:#000c;border:1px solid var(--line);border-radius:10px;padding:10px 16px;
@@ -167,7 +172,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 <section id="tab-scenes">
   <div class="card">
     <h2>Scenes</h2>
-    <div class="grid" id="sceneButtons"></div>
+    <div id="sceneButtons"></div>
   </div>
   <div class="card">
     <h2>Save current settings as a scene</h2>
@@ -448,27 +453,58 @@ function nameMode(){
                   current && current.observed ? current.name : "");
   if(name===null) return;
   post("/api/modes",{value:parseInt(value,10), name:name}).then(function(j){
-    if(j.ok){ STATE.modes=j.modes; renderModes(); $("mode").value=value;
-              toast(name ? "Saved" : "Name cleared"); }
+    /* Renaming a mode can move it across the static/animated line, so the
+       scene groups are re-sorted here too -- otherwise a mode you just
+       auditioned leaves its scenes filed under the wrong heading until the
+       next full state load. */
+    if(j.ok){ STATE.modes=j.modes; renderModes(); renderScenes();
+              $("mode").value=value; toast(name ? "Saved" : "Name cleared"); }
   });
+}
+/* A scene animates if any of its steps runs a mode that moves. Worked out
+   from the mode catalogue the server sends, so renaming a mode after an
+   audition re-sorts the scenes that use it -- nothing is stored per scene and
+   scenes you save yourself get sorted without being told which kind they are. */
+function splitScenes(){
+  var moving = {};
+  (STATE.modes||[]).forEach(function(m){ if(m.animates) moving[m.value]=true; });
+  var animated=[], solid=[];
+  (STATE.scenes||[]).forEach(function(s){
+    var moves = (s.steps||[]).some(function(st){ return st.mode && moving[st.mode]; });
+    (moves ? animated : solid).push(s);
+  });
+  return {animated:animated, solid:solid};
+}
+function sceneGroups(render){
+  var split = splitScenes();
+  /* Movement first: it is what the sign is usually doing, and what you most
+     often reach for. A group with nothing in it prints no heading at all. */
+  return [["Animated colours", split.animated], ["Solid colours", split.solid]]
+    .filter(function(pair){ return pair[1].length; })
+    .map(function(pair){
+      return '<div class="subhead"><b>'+esc(pair[0])+'</b><span>'+pair[1].length+'</span></div>'
+           + render(pair[1]); }).join("");
 }
 function renderScenes(){
   $("sceneButtons").innerHTML = STATE.scenes.length
-    ? STATE.scenes.map(function(s){
-        return '<button class="btn primary" onclick="applyScene(\''+esc(s.name)+'\')">'
-             + esc(s.name)+'</button>'; }).join("")
+    ? sceneGroups(function(scenes){
+        return '<div class="grid">' + scenes.map(function(s){
+          return '<button class="btn primary" onclick="applyScene(\''+esc(s.name)+'\')">'
+               + esc(s.name)+'</button>'; }).join("") + '</div>'; })
     : '<p class="muted">No scenes yet. Set a colour on the Control tab, then save one.</p>';
 
-  $("sceneList").innerHTML = STATE.scenes.length ? STATE.scenes.map(function(s){
-    var steps = s.steps.map(function(st){
-      var what = st.power===false ? "off"
-        : (st.mode ? ("pattern "+st.mode) : st.color) + " @ " + st.brightness + "%";
-      return '<div class="meta">' + esc(st.target) + ' &rarr; ' + esc(what) + '</div>';
-    }).join("");
-    return '<div class="item"><div class="grow"><div class="name">'+esc(s.name)+'</div>'
-      + steps + '</div>'
-      + '<button class="btn sm bad" onclick="deleteScene(\''+s.id+'\')">Delete</button></div>';
-  }).join("") : '<p class="muted">Nothing saved.</p>';
+  $("sceneList").innerHTML = STATE.scenes.length
+    ? sceneGroups(function(scenes){ return scenes.map(function(s){
+        var steps = s.steps.map(function(st){
+          var what = st.power===false ? "off"
+            : (st.mode ? ("pattern "+st.mode) : st.color) + " @ " + st.brightness + "%";
+          return '<div class="meta">' + esc(st.target) + ' &rarr; ' + esc(what) + '</div>';
+        }).join("");
+        return '<div class="item"><div class="grow"><div class="name">'+esc(s.name)+'</div>'
+          + steps + '</div>'
+          + '<button class="btn sm bad" onclick="deleteScene(\''+s.id+'\')">Delete</button></div>';
+      }).join(""); })
+    : '<p class="muted">Nothing saved.</p>';
 
   ["timerScene","schedScene"].forEach(function(id){
     var sel=$(id), prev=sel.value;
