@@ -20,6 +20,8 @@ import logging
 import threading
 import time
 
+import random
+
 from .config import new_id
 
 log = logging.getLogger("vicelights.scheduler")
@@ -32,11 +34,165 @@ GRACE_SECONDS = 90
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
+class Rotation:
+    """Cycle scenes all night so the sign keeps changing.
+
+    Timed on ``time.monotonic``, never the wall clock: the Zero W forgets the
+    time across a cold boot and there is no NTP on the playa, so anything
+    depending on knowing the date would simply not run. Rotation has to work
+    from the moment the Pi powers on, knowing nothing.
+    """
+
+    def __init__(self, store, worker):
+        self.store = store
+        self.worker = worker
+        self._lock = threading.Lock()
+        self._bag = []
+        self._last_played = None
+        self._next_at = None          # monotonic
+        self._current = None
+        self._warned_empty = False
+
+    # ------------------------------------------------------------------ state
+
+    def _interval(self, rotation) -> float:
+        return float(rotation["interval_minutes"]) * 60.0
+
+    def reschedule(self, delay: float = None):
+        """Push the next change out, e.g. after a config edit or a manual skip."""
+        rotation = self.store.rotation()
+        with self._lock:
+            self._next_at = time.monotonic() + (
+                self._interval(rotation) if delay is None else delay)
+
+    def status(self) -> dict:
+        rotation = self.store.rotation()
+        names = self.store.rotation_scenes()
+        with self._lock:
+            next_at, current = self._next_at, self._current
+        remaining = None
+        if rotation["enabled"] and next_at is not None:
+            remaining = max(0, int(next_at - time.monotonic()))
+        return {
+            "enabled": rotation["enabled"],
+            "order": rotation["order"],
+            "interval_minutes": rotation["interval_minutes"],
+            "hold_after_manual_minutes": rotation["hold_after_manual_minutes"],
+            "playlist": rotation["playlist"],
+            "exclude": rotation["exclude"],
+            "avoid_repeat": rotation["avoid_repeat"],
+            "scenes": names,
+            "current": current,
+            "next_in_seconds": remaining,
+            "holding": self._hold_remaining(rotation) > 0,
+            "hold_remaining_seconds": int(self._hold_remaining(rotation)),
+        }
+
+    def _hold_remaining(self, rotation) -> float:
+        hold = float(rotation.get("hold_after_manual_minutes", 0)) * 60.0
+        if hold <= 0:
+            return 0.0
+        since = time.time() - (self.worker.last_manual_at or 0)
+        return max(0.0, hold - since)
+
+    # ------------------------------------------------------------------- play
+
+    def _next_name(self, names, rotation):
+        if rotation["order"] == "sequential":
+            if self._last_played in names:
+                index = (names.index(self._last_played) + 1) % len(names)
+            else:
+                index = 0
+            return names[index]
+
+        if not self._bag:
+            self._bag = list(names)
+            random.shuffle(self._bag)
+            # A fresh bag whose first pick repeats the last one is the only way
+            # shuffle can stutter; swap it away when there is an alternative.
+            if (rotation["avoid_repeat"] and len(self._bag) > 1
+                    and self._bag[0] == self._last_played):
+                self._bag[0], self._bag[1] = self._bag[1], self._bag[0]
+        return self._bag.pop(0)
+
+    def note_played(self, name: str):
+        """Record a scene as the current one without playing it.
+
+        Used for the boot scene: rotation should treat it as this interval's
+        pick rather than immediately replacing it with another 50s sweep.
+        """
+        with self._lock:
+            self._last_played = name
+            self._current = name
+            self._next_at = time.monotonic() + self._interval(self.store.rotation())
+
+    def play_next(self, force: bool = False) -> str:
+        """Advance to the next scene now. Returns the name, or None."""
+        rotation = self.store.rotation()
+        names = self.store.rotation_scenes()
+        if not names:
+            if not self._warned_empty:
+                log.warning("rotation has no scenes to play (check playlist/exclude)")
+                self._warned_empty = True
+            return None
+        self._warned_empty = False
+        if len(names) == 1 and not force:
+            return None
+
+        with self._lock:
+            name = self._next_name(names, rotation)
+            self._last_played = name
+            self._current = name
+            self._next_at = time.monotonic() + self._interval(rotation)
+
+        scene = self.store.scene(name)
+        if not scene:
+            log.error("rotation picked missing scene '%s'", name)
+            return None
+        log.info("rotation -> '%s' (next in %.0f min)", name, rotation["interval_minutes"])
+        self.worker.submit_scene(scene)
+        return name
+
+    # ------------------------------------------------------------------- tick
+
+    def tick(self):
+        rotation = self.store.rotation()
+        if not rotation["enabled"]:
+            with self._lock:
+                self._next_at = None
+            return
+
+        with self._lock:
+            if self._next_at is None:
+                # Freshly enabled: change on the next tick rather than making
+                # someone wait a full interval to see that it works.
+                self._next_at = time.monotonic()
+            due = time.monotonic() >= self._next_at
+
+        if not due:
+            return
+
+        hold = self._hold_remaining(rotation)
+        if hold > 0:
+            with self._lock:
+                self._next_at = time.monotonic() + hold
+            return
+
+        if self.worker.busy:
+            # A sweep takes ~50s. Never stack rotation on top of live work.
+            with self._lock:
+                self._next_at = time.monotonic() + TICK
+            return
+
+        self.play_next()
+
+
 class Scheduler:
     def __init__(self, store, worker, timekeeper):
         self.store = store
         self.worker = worker
         self.timekeeper = timekeeper
+        self.rotation = Rotation(store, worker)
         self._thread = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -67,6 +223,10 @@ class Scheduler:
     def tick(self):
         self.last_tick = time.time()
         self._fire_timers()
+        try:
+            self.rotation.tick()
+        except Exception:
+            log.exception("rotation tick failed")
         if not self.timekeeper.clock_ok():
             return
         self._fire_schedules()

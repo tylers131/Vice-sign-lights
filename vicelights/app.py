@@ -129,6 +129,9 @@ def main(argv=None):
         if scene:
             log.info("applying boot scene '%s'", scene["name"])
             worker.submit_scene(scene)
+            # Count it as this interval's rotation pick, or the Pi does two full
+            # sweeps back to back every time it boots.
+            scheduler.rotation.note_played(scene["name"])
         else:
             log.error("apply_on_boot names a missing scene: %s", boot_scene_name)
 
@@ -143,6 +146,11 @@ def main(argv=None):
     log.info("%d device(s), %d group(s), %d scene(s), %d schedule(s) loaded",
              len(store.devices()), len(store.group_names()),
              len(store.scenes()), len(store.schedules()))
+    rotation = store.rotation()
+    if rotation["enabled"]:
+        log.info("rotation on: %d scene(s), %s, every %.0f min",
+                 len(store.rotation_scenes()), rotation["order"],
+                 rotation["interval_minutes"])
 
     def shutdown(signum, _frame):
         log.info("signal %s: shutting down", signum)

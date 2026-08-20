@@ -238,6 +238,328 @@
       ]
     },
     {
+      "id": "miami",
+      "name": "Miami",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff40a0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#00e5c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffd000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "sunset",
+      "name": "Sunset",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff5a00",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff0080",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffc000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "cyberpunk",
+      "name": "Cyberpunk",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff00d0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffe000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#00fff0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "ice",
+      "name": "Ice",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#00d0ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#4060ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "acid",
+      "name": "Acid",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#a0ff00",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffe000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#00ff80",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "ultraviolet",
+      "name": "Ultraviolet",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#6000ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff00ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#2000c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "candy",
+      "name": "Candy",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff80c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "fire",
+      "name": "Fire",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff2000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff8000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffd000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "mint",
+      "name": "Mint",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#00ffa0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#00d0d0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "gold",
+      "name": "Gold",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffb000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#fff0c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ff6000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
+      "id": "split",
+      "name": "Split",
+      "steps": [
+        {
+          "target": "group:side-a",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:side-b",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ]
+    },
+    {
       "id": "warm",
       "name": "Warm",
       "steps": [
@@ -307,5 +629,16 @@
       "enabled": true,
       "last_fired": ""
     }
-  ]
+  ],
+  "rotation": {
+    "enabled": true,
+    "playlist": [],
+    "exclude": [
+      "All off"
+    ],
+    "interval_minutes": 8.0,
+    "order": "shuffle",
+    "avoid_repeat": true,
+    "hold_after_manual_minutes": 15.0
+  }
 }

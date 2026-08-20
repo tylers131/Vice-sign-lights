@@ -185,6 +185,36 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 <!-- ------------------------------------------------------------- timing -->
 <section id="tab-timing">
   <div class="card">
+    <h2>Scene rotation</h2>
+    <p class="muted">Cycles scenes all night on a timer. Runs off elapsed time,
+      not the clock, so it works from a cold boot even with the time unset.</p>
+    <label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="rotOn" style="width:auto" onchange="saveRotation()">
+      <span>Rotate scenes automatically</span></label>
+    <div class="row" style="margin-top:8px">
+      <div>
+        <label>Every (minutes)</label>
+        <input id="rotInterval" type="number" min="2" step="1" value="8"
+               onchange="saveRotation()">
+      </div>
+      <div>
+        <label>Order</label>
+        <select id="rotOrder" onchange="saveRotation()">
+          <option value="shuffle">Shuffle</option>
+          <option value="sequential">In order</option>
+        </select>
+      </div>
+    </div>
+    <label>Pause after I touch the controls (minutes)</label>
+    <input id="rotHold" type="number" min="0" step="1" value="15" onchange="saveRotation()">
+    <div id="rotStatus" style="margin-top:10px"></div>
+    <button class="btn" style="margin-top:10px" onclick="rotateNow()">Skip to next scene</button>
+    <hr>
+    <label>Scenes in the rotation (none ticked = all of them)</label>
+    <div id="rotPlaylist" class="grid"></div>
+  </div>
+
+  <div class="card">
     <h2>Clock</h2>
     <div id="clockBox"></div>
     <button class="btn primary" style="margin-top:10px" onclick="syncClock()">
@@ -469,6 +499,70 @@ function renderTimers(timers){
       + '<button class="btn sm bad" onclick="cancelTimer(\''+t.id+'\')">Cancel</button></div>';
   }).join("") : '<p class="muted">No timers running.</p>';
 }
+function renderRotation(r){
+  if(!r) return;
+  STATE.rotation = r;
+  if(document.activeElement && document.activeElement.id &&
+     document.activeElement.id.indexOf("rot")===0) return;   /* don't fight typing */
+  $("rotOn").checked = !!r.enabled;
+  $("rotInterval").value = r.interval_minutes;
+  $("rotOrder").value = r.order;
+  $("rotHold").value = r.hold_after_manual_minutes;
+
+  var bits = [];
+  if(r.current) bits.push("showing <b>"+esc(r.current)+"</b>");
+  if(r.enabled){
+    if(r.holding){
+      bits.push("paused "+fmtSecs(r.hold_remaining_seconds)+" after manual control");
+    } else if(r.next_in_seconds!=null){
+      bits.push("next in "+fmtSecs(r.next_in_seconds));
+    }
+    bits.push(r.scenes.length+" scene(s) in rotation");
+  } else {
+    bits.push("rotation off");
+  }
+  $("rotStatus").innerHTML = '<div class="item"><span class="dot '
+    + (r.enabled ? (r.holding?"":"ok") : "") + '"></span><div class="grow">'
+    + '<div class="meta">' + bits.join(" &middot; ") + '</div></div></div>';
+
+  var chosen = {};
+  (r.playlist||[]).forEach(function(n){ chosen[n.toLowerCase()] = true; });
+  var excluded = {};
+  (r.exclude||[]).forEach(function(n){ excluded[n.toLowerCase()] = true; });
+  $("rotPlaylist").innerHTML = STATE.scenes.map(function(sc){
+    var off = excluded[sc.name.toLowerCase()];
+    return '<label style="display:flex;align-items:center;gap:6px;margin:0;'
+      + (off?'opacity:.45':'') + '">'
+      + '<input type="checkbox" style="width:auto" data-scene="'+esc(sc.name)+'"'
+      + (chosen[sc.name.toLowerCase()]?' checked':'')
+      + (off?' disabled':'') + ' onchange="savePlaylist()">'
+      + '<span>'+esc(sc.name)+(off?' (excluded)':'')+'</span></label>';
+  }).join("");
+}
+function saveRotation(){
+  post("/api/rotation",{
+    enabled: $("rotOn").checked,
+    interval_minutes: parseFloat($("rotInterval").value),
+    order: $("rotOrder").value,
+    hold_after_manual_minutes: parseFloat($("rotHold").value)
+  }).then(function(j){ if(j.ok){ renderRotation(j.rotation); toast("Rotation saved"); } });
+}
+function savePlaylist(){
+  var names = [];
+  Array.prototype.forEach.call(
+    document.querySelectorAll('#rotPlaylist input[data-scene]'), function(b){
+      if(b.checked) names.push(b.dataset.scene);
+    });
+  post("/api/rotation",{playlist:names}).then(function(j){
+    if(j.ok){ renderRotation(j.rotation);
+      toast(names.length ? names.length+" scene(s) in rotation" : "All scenes in rotation"); }
+  });
+}
+function rotateNow(){
+  post("/api/rotation/next",{}).then(function(j){
+    if(j.ok){ toast("Now playing "+j.scene); renderRotation(j.rotation); refreshStatus(); }
+  });
+}
 function renderClock(info){
   if(!info) return;
   var cls = info.clock_ok ? "ok" : "bad";
@@ -505,6 +599,7 @@ function loadState(){
     STATE = j;
     renderTargets(); renderModes(); renderScenes(); renderDevices();
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
+    renderRotation(j.rotation);
     var locked = !!(j.settings && j.settings.force_full_brightness);
     $("brightRow").style.display = locked ? "none" : "";
     $("brightLocked").style.display = locked ? "" : "none";
@@ -521,6 +616,7 @@ function refreshStatus(){
     q.textContent = j.busy ? ("working"+(j.queued?" +"+j.queued:"")) : (j.queued? j.queued+" queued":"idle");
     q.className = "pill" + (j.busy ? " warn" : "");
     renderTimers(j.timers);
+    if(j.rotation) renderRotation(j.rotation);
     /* merge live reachability into the device cards without a full reload */
     var changed=false;
     STATE.devices.forEach(function(d){

@@ -115,6 +115,9 @@ class BleWorker:
         # Disconnects we stopped waiting on. Held so they are not garbage
         # collected mid-flight, discarded as they finish.
         self._pending_disconnects = set()
+        # When someone last drove the sign by hand. Rotation backs off after it
+        # so the sign is not changing under you while you are looking at it.
+        self.last_manual_at = 0.0
 
     # ------------------------------------------------------------ lifecycle
 
@@ -254,6 +257,15 @@ class BleWorker:
                          address, strategy)
             return escape
         return []
+
+    @property
+    def busy(self) -> bool:
+        with self._lock:
+            return self._current is not None or any(
+                job.state == "queued" for job in self._jobs.values())
+
+    def note_manual(self):
+        self.last_manual_at = time.time()
 
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""

@@ -55,8 +55,28 @@ DEFAULT_SETTINGS = {
     "apply_on_boot": "",             # scene name to apply at startup, "" = none
 }
 
+# Cycle scenes all night on a monotonic timer. Deliberately not wall-clock: the
+# Zero W has no RTC, so a cold boot on the playa knows nothing about the time,
+# and rotation has to work anyway.
+DEFAULT_ROTATION = {
+    "enabled": False,
+    "playlist": [],                  # scene names; empty = every scene not excluded
+    "exclude": ["All off"],          # never rotate into these
+    "interval_minutes": 8.0,
+    "order": "shuffle",              # shuffle | sequential
+    "avoid_repeat": True,            # never play the same scene twice running
+    # Touching the controls should win. Any manual command pauses rotation for
+    # this long, so the sign does not fight you while you are looking at it.
+    "hold_after_manual_minutes": 15.0,
+}
+
+# A sweep takes ~50s; anything near that leaves the radio permanently busy and
+# the UI permanently sluggish.
+MIN_ROTATION_MINUTES = 2.0
+
 DEFAULT_CONFIG = {
     "settings": dict(DEFAULT_SETTINGS),
+    "rotation": dict(DEFAULT_ROTATION),
     "devices": [],
     "groups": [],
     "scenes": [],
@@ -85,6 +105,32 @@ def _channels(value) -> str:
             log.warning("ignoring unknown channel order %r", value)
         return "rgb"
     return order
+
+
+def _rotation(raw) -> dict:
+    """Validate the rotation block, clamping the interval to something sane."""
+    value = dict(DEFAULT_ROTATION)
+    value.update(raw or {})
+    value["enabled"] = bool(value.get("enabled"))
+    value["playlist"] = [str(n).strip() for n in (value.get("playlist") or []) if str(n).strip()]
+    value["exclude"] = [str(n).strip() for n in (value.get("exclude") or []) if str(n).strip()]
+    value["order"] = "sequential" if value.get("order") == "sequential" else "shuffle"
+    value["avoid_repeat"] = bool(value.get("avoid_repeat", True))
+    try:
+        minutes = float(value.get("interval_minutes", 8.0))
+    except (TypeError, ValueError):
+        minutes = 8.0
+    if minutes < MIN_ROTATION_MINUTES:
+        log.warning("rotation interval %.1f min is below the %.1f min floor; using the floor",
+                    minutes, MIN_ROTATION_MINUTES)
+        minutes = MIN_ROTATION_MINUTES
+    value["interval_minutes"] = minutes
+    try:
+        value["hold_after_manual_minutes"] = max(
+            0.0, float(value.get("hold_after_manual_minutes", 15.0)))
+    except (TypeError, ValueError):
+        value["hold_after_manual_minutes"] = 15.0
+    return value
 
 
 class ConfigError(Exception):
@@ -152,6 +198,7 @@ class ConfigStore:
         settings = dict(DEFAULT_SETTINGS)
         settings.update(raw.get("settings") or {})
         data["settings"] = settings
+        data["rotation"] = _rotation(raw.get("rotation"))
 
         seen = set()
         for entry in raw.get("devices") or []:
@@ -492,6 +539,34 @@ class ConfigStore:
             return len(data["schedules"]) != before
 
         return self.mutate(apply)
+
+    def rotation(self) -> dict:
+        with self._lock:
+            return dict(self._data.get("rotation") or DEFAULT_ROTATION)
+
+    def update_rotation(self, changes: dict) -> dict:
+        def apply(data):
+            merged = dict(data.get("rotation") or DEFAULT_ROTATION)
+            merged.update(changes or {})
+            data["rotation"] = _rotation(merged)
+            return data["rotation"]
+
+        return self.mutate(apply)
+
+    def rotation_scenes(self) -> list:
+        """The scenes rotation may play, in config order, honouring exclusions."""
+        rotation = self.rotation()
+        excluded = {n.strip().lower() for n in rotation["exclude"]}
+        chosen = [n.strip().lower() for n in rotation["playlist"]]
+        names = []
+        for scene in self.scenes():
+            key = scene["name"].strip().lower()
+            if key in excluded:
+                continue
+            if chosen and key not in chosen:
+                continue
+            names.append(scene["name"])
+        return names
 
     def mark_schedule_fired(self, schedule_id: str, stamp: str):
         def apply(data):

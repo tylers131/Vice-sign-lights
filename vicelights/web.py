@@ -120,6 +120,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "settings": snapshot["settings"],
             "timers": scheduler.timers(),
             "next_runs": scheduler.next_runs(),
+            "rotation": scheduler.rotation.status(),
             "time": timekeeper.info(),
             "modes": [{"value": value, "name": name} for value, name in sorted(protocol.MODES.items())],
             "queue": {"queued": status["queued"], "busy": status["busy"],
@@ -142,6 +143,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "clock_ok": timekeeper.clock_ok(),
             "now": timekeeper.info()["now"],
             "timers": scheduler.timers(),
+            "rotation": scheduler.rotation.status(),
         })
 
     @app.route("/api/job/<job_id>")
@@ -166,6 +168,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         addresses = store.resolve_target(target)
         if not addresses:
             return _json_error("target '%s' matches no enabled device" % target)
+        worker.note_manual()
         job = worker.submit_state(target, state)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
@@ -173,6 +176,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
     def api_power():
         body = _body()
         target = body.get("target", "all")
+        worker.note_manual()
         job = worker.submit_state(target, {"power": bool(body.get("on", True))})
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
@@ -182,6 +186,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         scene = store.scene(body.get("scene") or body.get("name") or "")
         if not scene:
             return _json_error("unknown scene", 404)
+        worker.note_manual()
         job = worker.submit_scene(scene)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
@@ -266,6 +271,32 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
     @app.route("/api/schedules/<schedule_id>", methods=["DELETE"])
     def api_schedule_delete(schedule_id):
         return jsonify({"ok": True, "removed": store.delete_schedule(schedule_id)})
+
+    @app.route("/api/rotation", methods=["GET", "POST"])
+    def api_rotation():
+        if request.method == "POST":
+            body = _body()
+            allowed = ("enabled", "playlist", "exclude", "interval_minutes",
+                       "order", "avoid_repeat", "hold_after_manual_minutes")
+            changes = {k: body[k] for k in allowed if k in body}
+            was = store.rotation()["enabled"]
+            try:
+                store.update_rotation(changes)
+            except Exception as exc:
+                return _json_error(exc)
+            # An interval change should take effect from now, not from whenever
+            # the old one happened to be due.
+            if "interval_minutes" in changes and store.rotation()["enabled"] and was:
+                scheduler.rotation.reschedule()
+        return jsonify({"ok": True, "rotation": scheduler.rotation.status()})
+
+    @app.route("/api/rotation/next", methods=["POST"])
+    def api_rotation_next():
+        name = scheduler.rotation.play_next(force=True)
+        if not name:
+            return _json_error("nothing to play -- check the playlist")
+        return jsonify({"ok": True, "scene": name,
+                        "rotation": scheduler.rotation.status()})
 
     @app.route("/api/timers", methods=["POST"])
     def api_timer_add():

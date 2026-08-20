@@ -565,8 +565,8 @@ settings as a new scene, or **Add step to scene** to build a multi-group look
 (letters pink, border cyan, base purple). If two steps name the same controller,
 the last one wins and it is still written only once.
 
-**Timing** — set the Pi's clock from your phone, start relative timers, and add
-wall-clock schedules (scene + time + optional days).
+**Timing** — scene rotation (below), setting the Pi's clock from your phone,
+relative timers, and wall-clock schedules (scene + time + optional days).
 
 **Devices** — per-controller status dot (green = last write succeeded, red =
 unreachable, grey = not tried yet), plus last error, round-trip time, rename,
@@ -574,6 +574,74 @@ regroup, enable/disable, **Test** (blinks it green), scan, and add-by-address.
 Disabling a unit parks it: it stays in the config and every scene skips it.
 
 **System** — live log tail and a raw JSON config editor.
+
+### Scene rotation
+
+The sign is on all night, so it cycles scenes on its own:
+
+```jsonc
+"rotation": {
+  "enabled": true,
+  "playlist": [],                    // empty = every scene not excluded
+  "exclude": ["All off"],            // never rotate into these
+  "interval_minutes": 8,             // floor of 2, see below
+  "order": "shuffle",                // shuffle | sequential
+  "avoid_repeat": true,              // never the same scene twice running
+  "hold_after_manual_minutes": 15    // back off after someone uses the controls
+}
+```
+
+All of it is on the **Timing** tab: toggle, interval, order, hold, a tick-list of
+which scenes take part, and a **Skip to next scene** button. The card shows what
+is playing and how long until the next change.
+
+Four decisions worth knowing about:
+
+**It runs on elapsed time, not the clock.** The Zero W forgets the time across a
+cold boot and there is no NTP on the playa, so anything keyed to wall-clock time
+would simply never run. Rotation works from the moment the Pi powers on, knowing
+nothing about what day it is.
+
+**The interval floor is 2 minutes.** A full twelve-device sweep takes ~50s. Any
+faster and the radio never rests, which makes the web UI sluggish — the AP and
+BLE share one antenna. Eight minutes is the default; under about three gets busy.
+
+**Touching the controls wins.** Any manual colour, scene or power command pauses
+rotation for `hold_after_manual_minutes`, so the sign is not changing under you
+while you are looking at it. The card shows how long the pause has left.
+
+**Rotation never stacks.** If a sweep is still running when a change comes due,
+it waits rather than queueing another 50s of work behind it.
+
+The boot scene counts as the first pick, so a reboot does not run two full
+sweeps back to back.
+
+### The shipped scenes
+
+Sixteen, mostly saturated on purpose — analog RGB strips render pale blends as
+dirty white, so washed-out palettes look worse on the sign than on a phone.
+
+| | Letters | Cup | Straw |
+| --- | --- | --- | --- |
+| Vice | hot pink | cyan | white |
+| Neon | violet | hot pink | cyan |
+| Miami | pink | teal | yellow |
+| Sunset | orange | magenta | amber |
+| Cyberpunk | magenta | yellow | cyan |
+| Ice | ice blue | white | deep blue |
+| Acid | lime | yellow | spring green |
+| Ultraviolet | violet | magenta | deep blue |
+| Candy | pale pink | white | hot pink |
+| Fire | red | orange | amber |
+| Mint | mint | white | teal |
+| Gold | amber | cream | orange |
+
+Plus **Split** (one face pink, the other cyan — only interesting because you
+cannot see both at once), **Warm**, **Letters only** (drink goes dark), and
+**All off**, which is excluded from rotation.
+
+Edit any of them from the Scenes tab, or add your own — new scenes join the
+rotation automatically unless you tick a specific playlist.
 
 ### Timing without a clock
 
@@ -802,6 +870,10 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST/DELETE | `/api/scenes`, `/api/scenes/<id>` | |
 | POST/DELETE | `/api/schedules`, `/api/schedules/<id>` | |
 | POST/DELETE | `/api/timers`, `/api/timers/<id>` | `{scene, minutes}` |
+| GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |
+| POST | `/api/rotation/next` | Skip to the next scene now |
+| GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |
+| POST | `/api/rotation/next` | Skip to the next scene now |
 | GET/POST | `/api/time` | `{iso: "2026-08-28T19:30:00"}` or `{epoch: ...}` |
 | GET/PUT | `/api/config` | Whole config |
 | GET | `/api/log?n=200` | Log tail |
