@@ -533,6 +533,46 @@ retrying a broken `vice-ap` instead of falling back — recover in this order:
    PWR — it powers the Pi too), wait ~90s for the gadget interface to appear in
    System Settings → Network, and `ssh <user>@<hostname>.local`.
 
+### Moving the card to a Pi Zero 2 W
+
+The SD card is portable: Raspberry Pi OS ships kernels for every model and the
+bootloader picks the right one, so the card boots unchanged. Hostname, SSH host
+keys, wifi profile, service and config all carry over.
+
+Three things do change.
+
+**The IP address.** Different board, different MAC, so the router hands out a
+new lease. Use `http://<hostname>.local`, which the service prints at startup,
+or check the log:
+
+```bash
+journalctl -u vice-lights -n 40 --no-pager | grep "web UI"
+```
+
+**`SKIP_CYTHON` stops being necessary — and leaving it in place wastes the
+upgrade.** The Zero W is armv6, where piwheels has no compiled `dbus-fast`, so
+the install used the pure-Python fallback. A Zero 2 W is armv7, where the
+compiled wheel exists. Reinstall to pick it up, or the D-Bus layer stays exactly
+as slow as it was:
+
+```bash
+sudo /opt/vice-sign-lights/venv/bin/pip install --force-reinstall --no-cache-dir dbus-fast
+sudo systemctl restart vice-lights
+```
+
+**Power draw goes up.** A Zero 2 W under load wants a supply that can hold 5V at
+2A or better. An adequate-for-a-Zero-W supply may brown out under a BLE sweep,
+which looks like random controller failures rather than a power problem.
+
+Then re-measure, and compare against the Zero W baseline of 4.13s per device:
+
+```bash
+journalctl -u vice-lights --no-pager | grep "phase averages" | tail -2
+```
+
+Keep the old Zero W. It works, and a spare board that has already been proven
+against these controllers is worth more in the desert than on a shelf.
+
 ### Rebuilding from scratch
 
 Nothing on the Pi is irreplaceable. `config.example.json` carries all twelve
