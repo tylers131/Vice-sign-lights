@@ -197,11 +197,20 @@ class BleWorker:
         self._loop.call_soon_threadsafe(self._queue.put_nowait, job)
         return job
 
+    def _frames_for(self, state: dict) -> list:
+        """Every path to the radio builds its frames here.
+
+        Keeping the full-brightness override at this single point means the UI,
+        a saved scene and a raw API call cannot disagree about it.
+        """
+        if self.store.setting("force_full_brightness", True):
+            state = dict(state, brightness=100)
+        return protocol.build_frames(state, self.store.setting("brightness_mode", "scale"))
+
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""
         addresses = self.store.resolve_target(target)
-        brightness_mode = self.store.setting("brightness_mode", "scale")
-        frames = protocol.build_frames(state, brightness_mode)
+        frames = self._frames_for(state)
         items = [self._item(address, frames) for address in addresses]
         label = label or ("%s -> %s" % (self.store.target_label(target), _describe(state)))
         job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
@@ -216,11 +225,10 @@ class BleWorker:
         mentions it, so 'all -> dim red' followed by 'group:letters -> white'
         does what it reads like and never writes twice to one unit.
         """
-        brightness_mode = self.store.setting("brightness_mode", "scale")
         by_address = {}
         order = []
         for step in scene.get("steps") or []:
-            frames = protocol.build_frames(step, brightness_mode)
+            frames = self._frames_for(step)
             for address in self.store.resolve_target(step.get("target", "all")):
                 if address not in by_address:
                     order.append(address)

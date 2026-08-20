@@ -11,7 +11,8 @@
     "inter_device_delay": 0.35,
     "scan_seconds": 8.0,
     "log_level": "INFO",
-    "apply_on_boot": "Vice"
+    "apply_on_boot": "Vice",
+    "force_full_brightness": true
   },
   "groups": [
     "letters",
@@ -196,7 +197,7 @@
           "target": "group:straw",
           "power": true,
           "color": "#ffffff",
-          "brightness": 90,
+          "brightness": 100,
           "mode": null,
           "speed": null
         }
@@ -240,21 +241,7 @@
           "target": "all",
           "power": true,
           "color": "#ff8c2a",
-          "brightness": 80,
-          "mode": null,
-          "speed": null
-        }
-      ]
-    },
-    {
-      "id": "lowbat",
-      "name": "Low power",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ff4000",
-          "brightness": 25,
+          "brightness": 100,
           "mode": null,
           "speed": null
         }
@@ -303,15 +290,6 @@
       "name": "Dusk",
       "scene": "Vice",
       "time": "19:30",
-      "days": [],
-      "enabled": true,
-      "last_fired": ""
-    },
-    {
-      "id": "late",
-      "name": "Late night dim",
-      "scene": "Low power",
-      "time": "02:00",
       "days": [],
       "enabled": true,
       "last_fired": ""

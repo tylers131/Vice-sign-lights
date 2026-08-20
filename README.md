@@ -58,7 +58,20 @@ Print them all, no radio needed:
 ./elk_scan.py frames
 ```
 
-### Brightness policy
+### Brightness is locked at 100%
+
+The sign runs flat out. `"force_full_brightness": true` (the default) overrides
+every brightness value on its way to the radio — UI slider, saved scene, raw API
+call, all of them — at a single point in the BLE worker, so no path can quietly
+dim the sign. The UI hides its brightness slider when the setting is on and says
+why.
+
+Set it to `false` in `config.json` to unlock dimming end to end; the slider
+reappears on the next page load and scene brightness values start mattering
+again. Nothing else needs changing, which is why there is no dim scene shipped:
+add one if you ever want it.
+
+### Brightness policy (only if you unlock dimming)
 
 The `01` brightness frame is the one these clones most often ignore, so the
 default `brightness_mode` is **`scale`**: brightness is applied by scaling RGB on

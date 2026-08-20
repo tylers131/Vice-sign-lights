@@ -126,10 +126,15 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <h2>Colour</h2>
     <input type="color" id="color" value="#ff2d78" oninput="onColorInput()">
     <div class="swatches" id="swatches"></div>
-    <label>Brightness <span id="brightVal">100%</span></label>
-    <input type="range" id="brightness" min="0" max="100" value="100"
-           oninput="document.getElementById('brightVal').textContent=this.value+'%'"
-           onchange="maybeLive()">
+    <div id="brightRow">
+      <label>Brightness <span id="brightVal">100%</span></label>
+      <input type="range" id="brightness" min="0" max="100" value="100"
+             oninput="document.getElementById('brightVal').textContent=this.value+'%'"
+             onchange="maybeLive()">
+    </div>
+    <p class="muted" id="brightLocked" style="display:none">
+      Brightness is locked at 100%. Change <code>force_full_brightness</code>
+      in the config to unlock it.</p>
     <label><input type="checkbox" id="live" style="width:auto;margin-right:6px">
       Live apply (send as you change)</label>
     <button class="btn primary" style="margin-top:10px" onclick="applyNow()">Apply colour</button>
@@ -499,6 +504,10 @@ function loadState(){
     STATE = j;
     renderTargets(); renderModes(); renderScenes(); renderDevices();
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
+    var locked = !!(j.settings && j.settings.force_full_brightness);
+    $("brightRow").style.display = locked ? "none" : "";
+    $("brightLocked").style.display = locked ? "" : "none";
+    if(locked){ $("brightness").value = 100; $("brightVal").textContent = "100%"; }
     $("hdrDevices").textContent = j.devices.length+" devices";
     $("hdrBackend").textContent = j.backend;
     $("hdrBackend").className = "pill" + (j.backend==="bleak" ? " ok" : " warn");

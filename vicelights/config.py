@@ -23,6 +23,10 @@ DEFAULT_SETTINGS = {
     "host": "0.0.0.0",
     "port": 80,
     "brightness_mode": "scale",      # scale | native | both
+    # The sign runs flat out. With this true, every brightness value anywhere
+    # -- UI slider, scene step, API call -- is overridden to 100, so nothing can
+    # quietly dim the sign. Set false to re-enable dimming end to end.
+    "force_full_brightness": True,
     "connect_timeout": 12.0,         # seconds per connect attempt
     "write_timeout": 6.0,            # seconds per characteristic write
     "attempts": 3,                   # 1 try + 2 retries
