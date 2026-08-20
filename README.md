@@ -166,6 +166,26 @@ reason: the config store drops fields it does not recognise, and it rewrites the
 file after the first successful write to each device. A `channels` order saved
 by a newer CLI would be silently erased by an older service.
 
+### Activate the venv first
+
+Every `elk_scan.py` command needs the virtualenv that has `bleak`. A shell
+without it fails on the first BLE call:
+
+```bash
+source ~/venv/bin/activate      # prompt gains a (venv) prefix
+```
+
+An alias saves both this and the directory:
+
+```bash
+echo "alias vice='cd ~/vice-sign-lights && source ~/venv/bin/activate'" >> ~/.bashrc
+source ~/.bashrc
+```
+
+Then `vice` from anywhere puts you in the right place with the right
+interpreter. If you forget, the CLI now says which virtualenv to activate rather
+than telling you to install something that is already installed.
+
 ### Find your controllers
 
 Stop the service first — only one process may own the radio. `install.sh` hands

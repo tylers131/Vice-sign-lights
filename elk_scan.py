@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import json
 import os
 import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+logging.getLogger("vicelights.ble").setLevel(logging.ERROR)
 
 from vicelights import protocol  # noqa: E402
 from vicelights.config import ConfigStore, normalize_address  # noqa: E402
@@ -41,9 +44,43 @@ except ImportError:  # pragma: no cover
     BleakClient = BleakScanner = None
 
 
+VENV_CANDIDATES = ("~/venv", "./venv", "/opt/vice-sign-lights/venv")
+
+
 def require_bleak():
-    if BleakScanner is None:
-        sys.exit("bleak is not installed. pip install -r requirements.txt")
+    """Refuse to run without bleak, and say something actionable about it.
+
+    Almost always this is not a missing package but the wrong interpreter -- a
+    shell where the virtualenv was never activated. Point at one that has it
+    rather than suggesting an install that has already happened.
+    """
+    if BleakScanner is not None:
+        return
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.abspath(sys.argv[0])
+    found = []
+    for candidate in VENV_CANDIDATES:
+        path = os.path.abspath(os.path.expanduser(
+            candidate if not candidate.startswith("./") else os.path.join(here, candidate[2:])))
+        python = os.path.join(path, "bin", "python")
+        if os.path.exists(python) and path not in found:
+            found.append(path)
+
+    lines = ["bleak is not importable by %s" % sys.executable]
+    if found:
+        lines.append("")
+        lines.append("That looks like the wrong interpreter, not a missing package.")
+        lines.append("A virtualenv that probably has it: %s" % found[0])
+        lines.append("")
+        lines.append("    source %s/bin/activate" % found[0])
+        lines.append("")
+        lines.append("or run this script with it directly, without activating:")
+        lines.append("")
+        lines.append("    %s/bin/python %s ..." % (found[0], script))
+    else:
+        lines.append("")
+        lines.append("    SKIP_CYTHON=1 pip install -r requirements.txt")
+    sys.exit("\n".join(lines))
 
 
 def merge_scan(merged: dict, rows: list) -> dict:
