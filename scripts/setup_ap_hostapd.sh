@@ -47,7 +47,12 @@ else
   cat > /etc/systemd/system/vice-ap-ip.service <<CONF
 [Unit]
 Description=Static IP for the Vice sign access point
-Before=hostapd.service
+# dnsmasq is listed as well as hostapd: it binds to this address specifically
+# (bind-interfaces), so starting it before the address exists leaves an AP that
+# is visible but hands out no DHCP leases -- a phone joins and gets nothing.
+Before=hostapd.service dnsmasq.service
+Wants=network.target
+After=network.target
 [Service]
 Type=oneshot
 ExecStart=/sbin/ip addr flush dev $IFACE
@@ -58,6 +63,15 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 CONF
   systemctl enable vice-ap-ip.service
+
+  # Belt and braces: make dnsmasq itself refuse to start before the address is up.
+  mkdir -p /etc/systemd/system/dnsmasq.service.d
+  cat > /etc/systemd/system/dnsmasq.service.d/vice-ap.conf <<CONF
+[Unit]
+After=vice-ap-ip.service
+Requires=vice-ap-ip.service
+CONF
+  systemctl daemon-reload
 fi
 
 echo "==> hostapd config"
@@ -96,8 +110,33 @@ systemctl unmask hostapd
 systemctl enable hostapd dnsmasq
 systemctl restart dnsmasq
 systemctl restart hostapd
-sleep 2
-systemctl --no-pager --lines=8 status hostapd || true
+sleep 3
+
+echo
+echo "==> checking what actually came up"
+FAILED=0
+for unit in hostapd dnsmasq; do
+  if systemctl is-active --quiet "$unit"; then
+    echo "    OK      $unit is running"
+  else
+    echo "    FAILED  $unit is NOT running:"
+    systemctl --no-pager --lines=12 status "$unit" 2>&1 | sed 's/^/            /'
+    FAILED=1
+  fi
+done
+if ip addr show "$IFACE" | grep -q "inet $IP/"; then
+  echo "    OK      $IFACE holds $IP"
+else
+  echo "    FAILED  $IFACE does not hold $IP:"
+  ip addr show "$IFACE" | sed 's/^/            /'
+  FAILED=1
+fi
+if [[ $FAILED -ne 0 ]]; then
+  echo
+  echo "The access point did NOT come up cleanly. Nothing above is permanent yet"
+  echo "beyond the enabled units -- fix the error, or run ./scripts/ap.sh off."
+  exit 1
+fi
 
 cat <<MSG
 
