@@ -517,10 +517,10 @@ class Panel:
                 "must name the card the display is on (see /sys/class/drm)."
                 % (os.environ.get("SDL_VIDEODRIVER", "<unset>"), exc))
         pygame.font.init()
-        pygame.mouse.set_visible(False)
         self.fb = None
         self.touch = None
         self.screen = self._open_output(size, fullscreen, backend)
+        self._hide_cursor()
         self.w, self.h = self.screen.get_size()
 
         scale = max(0.75, min(1.4, self.w / 800.0))
@@ -554,6 +554,28 @@ class Panel:
         # targets, so this is ignored there.
         self.target = "all"
         self.target_name = "Everything"
+
+    @staticmethod
+    def _hide_cursor():
+        """Get rid of the pointer, after the display exists.
+
+        Under KMSDRM the cursor lives on its own hardware plane, created by
+        set_mode -- so hiding it beforehand is asking a window that does not
+        exist yet, and the plane comes up visible regardless. The probe also
+        re-inits the display for each card it tries, which would undo an early
+        call anyway. A blank cursor as well as set_visible(False), because on
+        some drivers only one of the two takes.
+        """
+        try:
+            pygame.mouse.set_visible(False)
+        except Exception:
+            pass
+        try:
+            blank = pygame.cursors.Cursor((8, 8), (0, 0),
+                                          (0,) * 8, (0,) * 8)
+            pygame.mouse.set_cursor(blank)
+        except Exception:
+            pass
 
     def _open_output(self, size, fullscreen, backend):
         if backend != "fb":
