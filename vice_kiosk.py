@@ -86,6 +86,10 @@ GROUP_LABELS = {
 PATTERN_LABELS = (("flash", "Flash"), ("jump", "Jump"),
                   ("rgb", "Fade RGB"), ("7 colour", "Fade 7"))
 PATTERN_SPEED = 70
+# Chosen so the whole sign takes roughly 1s, 6s, 12s and 24s to
+# come round at twelve devices -- the last is slow enough to watch
+# travel, the first is just the sweep's own pace.
+ROLL_STEPS = (0.0, 0.5, 1.0, 2.0)
 
 
 # --------------------------------------------------------------------- client
@@ -613,6 +617,10 @@ class Panel:
         self.chosen_colour = None
         self.chosen_pattern = None
         self.speed = PATTERN_SPEED
+        # Seconds between devices. Writes are serialised anyway, so a pattern
+        # started one unit at a time already sweeps across the sign; this makes
+        # the roll deliberate. Off means "as fast as the radio manages".
+        self.roll = 0.0
         # The shelves scroll by the page, via the "›" card at the end.
         self.shelf = {"scenes": 0, "solid": 0}
 
@@ -1218,6 +1226,16 @@ class Panel:
                                        pattern["value"]))
             x = pill.right + int(8 * s)
 
+        roll = pygame.Rect(x + int(4 * s), y, int(96 * s), int(34 * s))
+        on = self.roll > 0
+        self.rounded(self.screen, roll, over(ORANGE, 0.14) if on else CARD,
+                     ORANGE if on else over(WHITE, 0.08), radius=int(17 * s))
+        self.text(self.screen, self.f_small,
+                  "ROLL %.1fs" % self.roll if on else "ROLL off",
+                  ORANGE if on else over(INK, 0.6), center=roll.center)
+        self.buttons.append(Button(roll, "roll", "roll"))
+        x = roll.right + int(8 * s)
+
         label = self.f_tiny.render("SPEED", True, FAINT)
         self.screen.blit(label, (x + int(8 * s),
                                  y + int(17 * s) - label.get_height() // 2))
@@ -1404,6 +1422,14 @@ class Panel:
                 self.apply_state({"mode": button.payload, "speed": self.speed,
                                   "power": True},
                                  "%s on %s" % (button.label, self.where_name()))
+            elif kind == "roll":
+                # A cycling control has to say where it is, so the label
+                # carries the value rather than only the state.
+                nxt = (ROLL_STEPS.index(self.roll) + 1) % len(ROLL_STEPS) \
+                    if self.roll in ROLL_STEPS else 1
+                self.roll = ROLL_STEPS[nxt]
+                self.sign.say("Roll off" if not self.roll else
+                              "Rolling %.1fs between lights" % self.roll)
             elif kind == "speed":
                 fraction = (position[0] - button.rect.x) / float(max(1, button.rect.w))
                 self.speed = max(10, min(100, int(round(fraction * 100))))
@@ -1467,6 +1493,8 @@ class Panel:
     def apply_state(self, changes, said):
         where, _name = self.selection()
         payload = dict(changes, **where)
+        if self.roll:
+            payload["stagger"] = self.roll
         threading.Thread(target=self._apply_state, args=(payload, said),
                          daemon=True).start()
 
@@ -1484,7 +1512,10 @@ class Panel:
 
     def _apply_scene(self, name):
         try:
-            result = _post("/api/scene/apply", {"scene": name})
+            body = {"scene": name}
+            if self.roll:
+                body["stagger"] = self.roll
+            result = _post("/api/scene/apply", body)
             if not result.get("ok"):
                 self.sign.clear_pending()
                 self.sign.say(result.get("error") or "could not apply")

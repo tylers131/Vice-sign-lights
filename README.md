@@ -202,6 +202,28 @@ vertically -- no control is ever below a fold.
   dashed outline as well as red text, so it reads without relying on hue.
 - The bottom bar is OFF (scoped to the target), SURPRISE ME, and ROTATE.
 
+### Rolling starts
+
+Writes are serialised one controller at a time, so a built-in pattern started
+across twelve units already sweeps rather than snapping. **ROLL** on the Colour
+tab makes that deliberate -- off, 0.5s, 1.0s, 2.0s of extra wait between
+devices -- and the roll travels the `devices` array's order, which is the same
+cup-first wipe every scene uses.
+
+It works because the controllers' own timing is not tight. A perfectly
+synchronised stagger would leave every unit a fixed step out of phase and read
+as a mechanical chase; the drift between twelve cheap controllers scatters them
+instead, and the pattern arrives looking staggered rather than sequenced.
+
+Four scenes ship with a roll: Drift 1.0s, Jump cut 0.8s, Two faces 1.2s,
+Carousel 1.5s. A scene stores its own `stagger`, and `/api/apply` and
+`/api/scene/apply` both take one.
+
+**It costs wall clock.** At the measured 2.5s a device, twelve units take 30s
+with no roll and 48s at 1.5s. That is radio time on the chip also serving the
+access point, so at a 5-minute rotation a 1.5s roll is about 16% busy rather
+than 10%. Worth it on a few scenes, not on all of them.
+
 ### One job, however many zones
 
 Selecting several zones sends `targets` -- a list -- rather than one `target`

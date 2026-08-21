@@ -114,6 +114,19 @@ def _channels(value) -> str:
     return order
 
 
+def _stagger(raw) -> float:
+    """Seconds to wait between devices when a scene is applied.
+
+    Writes are serialised, so a built-in pattern started one unit at a time
+    already sweeps across the sign. A stagger makes that deliberate: the roll
+    becomes a length you chose rather than however long a connect took.
+    """
+    try:
+        return max(0.0, min(10.0, float(raw or 0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _rotation(raw) -> dict:
     """Validate the rotation block, clamping the interval to something sane."""
     value = dict(DEFAULT_ROTATION)
@@ -369,6 +382,7 @@ class ConfigStore:
                 "id": scene.get("id") or new_id(),
                 "name": (scene.get("name") or "unnamed").strip(),
                 "steps": steps,
+                "stagger": _stagger(scene.get("stagger")),
             })
 
         for schedule in raw.get("schedules") or []:
@@ -603,8 +617,11 @@ class ConfigStore:
                 if (scene_id and existing["id"] == scene_id) or existing["name"] == name:
                     existing["name"] = name
                     existing["steps"] = steps
+                    if "stagger" in scene:
+                        existing["stagger"] = _stagger(scene.get("stagger"))
                     return existing
-            created = {"id": scene_id or new_id(), "name": name, "steps": steps}
+            created = {"id": scene_id or new_id(), "name": name, "steps": steps,
+                       "stagger": _stagger(scene.get("stagger"))}
             data["scenes"].append(created)
             return created
 

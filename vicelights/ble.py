@@ -42,9 +42,11 @@ class Job:
     """One unit of queued BLE work."""
 
     __slots__ = ("id", "kind", "label", "coalesce_key", "created", "started",
-                 "finished", "state", "items", "result", "error", "payload")
+                 "finished", "state", "items", "result", "error", "payload",
+                 "stagger")
 
-    def __init__(self, kind, label, items=None, coalesce_key=None, payload=None):
+    def __init__(self, kind, label, items=None, coalesce_key=None, payload=None,
+                 stagger=0.0):
         self.id = new_id()
         self.kind = kind                  # apply | scan | test
         self.label = label
@@ -57,6 +59,11 @@ class Job:
         self.result = None
         self.error = None
         self.payload = payload or {}
+        # Extra seconds to wait between devices, on top of the usual gap.
+        # Writes are serialised anyway, so a built-in pattern started one unit
+        # at a time already rolls across the sign; this makes the roll a chosen
+        # length rather than however long a connect happened to take.
+        self.stagger = max(0.0, float(stagger or 0.0))
 
     @property
     def total(self):
@@ -279,7 +286,7 @@ class BleWorker:
         self.last_manual_at = time.monotonic()
 
     def submit_state(self, target: str, state: dict, label: str = None,
-                     addresses=None) -> Job:
+                     addresses=None, stagger=0.0) -> Job:
         """Apply one light state to every device behind ``target``.
 
         ``addresses`` overrides the lookup, so a caller that has already worked
@@ -291,12 +298,15 @@ class BleWorker:
         items = [self._item(address, self._frames_for(state, address), state)
                  for address in addresses]
         label = label or ("%s -> %s" % (self.store.target_label(target), describe_state(state)))
-        job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
+        job = Job("apply", label, items, coalesce_key="target:" + (target or "all"),
+                  stagger=stagger)
         log.info("queued %s: %d device(s), frames %s",
                  label, len(items), _describe_items(items))
+        if stagger:
+            log.info("  rolling: %.1fs between devices", stagger)
         return self._register(job)
 
-    def submit_scene(self, scene: dict) -> Job:
+    def submit_scene(self, scene: dict, stagger=None) -> Job:
         """Apply every step of a scene as one job.
 
         A device named by more than one step keeps only the last step that
@@ -322,8 +332,11 @@ class BleWorker:
         order += [a for a in by_address if a not in set(order)]
         items = [self._item(address, by_address[address], wanted.get(address))
                  for address in order]
+        if stagger is None:
+            stagger = scene.get("stagger", 0.0)
         job = Job("apply", "scene: %s" % scene.get("name", "?"), items,
-                  coalesce_key="scene", payload={"scene": scene.get("name")})
+                  coalesce_key="scene", payload={"scene": scene.get("name")},
+                  stagger=stagger)
         log.info("queued scene '%s': %d device(s), frames %s",
                  scene.get("name"), len(items), _describe_items(items))
         return self._register(job)
@@ -470,9 +483,13 @@ class BleWorker:
             if not ok:
                 # One dead unit never blocks the rest: log it and move on.
                 log.warning("%s (%s) unreachable: %s", item["name"], item["address"], detail)
-            # Breathe between devices so the shared radio can serve the AP.
-            await asyncio.sleep(gap)
+            # Breathe between devices so the shared radio can serve the AP,
+            # and hold longer still when the job is rolling on purpose.
+            await asyncio.sleep(max(gap, job.stagger))
         _log_phase_summary(job, gap)
+        if job.stagger:
+            log.info("rolled across %d device(s) with a %.1fs stagger",
+                     len(job.items), job.stagger)
         skipped = [item for item in job.items if item["status"] == "skipped"]
         if skipped:
             log.info("skipped %d device(s) still in cooldown: %s",

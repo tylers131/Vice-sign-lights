@@ -194,9 +194,10 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if not addresses:
             return _json_error("target '%s' matches no enabled device" % target)
         worker.note_manual()
+        roll = protocol.clamp(body.get("stagger") or 0, 0, 10)
         job = worker.submit_state(target, state,
                                   label="%s -> %s" % (label, describe_state(state)),
-                                  addresses=addresses)
+                                  addresses=addresses, stagger=roll)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
     @app.route("/api/power", methods=["POST"])
@@ -219,7 +220,11 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if not scene:
             return _json_error("unknown scene", 404)
         worker.note_manual()
-        job = worker.submit_scene(scene)
+        # A scene can carry its own roll; a caller may override it.
+        override = body.get("stagger")
+        job = worker.submit_scene(
+            scene, stagger=protocol.clamp(override, 0, 10)
+            if override is not None else None)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
     @app.route("/api/queue/clear", methods=["POST"])
