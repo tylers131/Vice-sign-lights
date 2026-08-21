@@ -14,6 +14,7 @@ import time
 from flask import Flask, jsonify, render_template, request
 
 from . import protocol
+from .ble import describe_state
 from .config import normalize_address
 
 log = logging.getLogger("vicelights.web")
@@ -26,6 +27,30 @@ def _json_error(message, code=400):
 def _body() -> dict:
     data = request.get_json(silent=True)
     return data if isinstance(data, dict) else {}
+
+
+def _targets_from(store, body: dict):
+    """Work out which devices a request means, and what to call them.
+
+    ``target`` is the usual single string. ``targets`` is a list, so the panel
+    can send an arbitrary selection of zones and still get one job -- which
+    matters because the queue reads per job, and one tap should be one entry.
+    """
+    listed = body.get("targets")
+    if not listed:
+        target = body.get("target", "all")
+        return target, store.target_label(target), store.resolve_target(target)
+    if isinstance(listed, str):
+        listed = [listed]
+    seen, addresses = set(), []
+    for one in listed:
+        for address in store.resolve_target(one):
+            if address not in seen:
+                seen.add(address)
+                addresses.append(address)
+    names = [store.target_label(one) for one in listed]
+    label = ", ".join(names) if len(names) <= 3 else "%d zones" % len(names)
+    return ("+".join(str(x) for x in listed), label, addresses)
 
 
 def _state_from(body: dict) -> dict:
@@ -165,19 +190,26 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             return _json_error(exc)
         if not state:
             return _json_error("nothing to apply")
-        addresses = store.resolve_target(target)
+        target, label, addresses = _targets_from(store, body)
         if not addresses:
             return _json_error("target '%s' matches no enabled device" % target)
         worker.note_manual()
-        job = worker.submit_state(target, state)
+        job = worker.submit_state(target, state,
+                                  label="%s -> %s" % (label, describe_state(state)),
+                                  addresses=addresses)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
     @app.route("/api/power", methods=["POST"])
     def api_power():
         body = _body()
-        target = body.get("target", "all")
+        target, label, addresses = _targets_from(store, body)
+        if not addresses:
+            return _json_error("target '%s' matches no enabled device" % target)
         worker.note_manual()
-        job = worker.submit_state(target, {"power": bool(body.get("on", True))})
+        on = bool(body.get("on", True))
+        job = worker.submit_state(target, {"power": on},
+                                  label="%s -> %s" % (label, "on" if on else "off"),
+                                  addresses=addresses)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
 
     @app.route("/api/scene/apply", methods=["POST"])

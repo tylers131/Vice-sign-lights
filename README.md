@@ -181,6 +181,14 @@ A **fixed shell**: the sign preview, the pill tabs and the bottom bar are
 identical on every tab, and only the middle third changes. Nothing scrolls
 vertically -- no control is ever below a fold.
 
+- **The preview is the sign, and you tap it.** Every letter, cup and straw is
+  a target: tap to add it to the selection, tap again to drop it. Selected
+  zones get a ring, so the sign itself says what the next colour will land on,
+  and "colour just the C" needs no chip. Picking a chip clears the shapes and
+  vice versa -- they are two views of one choice.
+- **The queue is in the shell**, beside the tabs, so every tab shows what the
+  sign is doing: which job, how far through, and how many are waiting. A sweep
+  is ~30s; without it a tap looks like nothing happened.
 - **The preview is the sign, not a diagram.** Each letter, cup and straw is
   drawn in the colour that controller is actually showing. That needed a
   backend change: the worker records what it successfully wrote to each device
@@ -193,6 +201,13 @@ vertically -- no control is ever below a fold.
 - **LIGHTS** is a six-across grid; a controller that is not answering gets a
   dashed outline as well as red text, so it reads without relying on hue.
 - The bottom bar is OFF (scoped to the target), SURPRISE ME, and ROTATE.
+
+### One job, however many zones
+
+Selecting several zones sends `targets` -- a list -- rather than one `target`
+string, and the API resolves the union into a single job. Posting once per
+device would have worked, but it would put one tap in the queue as five
+entries, and the queue is the thing that tells you a sweep is running.
 
 ### Fonts
 

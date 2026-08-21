@@ -606,6 +606,10 @@ class Panel:
         self.target_name = "Everything"
         # 2b keeps the chosen colour and pattern lit, so a tap has a visible
         # result even while the sweep is still running.
+        # Zones picked off the sign preview. Empty means the whole sign; the
+        # chips and this are two views of the same choice, so setting either
+        # clears the other.
+        self.zones = []
         self.chosen_colour = None
         self.chosen_pattern = None
         self.speed = PATTERN_SPEED
@@ -736,7 +740,7 @@ class Panel:
 
     def measure(self):
         s = self.k
-        self.band = pygame.Rect(0, 0, self.w, int(110 * s))
+        self.band = pygame.Rect(0, 0, self.w, int(122 * s))
         self.tabrow = pygame.Rect(0, self.band.bottom, self.w, int(46 * s))
         bar_h = int(52 * s)
         self.bar = pygame.Rect(0, self.h - bar_h - int(14 * s), self.w, bar_h)
@@ -836,9 +840,11 @@ class Panel:
                            self.band.h - int(22 * s))
         self.rounded(self.screen, rect, CARD, LINE, radius=int(16 * s))
         zones = self.zone_colours(state)
+        by_address = {d["name"]: d["address"] for d in state["devices"]}
 
-        # Wordmark. One glyph per letter, both sides behind it.
-        x = rect.x + int(18 * s)
+        # Wordmark. One glyph per letter, both sides behind it, and each a
+        # target you can tap -- so "colour just the C" needs no chip at all.
+        x = rect.x + int(16 * s)
         baseline = rect.centery
         for letter in self.LETTERS:
             value, ok = zones[letter]
@@ -849,12 +855,16 @@ class Panel:
                 colour = over(INK, 0.14, CARD)
             spot = self.f_sign.render(letter, True, colour).get_rect(
                 midleft=(x, baseline))
+            hit = spot.inflate(int(10 * s), int(18 * s))
+            self.zone_chrome(hit, "group:" + letter)
             self.glow_text(self.f_sign, letter, colour, spot,
                            1.0 if (ok and value) else 0.0)
-            x = spot.right + int(4 * s)
+            self.buttons.append(Button(hit, letter, "zone", "group:" + letter))
+            x = hit.right + int(2 * s)
 
-        # The drink: cup outline, straw, cup outline, straw.
-        x += int(16 * s)
+        # The drink: cup outline, straw, cup outline, straw -- each its own
+        # target, so a single straw can be picked without going to Lights.
+        x += int(12 * s)
         for name, kind in (("A_Cup", "cup"), ("A_Straw", "straw"),
                            ("B_Cup", "cup"), ("B_Straw", "straw")):
             value, ok = zones[name]
@@ -863,20 +873,29 @@ class Panel:
                 colour = CYAN
             if not ok:
                 colour = over(INK, 0.14, CARD)
+            device = by_address.get(name)
+            token = "device:" + device if device else "name:" + name
             if kind == "cup":
-                cup = pygame.Rect(x, baseline - int(30 * s), int(46 * s), int(60 * s))
-                pygame.draw.rect(self.screen, colour, cup, width=max(2, int(3 * s)),
-                                 border_top_left_radius=int(6 * s),
-                                 border_top_right_radius=int(6 * s),
-                                 border_bottom_left_radius=int(16 * s),
-                                 border_bottom_right_radius=int(16 * s))
-                x = cup.right + int(10 * s)
+                shape = pygame.Rect(x, baseline - int(35 * s),
+                                    int(54 * s), int(70 * s))
+                hit = shape.inflate(int(10 * s), int(14 * s))
+                self.zone_chrome(hit, token)
+                pygame.draw.rect(self.screen, colour, shape,
+                                 width=max(2, int(4 * s)),
+                                 border_top_left_radius=int(7 * s),
+                                 border_top_right_radius=int(7 * s),
+                                 border_bottom_left_radius=int(18 * s),
+                                 border_bottom_right_radius=int(18 * s))
             else:
-                straw = pygame.Rect(x, baseline - int(37 * s), int(8 * s), int(74 * s))
-                self.rounded(self.screen, straw, colour, radius=int(4 * s))
+                shape = pygame.Rect(x + int(6 * s), baseline - int(43 * s),
+                                    int(10 * s), int(86 * s))
+                hit = shape.inflate(int(22 * s), int(10 * s))
+                self.zone_chrome(hit, token)
+                self.rounded(self.screen, shape, colour, radius=int(5 * s))
                 if ok and value:
-                    self.glow_rect(straw, colour)
-                x = straw.right + int(10 * s)
+                    self.glow_rect(shape, colour)
+            self.buttons.append(Button(hit, name, "zone", token))
+            x = hit.right + int(4 * s)
 
         # Now playing, and the health chips.
         right = rect.right - int(18 * s)
@@ -914,6 +933,12 @@ class Panel:
                   center=back.center)
         self.buttons.append(Button(back, "PUT IT BACK", "revert"))
 
+    def zone_chrome(self, rect, token):
+        """Mark a preview shape as picked. Drawn behind the shape itself."""
+        if token in self.zones:
+            self.rounded(self.screen, rect, over(CYAN, 0.16, CARD), CYAN,
+                         radius=int(12 * self.k), width=max(1, int(2 * self.k)))
+
     # -- shell ----------------------------------------------------------------
 
     def draw_tabs(self, state):
@@ -936,12 +961,54 @@ class Panel:
             self.tabs.append(Button(pill, label, "tab", key))
             x = pill.right
 
-        hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
-                "colour": "", "lights": "tap one to colour just it"}[self.tab]
-        if hint:
+        self.draw_queue(state, group.right + int(12 * s), group.centery)
+
+    def draw_queue(self, state, left, centre):
+        """What the sign is doing, in the shell so every tab shows it.
+
+        The same thing the phone's queue card says: which job, how far through,
+        and how many are waiting. A sweep is ~30s, so without it a tap looks
+        like nothing happened.
+        """
+        s = self.k
+        right = self.w - int(16 * s)
+        if not (state["busy"] or state["queued"] or state["job"]):
+            hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
+                    "colour": "tap the sign above to pick zones",
+                    "lights": "tap one to colour just it"}[self.tab]
             image = self.f_tiny.render(hint, True, over(INK, 0.35))
-            self.screen.blit(image, (self.w - int(16 * s) - image.get_width(),
-                                     group.centery - image.get_height() // 2))
+            self.screen.blit(image, (right - image.get_width(),
+                                     centre - image.get_height() // 2))
+            return
+
+        job = state["job"] or {}
+        label = (job.get("label") or "working").replace("scene: ", "")
+        total = max(1, state["total"])
+        count = "%d/%d" % (state["done"], total)
+        if state["queued"]:
+            count += "  +%d" % state["queued"]
+
+        counted = self.f_tiny.render(count, True, CYAN_SOFT)
+        track_w = int(120 * s)
+        track = pygame.Rect(right - counted.get_width() - int(8 * s) - track_w,
+                            centre - int(3 * s), track_w, int(6 * s))
+        self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(3 * s))
+        filled = int(track.w * state["done"] / float(total))
+        if filled:
+            self.rounded(self.screen, pygame.Rect(track.x, track.y, filled, track.h),
+                         CYAN, radius=int(3 * s))
+        self.screen.blit(counted, (right - counted.get_width(),
+                                   centre - counted.get_height() // 2))
+
+        # The label gets whatever room is left, and is clipped rather than
+        # allowed to run under the progress bar.
+        room = track.x - int(10 * s) - left
+        if room > int(60 * s):
+            while label and self.f_tiny.size(label)[0] > room:
+                label = label[:-1]
+            image = self.f_tiny.render(label, True, MUTED)
+            self.screen.blit(image, (track.x - int(10 * s) - image.get_width(),
+                                     centre - image.get_height() // 2))
 
     def draw_bottom(self, state):
         s = self.k
@@ -951,9 +1018,7 @@ class Panel:
         off = pygame.Rect(pad, self.bar.y, int(190 * s), self.bar.h)
         self.rounded(self.screen, off, over(PINK, 0.10), over(PINK, 0.35),
                      radius=off.h // 2)
-        self.stack(off, "OFF", PINK_SOFT,
-                   "everything" if self.target == "all" else self.target_name.lower(),
-                   over(PINK_SOFT, 0.65))
+        self.stack(off, "OFF", PINK_SOFT, self.where_name(), over(PINK_SOFT, 0.65))
         self.actions.append(Button(off, "OFF", "off"))
 
         rot_w = int(210 * s)
@@ -1311,10 +1376,20 @@ class Panel:
             kind = button.kind
             if kind == "scene":
                 self.apply_scene(button.payload)
+            elif kind == "zone":
+                token = button.payload
+                if token in self.zones:
+                    self.zones.remove(token)
+                else:
+                    self.zones.append(token)
+                # A shape pick and a chip are two views of one choice.
+                self.target, self.target_name = "all", "Everything"
             elif kind == "target":
+                self.zones = []
                 self.target, self.target_name = button.payload
             elif kind == "device":
                 device = button.payload
+                self.zones = []
                 self.target = "device:" + device["address"]
                 self.target_name = device["name"].replace("_", " ")
                 self.tab = "colour"
@@ -1323,12 +1398,12 @@ class Panel:
                 self.chosen_colour, self.chosen_pattern = button.payload, None
                 self.apply_state({"color": button.payload, "brightness": 100,
                                   "power": True},
-                                 "%s on %s" % (button.label, self.target_name.lower()))
+                                 "%s on %s" % (button.label, self.where_name()))
             elif kind == "pattern":
                 self.chosen_pattern, self.chosen_colour = button.payload, None
                 self.apply_state({"mode": button.payload, "speed": self.speed,
                                   "power": True},
-                                 "%s on %s" % (button.label, self.target_name.lower()))
+                                 "%s on %s" % (button.label, self.where_name()))
             elif kind == "speed":
                 fraction = (position[0] - button.rect.x) / float(max(1, button.rect.w))
                 self.speed = max(10, min(100, int(round(fraction * 100))))
@@ -1366,8 +1441,32 @@ class Panel:
         except Exception:
             pass
 
+    def selection(self):
+        """What a colour or pattern would land on, and what to call it."""
+        if not self.zones:
+            return {"target": self.target}, self.target_name
+        if len(self.zones) == 1:
+            name = self.zone_name(self.zones[0])
+        else:
+            name = "%d zones" % len(self.zones)
+        # targets, not target: the API resolves the union into a single job.
+        return {"targets": list(self.zones)}, name
+
+    def where_name(self):
+        return self.selection()[1].lower()
+
+    def zone_name(self, token):
+        if token.startswith("group:"):
+            return token.split(":", 1)[1]
+        if token.startswith("device:"):
+            for device in self.sign.snapshot()["devices"]:
+                if device["address"] == token.split(":", 1)[1]:
+                    return device["name"].replace("_", " ")
+        return token.split(":", 1)[-1].replace("_", " ")
+
     def apply_state(self, changes, said):
-        payload = dict(changes, target=self.target)
+        where, _name = self.selection()
+        payload = dict(changes, **where)
         threading.Thread(target=self._apply_state, args=(payload, said),
                          daemon=True).start()
 
@@ -1400,9 +1499,9 @@ class Panel:
         try:
             if kind == "off":
                 self.sign.clear_pending()
-                _post("/api/power", {"target": self.target, "on": False})
-                self.sign.say("Turning off " + ("everything" if self.target == "all"
-                                                else self.target_name.lower()))
+                where, name = self.selection()
+                _post("/api/power", dict(where, on=False))
+                self.sign.say("Turning off " + name.lower())
             elif kind == "revert":
                 with self.sign.lock:
                     playing = self.sign.playing

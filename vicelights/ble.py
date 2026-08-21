@@ -278,12 +278,19 @@ class BleWorker:
         """
         self.last_manual_at = time.monotonic()
 
-    def submit_state(self, target: str, state: dict, label: str = None) -> Job:
-        """Apply one light state to every device behind ``target``."""
-        addresses = self.store.resolve_target(target)
+    def submit_state(self, target: str, state: dict, label: str = None,
+                     addresses=None) -> Job:
+        """Apply one light state to every device behind ``target``.
+
+        ``addresses`` overrides the lookup, so a caller that has already worked
+        out a set of devices -- picking zones off the panel's sign preview, say
+        -- gets one job for the lot rather than one job per light.
+        """
+        if addresses is None:
+            addresses = self.store.resolve_target(target)
         items = [self._item(address, self._frames_for(state, address), state)
                  for address in addresses]
-        label = label or ("%s -> %s" % (self.store.target_label(target), _describe(state)))
+        label = label or ("%s -> %s" % (self.store.target_label(target), describe_state(state)))
         job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
         log.info("queued %s: %d device(s), frames %s",
                  label, len(items), _describe_items(items))
@@ -757,7 +764,7 @@ def _describe_items(items) -> str:
         _spaced(items[0]["frames"]), len(unique) - 1)
 
 
-def _describe(state: dict) -> str:
+def describe_state(state: dict) -> str:
     if state.get("power") is False:
         return "off"
     if state.get("mode"):
