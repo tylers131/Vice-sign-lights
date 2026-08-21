@@ -281,7 +281,7 @@ class BleWorker:
     def submit_state(self, target: str, state: dict, label: str = None) -> Job:
         """Apply one light state to every device behind ``target``."""
         addresses = self.store.resolve_target(target)
-        items = [self._item(address, self._frames_for(state, address))
+        items = [self._item(address, self._frames_for(state, address), state)
                  for address in addresses]
         label = label or ("%s -> %s" % (self.store.target_label(target), _describe(state)))
         job = Job("apply", label, items, coalesce_key="target:" + (target or "all"))
@@ -304,15 +304,17 @@ class BleWorker:
         here cannot change what any device displays: the step that wins for a
         given device is settled in by_address above, independently of order.
         """
-        by_address = {}
+        by_address, wanted = {}, {}
         for step in scene.get("steps") or []:
             for address in self.store.resolve_target(step.get("target", "all")):
                 by_address[address] = self._frames_for(step, address)
+                wanted[address] = step
         order = [a for a in self.store.resolve_target("all") if a in by_address]
         # Anything a step reached that 'all' does not list (a device disabled
         # between the two calls) still gets written rather than dropped.
         order += [a for a in by_address if a not in set(order)]
-        items = [self._item(address, by_address[address]) for address in order]
+        items = [self._item(address, by_address[address], wanted.get(address))
+                 for address in order]
         job = Job("apply", "scene: %s" % scene.get("name", "?"), items,
                   coalesce_key="scene", payload={"scene": scene.get("name")})
         log.info("queued scene '%s': %d device(s), frames %s",
@@ -339,7 +341,7 @@ class BleWorker:
                   payload={"seconds": seconds})
         return self._register(job)
 
-    def _item(self, address, frames):
+    def _item(self, address, frames, state=None):
         device = self.store.device(address)
         return {
             "address": address,
@@ -347,6 +349,10 @@ class BleWorker:
             "status": "pending",
             "detail": "",
             "frames": [f.hex() for f in frames],
+            # What this write is meant to make the unit show. Recorded on
+            # success as the device's current appearance, so the panel can draw
+            # the sign as it actually is rather than as a generic diagram.
+            "want": _showing(state),
         }
 
     # ---------------------------------------------------------------- status
@@ -449,6 +455,11 @@ class BleWorker:
             item["ms"] = int(elapsed * 1000)
             item["phases"] = phases
             self._note_device(item["address"], ok, detail, char_uuid, elapsed)
+            if ok and item.get("want"):
+                # Only on success: a unit that did not answer is still showing
+                # whatever it was showing before.
+                self.device_state.setdefault(item["address"], {})["showing"] = \
+                    dict(item["want"])
             if not ok:
                 # One dead unit never blocks the rest: log it and move on.
                 log.warning("%s (%s) unreachable: %s", item["name"], item["address"], detail)
@@ -659,6 +670,18 @@ def normalize_scan(discovered) -> list:
             rssi = getattr(device, "rssi", None)
         results.append({"address": address.upper(), "name": name.strip(), "rssi": rssi})
     return results
+
+
+def _showing(state):
+    """The visible part of a light state: what a person would see."""
+    if not state:
+        return None
+    if state.get("power") is False:
+        return {"power": False}
+    return {"power": True,
+            "color": state.get("color"),
+            "mode": state.get("mode"),
+            "speed": state.get("speed")}
 
 
 PHASE_ORDER = ("connect", "discover", "write", "disconnect")

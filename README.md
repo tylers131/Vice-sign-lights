@@ -173,6 +173,47 @@ keyboard cannot be dismissed at all. None of that exists here.
 
 ### What is on it
 
+Built from the Claude Design handoff (`VICE Panel.dc.html`, boards 2a-2c), at
+the 800x480 the boards are drawn at. Everything is spaced from that, scaled by
+one factor, so another panel size carries over.
+
+A **fixed shell**: the sign preview, the pill tabs and the bottom bar are
+identical on every tab, and only the middle third changes. Nothing scrolls
+vertically -- no control is ever below a fold.
+
+- **The preview is the sign, not a diagram.** Each letter, cup and straw is
+  drawn in the colour that controller is actually showing. That needed a
+  backend change: the worker records what it successfully wrote to each device
+  and `/api/status` reports it as `showing`. A letter stands for both sides and
+  dims if either is silent.
+- **SCENES** is a horizontal shelf -- animated cards with the scene's own
+  colours as a ramp, then solid pills. Swipe or tap `>` to page.
+- **COLOUR** is target chips, twelve swatches, four named patterns and a speed
+  track, all in one view.
+- **LIGHTS** is a six-across grid; a controller that is not answering gets a
+  dashed outline as well as red text, so it reads without relying on hue.
+- The bottom bar is OFF (scoped to the target), SURPRISE ME, and ROTATE.
+
+### Fonts
+
+The design specifies Caprasimo for display and Figtree for body. Neither ships
+with Pi OS Lite. Drop `Caprasimo-Regular.ttf` and `Figtree-SemiBold.ttf` into
+`/opt/vice-sign-lights/fonts/` to get the intended look; without them a bold
+DejaVu stands in, which keeps the weight contrast the layout depends on but not
+the character.
+
+### Not built yet
+
+Board 2d is a playlist builder -- a spin wheel, a drag-reorderable queue, and a
+**dwell time per step**. Rotation currently has one interval for every scene, so
+that one needs a backend change before the screen is worth drawing.
+
+Two more from the boards need concepts that do not exist here: scenes
+attributed to a campmate ("Sam's one"), and SAVE THIS, which needs a name and
+so a keyboard -- the panel says to use the phone for it rather than pretending.
+
+### What is on it (previous layout)
+
 Three tabs, and a target that persists across them.
 
 - **SCENES** -- every saved scene, movement first, the playing one outlined.

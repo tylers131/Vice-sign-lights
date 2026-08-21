@@ -37,38 +37,54 @@ import pygame
 BASE = os.environ.get("VICE_KIOSK_URL", "http://127.0.0.1").rstrip("/")
 FPS = 30
 
-# Same palette as the web UI, so the panel and a phone look like one product.
-BG      = (11, 13, 18)
-PANEL   = (22, 26, 35)
-PANEL2  = (30, 36, 49)
-LINE    = (43, 51, 66)
-INK     = (232, 236, 244)
-MUTED   = (139, 150, 173)
-ACCENT  = (255, 45, 120)
-ACCENT2 = (34, 211, 238)
-OK      = (37, 192, 106)
-WARN    = (245, 165, 36)
-BAD     = (239, 68, 68)
-OFF_BG  = (42, 21, 32)
-OFF_INK = (255, 180, 198)
+# Straight from the artboards. The canvas chrome around them is the light
+# "Organic" design system; the panel itself is explicitly dark, so these are the
+# inline values the boards use rather than the DS tokens.
+BG       = (0x12, 0x10, 0x0e)
+CARD     = (0x1a, 0x16, 0x13)
+CARD_ALT = (0x17, 0x14, 0x12)
+INK      = (0xf3, 0xec, 0xe2)
+PINK     = (0xff, 0x2f, 0x6e)
+PINK_SOFT= (0xff, 0x8f, 0xb4)
+CYAN     = (0x22, 0xd3, 0xee)
+CYAN_SOFT= (0x8b, 0xea, 0xf7)
+OLIVE    = (0xa8, 0xbd, 0x80)
+OLIVE_SOFT=(0xc3, 0xd6, 0xa0)
+ORANGE   = (0xe5, 0x8b, 0x4d)
+ORANGE_INK=(0x24, 0x15, 0x05)
 
-TABS = (("scenes", "SCENES"), ("colour", "COLOUR"), ("lights", "LIGHTS"))
 
-# One tap each. Deliberately short: a wall of swatches is harder to use in the
-# dark than a dozen that are clearly different from each other.
+def over(colour, alpha, base=BG):
+    """Flatten an rgba onto a background, the way the CSS does."""
+    return tuple(int(round(c * alpha + b * (1 - alpha)))
+                 for c, b in zip(colour, base))
+
+
+WHITE = (255, 255, 255)
+LINE     = over(WHITE, 0.07)          # rgba(255,255,255,.07) hairlines
+LINE_SOFT= over(WHITE, 0.12)
+MUTED    = over(INK, 0.45)
+FAINT    = over(INK, 0.40)
+DIM      = over(INK, 0.30)
+CHIP_BG  = over(INK, 0.06)
+TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("lights", "Lights"))
+
+# The twelve circles from 2b, in the board's order.
 SWATCHES = (
-    ("#ff2d78", "Vice"),   ("#ff0033", "Red"),    ("#ff6a00", "Orange"),
-    ("#ffb400", "Amber"),  ("#ffd9a0", "Warm"),   ("#ffffff", "White"),
-    ("#22d3ee", "Cyan"),   ("#0066ff", "Blue"),   ("#8000ff", "Violet"),
-    ("#ff00ff", "Magenta"),("#00ff66", "Green"),  ("#00ffcc", "Mint"),
+    ("#ff2f6e", "Vice"),   ("#f01e3c", "Red"),    ("#f2721b", "Orange"),
+    ("#f0b429", "Amber"),  ("#f6d8a8", "Warm"),   ("#f3ece2", "White"),
+    ("#22d3ee", "Cyan"),   ("#2563eb", "Blue"),   ("#8b5cf6", "Violet"),
+    ("#ff2fd0", "Magenta"),("#22c55e", "Green"),  ("#2fe3b0", "Mint"),
 )
 
-# Group names that read better than the config's own keys.
+# Chip labels from 2b -- shorter than the config's own keys.
 GROUP_LABELS = {
-    "letters": "All letters", "drink": "Whole drink", "cup": "Cups",
-    "straw": "Straws", "side-a": "Side A", "side-b": "Side B",
-    "border": "Border",
+    "letters": "Letters", "drink": "Drink", "cup": "Cups", "straw": "Straws",
+    "border": "Border", "side-a": "Side A", "side-b": "Side B",
 }
+# 2b names four patterns rather than listing every mode.
+PATTERN_LABELS = (("flash", "Flash"), ("jump", "Jump"),
+                  ("rgb", "Fade RGB"), ("7 colour", "Fade 7"))
 PATTERN_SPEED = 70
 
 
@@ -161,11 +177,26 @@ class Sign:
             return
         modes = state.get("modes", [])
         moving = {m["value"] for m in modes if m.get("animates")}
+        labels = {m["value"]: m["name"] for m in modes}
         scenes = []
         for scene in state.get("scenes", []):
             steps = scene.get("steps") or []
             animated = any(s.get("mode") and s["mode"] in moving for s in steps)
-            scenes.append({"name": scene.get("name", "?"), "animated": animated})
+            # The shelf card shows the scene's own colours as a ramp. A step
+            # running a pattern has no colour of its own, so it contributes the
+            # rainbow those modes actually play.
+            ramp = []
+            for step in steps:
+                if step.get("mode") and step["mode"] in moving:
+                    # "fade blue" is blue; only the multi-colour modes are a
+                    # rainbow. Without this every animated card looks alike.
+                    ramp += _mode_ramp(labels.get(step["mode"], ""))
+                elif step.get("power") is False:
+                    ramp.append("#2a2622")
+                elif step.get("color"):
+                    ramp.append(step["color"])
+            scenes.append({"name": scene.get("name", "?"), "animated": animated,
+                           "ramp": ramp or ["#2a2622"]})
         # Movement first, matching how the web UI groups them.
         scenes.sort(key=lambda s: (not s["animated"],))
 
@@ -177,7 +208,8 @@ class Sign:
                     and ("7 colour" in m["name"].lower() or "rgb" in m["name"].lower())]
 
         devices = [{"name": d.get("name", "?"), "address": d.get("address", ""),
-                    "groups": d.get("groups", []), "reachable": d.get("reachable")}
+                    "groups": d.get("groups", []), "reachable": d.get("reachable"),
+                    "showing": d.get("showing")}
                    for d in state.get("devices", []) if d.get("enabled", True)]
 
         with self.lock:
@@ -216,6 +248,7 @@ class Sign:
                 runtime = devices.get(device["address"])
                 if runtime:
                     device["reachable"] = runtime.get("reachable")
+                    device["showing"] = runtime.get("showing")
             # Drop the tapped highlight once the sign confirms, or after 45s so
             # a scene that never lands cannot leave the button stuck lit.
             if self.pending and (self.playing == self.pending
@@ -450,7 +483,13 @@ class Touch:
 # fc-list, which Pi OS Lite does not ship, and rather than failing it stalls --
 # the panel opens the display successfully and then hangs before drawing
 # anything, which looks like a graphics problem and is not one.
+# The design calls for Caprasimo (display) and Figtree (body). Neither ships
+# with Pi OS Lite, so drop the .ttf files into /opt/vice-sign-lights/fonts to
+# get the intended look; otherwise a bold DejaVu stands in, which keeps the
+# weight contrast the layout depends on even though the character is different.
 FONT_DIRS = (
+    ("/opt/vice-sign-lights/fonts", "Figtree-SemiBold.ttf", "Caprasimo-Regular.ttf"),
+    ("fonts", "Figtree-SemiBold.ttf", "Caprasimo-Regular.ttf"),
     ("/usr/share/fonts/truetype/dejavu", "DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
     ("/usr/share/fonts/truetype/liberation",
      "LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf"),
@@ -466,10 +505,26 @@ def _font_file(bold=False):
     return None
 
 
+MODE_HUES = {"red": "#f01e3c", "green": "#22c55e", "blue": "#2563eb",
+             "yellow": "#f0b429", "cyan": "#22d3ee", "magenta": "#ff2fd0",
+             "white": "#f3ece2"}
+
+
+def _mode_ramp(label):
+    """The colours a built-in pattern actually plays, from its audited name."""
+    label = (label or "").lower()
+    if "7 colour" in label or "rgb" in label:
+        return ["#ff2f6e", "#f0b429", "#22c55e", "#22d3ee", "#8b5cf6"]
+    for word, hexcode in MODE_HUES.items():
+        if word in label:
+            # A fade breathes one hue; show it dark-to-bright, not flat.
+            return ["#1a1613", hexcode]
+    return ["#ff2f6e", "#8b1a8b", "#22d3ee"]
+
+
 def _sdl_touch_devices():
     """How many touchscreens SDL found. Zero here with a working picture means
-    the input side is the problem, not the display -- worth stating in the log
-    rather than leaving someone to infer it from taps doing nothing."""
+    the input side is the problem, not the display."""
     try:
         return pygame.get_num_touch_devices()
     except Exception:
@@ -523,21 +578,16 @@ class Panel:
         self._hide_cursor()
         self.w, self.h = self.screen.get_size()
 
-        scale = max(0.75, min(1.4, self.w / 800.0))
-        self.f_small = load_font(int(13 * scale))
-        self.f_body  = load_font(int(17 * scale), bold=True)
-        self.f_head  = load_font(int(12 * scale), bold=True)
-        self.f_brand = load_font(int(16 * scale), bold=True)
-
-        self.bar_h = int(40 * scale)
-        self.act_h = int(72 * scale)
-        self.prog_h = int(38 * scale)
-        self.pad = int(9 * scale)
-        self.btn_h = int(62 * scale)
-
-        self.tab_h = int(42 * scale)
-        self.chip_h = int(38 * scale)
-        self.swatch_h = int(52 * scale)
+        # Everything is spaced from the artboards' 800x480, so one scale
+        # factor carries the whole layout to another panel size.
+        self.k = scale = self.w / 800.0
+        self.f_sign  = load_font(int(56 * scale), bold=True)
+        self.f_head2 = load_font(int(17 * scale), bold=True)
+        self.f_body  = load_font(int(13 * scale), bold=True)
+        self.f_body2 = load_font(int(14 * scale), bold=True)
+        self.f_small = load_font(int(12 * scale))
+        self.f_tiny  = load_font(int(10 * scale), bold=True)
+        self.f_head = self.f_tiny
 
         self.sign = Sign()
         self.scroll = 0.0
@@ -554,6 +604,13 @@ class Panel:
         # targets, so this is ignored there.
         self.target = "all"
         self.target_name = "Everything"
+        # 2b keeps the chosen colour and pattern lit, so a tap has a visible
+        # result even while the sweep is still running.
+        self.chosen_colour = None
+        self.chosen_pattern = None
+        self.speed = PATTERN_SPEED
+        # The shelves scroll by the page, via the "›" card at the end.
+        self.shelf = {"scenes": 0, "solid": 0}
 
     @staticmethod
     def _hide_cursor():
@@ -672,137 +729,524 @@ class Panel:
         raise SystemExit("could not open the display.\n  " + "\n  ".join(errors))
 
     # -- layout ---------------------------------------------------------------
+    #
+    # Fixed shell from the artboards: preview band, pill tabs, bottom bar. Only
+    # the middle third changes between tabs, and nothing scrolls -- the design's
+    # point is that no control ever hides below a fold.
 
-    def content_area(self, showing_progress):
-        top = self.bar_h + self.tab_h + (self.prog_h if showing_progress else 0)
-        return pygame.Rect(0, top, self.w, self.h - top - self.act_h)
+    def measure(self):
+        s = self.k
+        self.band = pygame.Rect(0, 0, self.w, int(110 * s))
+        self.tabrow = pygame.Rect(0, self.band.bottom, self.w, int(46 * s))
+        bar_h = int(52 * s)
+        self.bar = pygame.Rect(0, self.h - bar_h - int(14 * s), self.w, bar_h)
+        self.middle = pygame.Rect(int(16 * s), self.tabrow.bottom,
+                                  self.w - int(32 * s),
+                                  self.bar.top - int(12 * s) - self.tabrow.bottom)
 
-    def layout_tabs(self):
+    # -- the sign itself ------------------------------------------------------
+
+    LETTERS = ("V", "I", "C", "E")
+
+    def zone_colours(self, state):
+        """What each zone of the sign is showing, and whether it is answering.
+
+        The preview is the centrepiece of the design, so it is drawn from the
+        controllers' actual reported state rather than being a fixed diagram.
+        A letter stands for both sides, so it dims if either side is silent.
+        """
+        by_name = {d["name"]: d for d in state["devices"]}
+
+        def look(*names):
+            colour, ok = None, True
+            for name in names:
+                device = by_name.get(name)
+                if not device:
+                    continue
+                if device.get("reachable") is False:
+                    ok = False
+                showing = device.get("showing") or {}
+                if colour is None and showing.get("power") is not False:
+                    if showing.get("mode"):
+                        colour = "pattern"
+                    elif showing.get("color"):
+                        colour = showing["color"]
+            return colour, ok
+
+        zones = {}
+        for letter in self.LETTERS:
+            zones[letter] = look("A_" + letter, "B_" + letter)
+        zones["A_Cup"] = look("A_Cup")
+        zones["B_Cup"] = look("B_Cup")
+        zones["A_Straw"] = look("A_Straw")
+        zones["B_Straw"] = look("B_Straw")
+        return zones
+
+    @staticmethod
+    def _lit(value, fallback=(90, 84, 78)):
+        """A zone's drawing colour. 'pattern' means it is animating."""
+        if value == "pattern":
+            return None                      # drawn as a gradient instead
+        if not value:
+            return fallback
+        try:
+            colour = pygame.Color(value)
+            return (colour.r, colour.g, colour.b)
+        except ValueError:
+            return fallback
+
+    def glow_text(self, font, glyph, colour, spot, strength=1.0):
+        """Draw a glyph with the boards' halo behind it.
+
+        The halo is the glyph itself, scaled up and added at low alpha, so it
+        follows the letterform. A plain circle -- which is what this was first
+        -- swamps the very letter it is meant to be lighting.
+        """
+        base = font.render(glyph, True, colour)
+        if strength > 0:
+            # Plain alpha blending, not additive: font.render fills the whole
+            # rect with the colour and varies only alpha, so an additive blit
+            # adds full colour across the glyph's bounding box and paints a
+            # solid block where a halo was wanted.
+            for scale, alpha in ((1.34, 34), (1.18, 46), (1.07, 58)):
+                size = (max(1, int(base.get_width() * scale)),
+                        max(1, int(base.get_height() * scale)))
+                halo = pygame.transform.smoothscale(base, size)
+                halo.set_alpha(int(alpha * strength))
+                self.screen.blit(halo, halo.get_rect(center=spot.center))
+        self.screen.blit(base, spot)
+
+    def glow_rect(self, rect, colour, strength=1.0):
+        """The same idea for the straws, which are shapes rather than glyphs."""
+        pad = int(9 * self.k)
+        layer = pygame.Surface((rect.w + pad * 2, rect.h + pad * 2), pygame.SRCALPHA)
+        for step, alpha in ((pad, 26), (pad // 2, 40)):
+            spread = pygame.Rect(pad - step, pad - step,
+                                 rect.w + step * 2, rect.h + step * 2)
+            pygame.draw.rect(layer, tuple(colour) + (int(alpha * strength),), spread,
+                             border_radius=max(1, spread.w // 2))
+        self.screen.blit(layer, (rect.x - pad, rect.y - pad))
+        # The crisp shape goes back on top of its own halo.
+        self.rounded(self.screen, rect, colour, radius=max(1, rect.w // 2))
+
+    def draw_preview(self, state):
+        s = self.k
+        pad = int(16 * s)
+        rect = pygame.Rect(pad, int(12 * s), self.w - pad * 2 - int(146 * s),
+                           self.band.h - int(22 * s))
+        self.rounded(self.screen, rect, CARD, LINE, radius=int(16 * s))
+        zones = self.zone_colours(state)
+
+        # Wordmark. One glyph per letter, both sides behind it.
+        x = rect.x + int(18 * s)
+        baseline = rect.centery
+        for letter in self.LETTERS:
+            value, ok = zones[letter]
+            colour = self._lit(value, (120, 112, 104))
+            if colour is None:
+                colour = CYAN
+            if not ok:
+                colour = over(INK, 0.14, CARD)
+            spot = self.f_sign.render(letter, True, colour).get_rect(
+                midleft=(x, baseline))
+            self.glow_text(self.f_sign, letter, colour, spot,
+                           1.0 if (ok and value) else 0.0)
+            x = spot.right + int(4 * s)
+
+        # The drink: cup outline, straw, cup outline, straw.
+        x += int(16 * s)
+        for name, kind in (("A_Cup", "cup"), ("A_Straw", "straw"),
+                           ("B_Cup", "cup"), ("B_Straw", "straw")):
+            value, ok = zones[name]
+            colour = self._lit(value, (70, 65, 60))
+            if colour is None:
+                colour = CYAN
+            if not ok:
+                colour = over(INK, 0.14, CARD)
+            if kind == "cup":
+                cup = pygame.Rect(x, baseline - int(30 * s), int(46 * s), int(60 * s))
+                pygame.draw.rect(self.screen, colour, cup, width=max(2, int(3 * s)),
+                                 border_top_left_radius=int(6 * s),
+                                 border_top_right_radius=int(6 * s),
+                                 border_bottom_left_radius=int(16 * s),
+                                 border_bottom_right_radius=int(16 * s))
+                x = cup.right + int(10 * s)
+            else:
+                straw = pygame.Rect(x, baseline - int(37 * s), int(8 * s), int(74 * s))
+                self.rounded(self.screen, straw, colour, radius=int(4 * s))
+                if ok and value:
+                    self.glow_rect(straw, colour)
+                x = straw.right + int(10 * s)
+
+        # Now playing, and the health chips.
+        right = rect.right - int(18 * s)
+        y = rect.y + int(14 * s)
+        self.text_right(self.f_tiny, "NOW PLAYING", MUTED, right, y)
+        y += int(16 * s)
+        self.text_right(self.f_head2, state["playing"] or "--", INK, right, y)
+        y += int(28 * s)
+        chips = []
+        total, bad = state["devices_total"], state["devices_bad"]
+        chips.append(("%d lit" % max(0, total - bad), OLIVE, over(OLIVE, 0.16, CARD)))
+        if bad:
+            chips.append(("%d down" % bad, PINK_SOFT, over(PINK, 0.14, CARD)))
+        cx = right
+        for label, ink, fill in reversed(chips):
+            width = self.f_tiny.size(label)[0] + int(18 * s)
+            chip = pygame.Rect(cx - width, y, width, int(18 * s))
+            self.rounded(self.screen, chip, fill, radius=int(9 * s))
+            self.text(self.screen, self.f_tiny, label, ink, center=chip.center)
+            cx = chip.x - int(6 * s)
+
+        # SAVE THIS / PUT IT BACK.
+        col = pygame.Rect(rect.right + int(14 * s), rect.y,
+                          int(132 * s), rect.h)
+        save = pygame.Rect(col.x, col.y, col.w, col.h - int(42 * s))
+        self.rounded(self.screen, save, ORANGE, radius=int(16 * s))
+        self.text(self.screen, self.f_head2, "SAVE THIS", ORANGE_INK,
+                  center=(save.centerx, save.centery - int(9 * s)))
+        self.text(self.screen, self.f_tiny, "as a scene", over(ORANGE_INK, 0.72, ORANGE),
+                  center=(save.centerx, save.centery + int(10 * s)))
+        self.buttons.append(Button(save, "SAVE THIS", "save"))
+        back = pygame.Rect(col.x, save.bottom + int(8 * s), col.w, int(34 * s))
+        self.rounded(self.screen, back, BG, over(INK, 0.18), radius=int(17 * s))
+        self.text(self.screen, self.f_small, "PUT IT BACK", over(INK, 0.7),
+                  center=back.center)
+        self.buttons.append(Button(back, "PUT IT BACK", "revert"))
+
+    # -- shell ----------------------------------------------------------------
+
+    def draw_tabs(self, state):
+        s = self.k
+        group_w = 0
+        for _key, label in TABS:
+            group_w += self.f_body.size(label)[0] + int(40 * s)
+        group = pygame.Rect(int(16 * s), self.tabrow.y + int(2 * s),
+                            group_w + int(8 * s), int(34 * s))
+        self.rounded(self.screen, group, CARD, radius=int(17 * s))
+        x = group.x + int(4 * s)
         self.tabs = []
-        width = self.w // len(TABS)
-        for i, (key, label) in enumerate(TABS):
-            self.tabs.append(Button((i * width, self.bar_h, width, self.tab_h),
-                                    label, "tab", key))
+        for key, label in TABS:
+            width = self.f_body.size(label)[0] + int(40 * s)
+            pill = pygame.Rect(x, group.y + int(4 * s), width, group.h - int(8 * s))
+            if key == self.tab:
+                self.rounded(self.screen, pill, INK, radius=pill.h // 2)
+            self.text(self.screen, self.f_body, label,
+                      BG if key == self.tab else over(INK, 0.6), center=pill.center)
+            self.tabs.append(Button(pill, label, "tab", key))
+            x = pill.right
 
-    def _row(self, area, y, items, height, gap=None, min_w=0):
-        """Lay `items` out left to right, wrapping. Returns the new y."""
-        gap = self.pad if gap is None else gap
-        x = self.pad
-        for make in items:
-            width = max(min_w, make[0])
-            if x + width > area.w - self.pad:
-                x, y = self.pad, y + height + gap
-            make[1](pygame.Rect(x, y, width, height))
-            x += width + gap
-        return y + height + gap
+        hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
+                "colour": "", "lights": "tap one to colour just it"}[self.tab]
+        if hint:
+            image = self.f_tiny.render(hint, True, over(INK, 0.35))
+            self.screen.blit(image, (self.w - int(16 * s) - image.get_width(),
+                                     group.centery - image.get_height() // 2))
 
-    def head(self, text, y, area):
-        self.buttons.append(Button((self.pad, y, area.w - self.pad * 2,
-                                    int(self.f_head.get_height() * 1.4)), text, "head"))
-        return y + int(self.f_head.get_height() * 1.4)
+    def draw_bottom(self, state):
+        s = self.k
+        self.actions = []
+        pad = int(16 * s)
+        rotation = state["rotation"] or {}
+        off = pygame.Rect(pad, self.bar.y, int(190 * s), self.bar.h)
+        self.rounded(self.screen, off, over(PINK, 0.10), over(PINK, 0.35),
+                     radius=off.h // 2)
+        self.stack(off, "OFF", PINK_SOFT,
+                   "everything" if self.target == "all" else self.target_name.lower(),
+                   over(PINK_SOFT, 0.65))
+        self.actions.append(Button(off, "OFF", "off"))
 
-    def layout_scenes(self, state, area):
-        columns = max(2, (area.w - self.pad) // int(150 * max(0.75, self.w / 800.0)))
-        col_w = (area.w - self.pad * (columns + 1)) // columns
-        y = area.y + self.pad - int(self.scroll)
-        index, last_group = 0, None
-        for scene in state["scenes"]:
-            group = "Animated" if scene["animated"] else "Solid"
-            if group != last_group:
-                if index % columns:
-                    y += self.btn_h + self.pad
-                index, last_group = 0, group
-                y = self.head(group, y, area)
-            column = index % columns
-            x = self.pad + column * (col_w + self.pad)
-            self.buttons.append(Button((x, y, col_w, self.btn_h), scene["name"],
-                                       "scene", scene["name"]))
-            index += 1
-            if column == columns - 1:
-                y += self.btn_h + self.pad
-        if index % columns:
-            y += self.btn_h + self.pad
-        return y
+        rot_w = int(210 * s)
+        rot = pygame.Rect(self.w - pad - rot_w, self.bar.y, rot_w, self.bar.h)
+        on = bool(rotation.get("enabled"))
+        self.rounded(self.screen, rot,
+                     over(OLIVE, 0.12) if on else CARD,
+                     over(OLIVE, 0.40) if on else over(WHITE, 0.08),
+                     radius=rot.h // 2)
+        self.stack(rot, "ROTATE ON" if on else "ROTATE OFF",
+                   OLIVE_SOFT if on else INK, self.rotation_note(rotation),
+                   over(OLIVE_SOFT, 0.7) if on else MUTED)
+        self.actions.append(Button(rot, "ROTATE", "rotate"))
+
+        mid = pygame.Rect(off.right + int(10 * s), self.bar.y,
+                          rot.x - off.right - int(20 * s), self.bar.h)
+        self.rounded(self.screen, mid, CARD, over(WHITE, 0.08), radius=mid.h // 2)
+        self.stack(mid, "SURPRISE ME", INK, "new scene", MUTED)
+        self.actions.append(Button(mid, "SURPRISE ME", "next"))
+
+    @staticmethod
+    def rotation_note(rotation):
+        if not rotation.get("enabled"):
+            return "tap to start"
+        if rotation.get("holding"):
+            return "held %dm \u00b7 edit" % max(
+                1, round(rotation.get("hold_remaining_seconds", 0) / 60))
+        seconds = rotation.get("next_in_seconds")
+        if seconds is None:
+            return "edit"
+        seconds = max(0, int(seconds))
+        when = "%dm" % max(1, round(seconds / 60)) if seconds >= 60 else "%ds" % seconds
+        return "changes in %s \u00b7 edit" % when
+
+    def stack(self, rect, title, ink, sub, sub_ink):
+        s = self.k
+        self.text(self.screen, self.f_head2, title, ink,
+                  center=(rect.centerx, rect.centery - int(8 * s)))
+        self.text(self.screen, self.f_tiny, sub, sub_ink,
+                  center=(rect.centerx, rect.centery + int(11 * s)))
+
+    # -- tabs -----------------------------------------------------------------
+
+    def divider(self, label, y, width):
+        s = self.k
+        image = self.f_tiny.render(label.upper(), True, FAINT)
+        self.screen.blit(image, (self.middle.x, y))
+        line_x = self.middle.x + image.get_width() + int(10 * s)
+        pygame.draw.line(self.screen, LINE, (line_x, y + image.get_height() // 2),
+                         (self.middle.x + width, y + image.get_height() // 2))
+        return y + image.get_height() + int(10 * s)
+
+    def draw_scenes(self, state):
+        """One horizontal shelf per group -- animated cards, then solid pills."""
+        s = self.k
+        animated = [x for x in state["scenes"] if x["animated"]]
+        solid = [x for x in state["scenes"] if not x["animated"]]
+        y = self.middle.y
+        card_w, card_h = int(126 * s), int(88 * s)
+
+        y = self.divider("Animated", y, self.middle.w)
+        x = self.middle.x
+        for scene in animated[self.shelf["scenes"]:]:
+            if x + card_w > self.middle.right - int(80 * s):
+                break
+            self.scene_card(pygame.Rect(x, y, card_w, card_h), scene, state)
+            x += card_w + int(10 * s)
+        self.more_card(pygame.Rect(x, y, int(74 * s), card_h), "scenes",
+                       len(animated))
+        y += card_h + int(12 * s)
+
+        y = self.divider("Solid", y, self.middle.w)
+        x = self.middle.x
+        pill_h = int(44 * s)
+        for scene in solid[self.shelf["solid"]:]:
+            if x + card_w > self.middle.right - int(80 * s):
+                break
+            self.solid_pill(pygame.Rect(x, y, card_w, pill_h), scene, state)
+            x += card_w + int(10 * s)
+        self.more_card(pygame.Rect(x, y, int(74 * s), pill_h), "solid", len(solid))
+
+    def scene_card(self, rect, scene, state):
+        s = self.k
+        name = scene["name"]
+        playing = name == state["playing"] and name != state["pending"]
+        pending = name == state["pending"]
+        if pending:
+            self.rounded(self.screen, rect, over(CYAN, 0.14), CYAN,
+                         radius=int(16 * s), width=max(1, int(1.5 * s)))
+        elif playing:
+            self.rounded(self.screen, rect, CARD, PINK, radius=int(16 * s),
+                         width=max(1, int(1.5 * s)))
+        else:
+            self.rounded(self.screen, rect, CARD, LINE, radius=int(16 * s))
+        swatch = pygame.Rect(rect.x + int(10 * s), rect.y + int(10 * s),
+                             rect.w - int(20 * s), int(26 * s))
+        self.gradient(swatch, scene["ramp"], int(8 * s))
+        self.text(self.screen, self.f_head2, name, INK,
+                  topleft=(rect.x + int(10 * s), swatch.bottom + int(8 * s)))
+        note, ink = ("sending\u2026", CYAN_SOFT) if pending else \
+                    (("playing", PINK) if playing else ("built in", FAINT))
+        self.text(self.screen, self.f_tiny, note, ink,
+                  topleft=(rect.x + int(10 * s), rect.bottom - int(20 * s)))
+        self.buttons.append(Button(rect, name, "scene", name))
+
+    def solid_pill(self, rect, scene, state):
+        s = self.k
+        name = scene["name"]
+        playing = name == state["playing"] and name != state["pending"]
+        pending = name == state["pending"]
+        self.rounded(self.screen, rect, over(CYAN, 0.14) if pending else CARD,
+                     CYAN if pending else (PINK if playing else LINE),
+                     radius=int(14 * s), width=max(1, int(1.5 * s)) if
+                     (pending or playing) else 1)
+        dot = (rect.x + int(21 * s), rect.centery)
+        colour = self._lit(scene["ramp"][0], (120, 112, 104))
+        pygame.draw.circle(self.screen, colour, dot, int(7 * s))
+        self.text(self.screen, self.f_body2, name, INK,
+                  topleft=(dot[0] + int(16 * s),
+                           rect.centery - self.f_body2.get_height() // 2))
+        self.buttons.append(Button(rect, name, "scene", name))
+
+    def more_card(self, rect, shelf, total):
+        s = self.k
+        self.rounded(self.screen, rect, over(WHITE, 0.03), over(WHITE, 0.06),
+                     radius=int(16 * s))
+        self.text(self.screen, self.f_head2, "\u203a", DIM, center=rect.center)
+        self.buttons.append(Button(rect, "more", "shelf", (shelf, total)))
+
+    def gradient(self, rect, ramp, radius):
+        """The scene's colours as a left-to-right ramp, like the boards."""
+        strip = pygame.Surface((max(1, rect.w), max(1, rect.h)))
+        stops = [self._lit(c, (90, 84, 78)) or CYAN for c in ramp] or [CARD]
+        if len(stops) == 1:
+            stops = stops * 2
+        span = rect.w / float(len(stops) - 1)
+        for x in range(rect.w):
+            i = min(len(stops) - 2, int(x / span))
+            t = (x - i * span) / span
+            colour = tuple(int(stops[i][c] + (stops[i + 1][c] - stops[i][c]) * t)
+                           for c in range(3))
+            pygame.draw.line(strip, colour, (x, 0), (x, rect.h))
+        mask = pygame.Surface(strip.get_size(), pygame.SRCALPHA)
+        pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(),
+                         border_radius=radius)
+        strip = strip.convert_alpha()
+        strip.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        self.screen.blit(strip, rect.topleft)
+
+    def draw_colour(self, state):
+        s = self.k
+        y = self.middle.y
+        x = self.middle.x
+        chip_h = int(34 * s)
+        for target, label in self.target_options(state):
+            round_chip = len(label) == 1
+            width = chip_h if round_chip else self.f_small.size(label)[0] + int(30 * s)
+            if x + width > self.middle.right:
+                x, y = self.middle.x, y + chip_h + int(7 * s)
+            chip = pygame.Rect(x, y, width, chip_h)
+            on = target == self.target
+            self.rounded(self.screen, chip, over(CYAN, 0.16) if on else CHIP_BG,
+                         over(CYAN, 0.6) if on else None, radius=chip_h // 2)
+            self.text(self.screen, self.f_body2 if round_chip else self.f_small,
+                      label, CYAN_SOFT if on else over(INK, 0.62), center=chip.center)
+            self.buttons.append(Button(chip, label, "target", (target, label)))
+            x = chip.right + int(7 * s)
+        y += chip_h + int(11 * s)
+
+        size = int(54 * s)
+        x = self.middle.x
+        for hexcode, name in SWATCHES:
+            spot = pygame.Rect(x, y, size, size)
+            colour = pygame.Color(hexcode)
+            pygame.draw.circle(self.screen, (colour.r, colour.g, colour.b),
+                               spot.center, size // 2)
+            if hexcode == self.chosen_colour:
+                pygame.draw.circle(self.screen, BG, spot.center, size // 2 + int(3 * s),
+                                   width=int(3 * s))
+                pygame.draw.circle(self.screen, INK, spot.center, size // 2 + int(5 * s),
+                                   width=int(2 * s))
+            self.buttons.append(Button(spot, name, "swatch", hexcode))
+            x = spot.right + int(10 * s)
+        y += size + int(11 * s)
+
+        y = self.divider("Pattern", y, self.middle.w)
+        x = self.middle.x
+        for pattern in self.pattern_choices(state):
+            width = self.f_small.size(pattern["label"])[0] + int(28 * s)
+            pill = pygame.Rect(x, y, width, int(34 * s))
+            on = pattern["value"] == self.chosen_pattern
+            self.rounded(self.screen, pill, over(CYAN, 0.14) if on else CARD,
+                         CYAN if on else over(WHITE, 0.08), radius=int(17 * s))
+            self.text(self.screen, self.f_small, pattern["label"],
+                      CYAN_SOFT if on else INK, center=pill.center)
+            self.buttons.append(Button(pill, pattern["label"], "pattern",
+                                       pattern["value"]))
+            x = pill.right + int(8 * s)
+
+        label = self.f_tiny.render("SPEED", True, FAINT)
+        self.screen.blit(label, (x + int(8 * s),
+                                 y + int(17 * s) - label.get_height() // 2))
+        track = pygame.Rect(x + int(8 * s) + label.get_width() + int(10 * s),
+                            y + int(13 * s),
+                            self.middle.right - (x + int(8 * s) + label.get_width()
+                                                 + int(10 * s)), int(8 * s))
+        if track.w > int(40 * s):
+            self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(4 * s))
+            filled = pygame.Rect(track.x, track.y,
+                                 int(track.w * self.speed / 100.0), track.h)
+            self.rounded(self.screen, filled, ORANGE, radius=int(4 * s))
+            self.buttons.append(Button(track.inflate(0, int(24 * s)), "speed", "speed"))
+
+    def draw_lights(self, state):
+        s = self.k
+        columns, gap = 6, int(9 * s)
+        cell_w = (self.middle.w - gap * (columns - 1)) // columns
+        cell_h = int(56 * s)
+        down = []
+        for index, device in enumerate(state["devices"]):
+            col, row = index % columns, index // columns
+            rect = pygame.Rect(self.middle.x + col * (cell_w + gap),
+                               self.middle.y + row * (cell_h + gap), cell_w, cell_h)
+            reach = device.get("reachable")
+            chosen = self.target == "device:" + device["address"]
+            if reach is False:
+                down.append(device)
+                self.rounded(self.screen, rect, over(PINK, 0.06), over(PINK, 0.55),
+                             radius=int(14 * s), dashed=True)
+            else:
+                self.rounded(self.screen, rect,
+                             over(CYAN, 0.14) if chosen else CARD,
+                             CYAN if chosen else LINE, radius=int(14 * s),
+                             width=max(1, int(1.5 * s)) if chosen else 1)
+            pretty = device["name"].replace("_", " ")
+            self.text(self.screen, self.f_body2, pretty,
+                      over(INK, 0.55) if reach is False else INK,
+                      topleft=(rect.x + int(12 * s), rect.y + int(10 * s)))
+            note, ink = ("not answering", PINK_SOFT) if reach is False else \
+                        (("lit", OLIVE) if reach else ("unknown", FAINT))
+            self.text(self.screen, self.f_tiny, note, ink,
+                      topleft=(rect.x + int(12 * s), rect.bottom - int(20 * s)))
+            self.buttons.append(Button(rect, device["name"], "device", device))
+
+        if down:
+            rows = (len(state["devices"]) + columns - 1) // columns
+            y = self.middle.y + rows * (cell_h + gap)
+            rect = pygame.Rect(self.middle.x, y, cell_w * 3 + gap * 2, int(56 * s))
+            self.rounded(self.screen, rect, over(PINK, 0.06), over(PINK, 0.22),
+                         radius=int(14 * s))
+            names = ", ".join(d["name"].replace("_", " ") for d in down[:2])
+            if len(down) > 2:
+                names += " +%d" % (len(down) - 2)
+            self.text(self.screen, self.f_small, "%s not answering" % names, PINK_SOFT,
+                      topleft=(rect.x + int(14 * s),
+                               rect.centery - self.f_small.get_height() // 2))
+            retry = pygame.Rect(rect.right - int(90 * s), rect.centery - int(15 * s),
+                                int(76 * s), int(30 * s))
+            self.rounded(self.screen, retry, over(INK, 0.08), radius=int(15 * s))
+            self.text(self.screen, self.f_small, "RETRY", INK, center=retry.center)
+            self.buttons.append(Button(retry, "RETRY", "retry", down))
 
     def target_options(self, state):
-        """Everything, then whatever groups the config defines, in a useful order."""
         preferred = ["letters", "drink", "cup", "straw", "border", "side-a", "side-b"]
         groups = list(state["groups"])
         ordered = [g for g in preferred if g in groups]
-        ordered += [g for g in groups if g not in ordered]
+        ordered += [g for g in groups if g not in ordered and len(g) > 1]
         options = [("all", "Everything")]
         options += [("group:" + g, GROUP_LABELS.get(g, g.replace("-", " ").title()))
                     for g in ordered]
+        # The single-letter groups become round chips, as in 2b.
+        options += [("group:" + g, g) for g in groups if len(g) == 1]
         return options
 
-    def layout_colour(self, state, area):
-        y = area.y + self.pad - int(self.scroll)
-        y = self.head("APPLY TO", y, area)
-        items = []
-        for target, label in self.target_options(state):
-            width = self.f_body.size(label)[0] + int(26 * max(0.75, self.w / 800.0))
-            items.append((width, (lambda rect, t=target, l=label:
-                                  self.buttons.append(Button(rect, l, "target", (t, l))))))
-        y = self._row(area, y, items, self.chip_h)
+    @staticmethod
+    def pattern_choices(state):
+        """Four named patterns rather than the whole mode table, per 2b.
 
-        y = self.head("COLOUR", y, area)
-        columns = max(4, (area.w - self.pad) // int(120 * max(0.75, self.w / 800.0)))
-        col_w = (area.w - self.pad * (columns + 1)) // columns
-        for i, (hexcode, name) in enumerate(SWATCHES):
-            x = self.pad + (i % columns) * (col_w + self.pad)
-            row = i // columns
-            self.buttons.append(Button((x, y + row * (self.swatch_h + self.pad),
-                                        col_w, self.swatch_h), name, "swatch", hexcode))
-        y += ((len(SWATCHES) + columns - 1) // columns) * (self.swatch_h + self.pad)
-
-        if state["patterns"]:
-            y = self.head("PATTERN", y, area)
-            items = []
-            for pattern in state["patterns"]:
-                label = pattern["name"]
-                width = self.f_small.size(label)[0] + int(28 * max(0.75, self.w / 800.0))
-                items.append((width, (lambda rect, p=pattern:
-                                      self.buttons.append(Button(rect, p["name"],
-                                                                 "pattern", p["value"])))))
-            y = self._row(area, y, items, self.chip_h)
-        return y
-
-    def layout_lights(self, state, area):
-        y = area.y + self.pad - int(self.scroll)
-        y = self.head("ONE LIGHT AT A TIME", y, area)
-        columns = max(2, (area.w - self.pad) // int(150 * max(0.75, self.w / 800.0)))
-        col_w = (area.w - self.pad * (columns + 1)) // columns
-        for i, device in enumerate(state["devices"]):
-            x = self.pad + (i % columns) * (col_w + self.pad)
-            row = i // columns
-            self.buttons.append(Button((x, y + row * (self.btn_h + self.pad),
-                                        col_w, self.btn_h),
-                                       device["name"], "device", device))
-        rows = (len(state["devices"]) + columns - 1) // columns
-        return y + rows * (self.btn_h + self.pad)
-
-    def layout_content(self, state, area):
-        self.buttons = []
-        if self.tab == "scenes":
-            end = self.layout_scenes(state, area)
-        elif self.tab == "colour":
-            end = self.layout_colour(state, area)
-        else:
-            end = self.layout_lights(state, area)
-        self.content_h = (end + int(self.scroll)) - area.y
-        self.scroll_max = max(0.0, self.content_h - area.h + self.pad)
+        Matched by what the audit called them, so a renamed mode still lands in
+        the right slot and a missing one simply does not appear.
+        """
+        out = []
+        for needle, label in PATTERN_LABELS:
+            for mode in state["patterns"]:
+                if needle in mode["name"].lower():
+                    out.append({"label": label, "value": mode["value"]})
+                    break
+        return out
 
     def layout_actions(self):
-        self.actions = []
-        y = self.h - self.act_h + self.pad // 2
-        height = self.act_h - self.pad
-        width = (self.w - self.pad * 4) // 3
-        for i, (label, kind) in enumerate((("OFF", "off"), ("NEXT", "next"),
-                                           ("ROTATE", "rotate"))):
-            x = self.pad + i * (width + self.pad)
-            self.actions.append(Button((x, y, width, height), label, kind))
+        pass          # the bottom bar is built while drawing
 
-    # -- drawing --------------------------------------------------------------
+    # -- drawing helpers ------------------------------------------------------
 
     def text(self, surface, font, message, color, center=None, topleft=None):
         image = font.render(message, True, color)
@@ -814,178 +1258,40 @@ class Panel:
         surface.blit(image, rect)
         return rect
 
-    def rounded(self, surface, rect, fill, border=None, radius=10, width=1):
-        pygame.draw.rect(surface, fill, rect, border_radius=radius)
-        if border:
-            pygame.draw.rect(surface, border, rect, width=width, border_radius=radius)
+    def text_right(self, font, message, colour, right, top):
+        image = font.render(message, True, colour)
+        self.screen.blit(image, (right - image.get_width(), top))
 
-    def draw_bar(self, state):
-        rect = pygame.Rect(0, 0, self.w, self.bar_h)
-        pygame.draw.rect(self.screen, (20, 24, 36), rect)
-        pygame.draw.line(self.screen, LINE, (0, self.bar_h - 1), (self.w, self.bar_h - 1))
-        x = self.pad
-        for glyph, color in (("VI", INK), ("C", ACCENT), ("E", INK)):
-            r = self.text(self.screen, self.f_brand, glyph, color,
-                          topleft=(x, self.bar_h // 2 - self.f_brand.get_height() // 2))
-            x = r.right
-        mid = self.bar_h // 2 - self.f_small.get_height() // 2
-
-        if not state["online"]:
-            self.text(self.screen, self.f_small, "no answer from the sign", WARN,
-                      topleft=(x + self.pad, mid))
+    def rounded(self, surface, rect, fill, border=None, radius=10, width=1,
+                dashed=False):
+        if fill:
+            pygame.draw.rect(surface, fill, rect, border_radius=radius)
+        if not border:
             return
-        if self.tab == "scenes":
-            label = ("Now playing  " + state["playing"]) if state["playing"] else "Ready"
-            color = INK
-        else:
-            # On the acting tabs, what you are about to change matters more than
-            # what is currently playing.
-            label = "Target:  " + self.target_name
-            color = ACCENT2
-        self.text(self.screen, self.f_small, label, color, topleft=(x + self.pad, mid))
-
-        bad, total = state["devices_bad"], state["devices_total"]
-        health = "%d lit" % total if not bad else "%d down" % bad
-        color = OK if not bad else (WARN if bad <= 2 else BAD)
-        image = self.f_small.render(health, True, MUTED)
-        self.screen.blit(image, (self.w - image.get_width() - self.pad, mid))
-        pygame.draw.circle(self.screen, color,
-                           (self.w - image.get_width() - self.pad - 10, self.bar_h // 2), 4)
-
-    def draw_tabs(self):
-        rect = pygame.Rect(0, self.bar_h, self.w, self.tab_h)
-        pygame.draw.rect(self.screen, PANEL, rect)
-        pygame.draw.line(self.screen, LINE, (0, rect.bottom - 1), (self.w, rect.bottom - 1))
-        for button in self.tabs:
-            on = button.payload == self.tab
-            if on:
-                pygame.draw.rect(self.screen, PANEL2, button.rect)
-                pygame.draw.rect(self.screen, ACCENT,
-                                 (button.rect.x, button.rect.bottom - 3, button.rect.w, 3))
-            self.text(self.screen, self.f_head, button.label, INK if on else MUTED,
-                      center=button.rect.center)
-
-    def draw_progress(self, state):
-        """A sweep is ~30s. Without this the panel looks frozen and people jab it."""
-        rect = pygame.Rect(0, self.bar_h + self.tab_h, self.w, self.prog_h)
-        pygame.draw.rect(self.screen, PANEL, rect)
-        pygame.draw.line(self.screen, LINE, (0, rect.bottom - 1), (self.w, rect.bottom - 1))
-        job = state["job"] or {}
-        label = (job.get("label") or "Working").replace("scene: ", "Applying ")
-        self.text(self.screen, self.f_small, label[:48], MUTED, topleft=(self.pad, rect.y + 5))
-        total = max(1, state["total"])
-        count = "%d of %d" % (state["done"], total)
-        if state["queued"]:
-            count += "   (+%d queued)" % state["queued"]
-        image = self.f_small.render(count, True, MUTED)
-        self.screen.blit(image, (self.w - image.get_width() - self.pad, rect.y + 5))
-        track = pygame.Rect(self.pad, rect.bottom - 12, self.w - self.pad * 2, 6)
-        self.rounded(self.screen, track, PANEL2, radius=3)
-        filled = int(track.w * state["done"] / total)
-        if filled > 0:
-            self.rounded(self.screen, pygame.Rect(track.x, track.y, filled, track.h),
-                         ACCENT, radius=3)
-
-    def draw_content(self, state, area):
-        self.screen.set_clip(area)
-        for button in self.buttons:
-            if button.rect.bottom < area.y or button.rect.y > area.bottom:
-                continue
-            kind = button.kind
-            if kind == "head":
-                self.text(self.screen, self.f_head, button.label.upper(), MUTED,
-                          topleft=(button.rect.x, button.rect.y))
-            elif kind == "scene":
-                playing = (button.payload == state["playing"]
-                           and button.payload != state["pending"])
-                pending = button.payload == state["pending"]
-                fill = (36, 23, 38) if playing else ((21, 36, 48) if pending else PANEL)
-                border = ACCENT if playing else (ACCENT2 if pending else LINE)
-                self.rounded(self.screen, button.rect, fill, border, radius=11,
-                             width=2 if (playing or pending) else 1)
-                self.text(self.screen, self.f_body, button.label,
-                          ACCENT2 if pending else INK, center=button.rect.center)
-            elif kind == "target":
-                on = button.payload[0] == self.target
-                self.rounded(self.screen, button.rect, PANEL2 if on else PANEL,
-                             ACCENT2 if on else LINE, radius=self.chip_h // 2,
-                             width=2 if on else 1)
-                self.text(self.screen, self.f_body, button.label, INK if on else MUTED,
-                          center=button.rect.center)
-            elif kind == "swatch":
-                colour = pygame.Color(button.payload)
-                self.rounded(self.screen, button.rect, (colour.r, colour.g, colour.b),
-                             LINE, radius=11)
-                # Dark text on pale swatches, so the name stays readable.
-                luma = 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b
-                self.text(self.screen, self.f_small, button.label,
-                          (10, 12, 16) if luma > 150 else (255, 255, 255),
-                          center=button.rect.center)
-            elif kind == "pattern":
-                self.rounded(self.screen, button.rect, PANEL, LINE,
-                             radius=self.chip_h // 2)
-                self.text(self.screen, self.f_small, button.label, INK,
-                          center=button.rect.center)
-            elif kind == "device":
-                device = button.payload
-                on = self.target == "device:" + device["address"]
-                self.rounded(self.screen, button.rect, PANEL2 if on else PANEL,
-                             ACCENT2 if on else LINE, radius=11, width=2 if on else 1)
-                self.text(self.screen, self.f_body, device["name"], INK,
-                          center=(button.rect.centerx, button.rect.centery - 6))
-                reach = device.get("reachable")
-                colour = MUTED if reach is None else (OK if reach else BAD)
-                word = "unknown" if reach is None else ("ok" if reach else "not answering")
-                self.text(self.screen, self.f_small, word, colour,
-                          center=(button.rect.centerx, button.rect.centery + 13))
-        self.screen.set_clip(None)
-
-    def draw_actions(self, state):
-        rect = pygame.Rect(0, self.h - self.act_h, self.w, self.act_h)
-        pygame.draw.rect(self.screen, (20, 24, 36), rect)
-        pygame.draw.line(self.screen, LINE, (0, rect.y), (self.w, rect.y))
-        rotation = state["rotation"] or {}
-        for button in self.actions:
-            fill, border, ink = PANEL, LINE, INK
-            sub, sub_ink = "", MUTED
-            if button.kind == "off":
-                fill, border, ink = OFF_BG, (74, 34, 48), OFF_INK
-                # Off acts on whatever is targeted, so it can turn one letter
-                # off without touching the rest of the sign.
-                sub = "everything" if self.target == "all" else self.target_name.lower()
-            elif button.kind == "next":
-                sub = "new scene"
-            else:
-                on = bool(rotation.get("enabled"))
-                if on:
-                    border, sub_ink = (40, 80, 60), OK
-                if not on:
-                    sub = "off"
-                elif rotation.get("holding"):
-                    sub = "held %dm" % max(1, round(rotation.get("hold_remaining_seconds", 0) / 60))
-                elif rotation.get("next_in_seconds") is None:
-                    sub = "on"
-                else:
-                    seconds = max(0, int(rotation["next_in_seconds"]))
-                    sub = ("next %dm" % max(1, round(seconds / 60))) if seconds >= 60 \
-                        else ("next %ds" % seconds)
-            self.rounded(self.screen, button.rect, fill, border, radius=11)
-            centre = button.rect.centery - (6 if sub else 0)
-            self.text(self.screen, self.f_body, button.label, ink,
-                      center=(button.rect.centerx, centre))
-            if sub:
-                self.text(self.screen, self.f_small, sub[:18], sub_ink,
-                          center=(button.rect.centerx, centre + self.f_body.get_height() - 2))
+        if not dashed:
+            pygame.draw.rect(surface, border, rect, width=width, border_radius=radius)
+            return
+        # A dashed outline, for a zone that is not answering: the design marks
+        # those by shape as well as colour so it reads without relying on hue.
+        for x in range(rect.x + radius, rect.right - radius, 10):
+            pygame.draw.line(surface, border, (x, rect.y), (min(x + 5, rect.right), rect.y))
+            pygame.draw.line(surface, border, (x, rect.bottom - 1),
+                             (min(x + 5, rect.right), rect.bottom - 1))
+        for y in range(rect.y + radius, rect.bottom - radius, 10):
+            pygame.draw.line(surface, border, (rect.x, y), (rect.x, min(y + 5, rect.bottom)))
+            pygame.draw.line(surface, border, (rect.right - 1, y),
+                             (rect.right - 1, min(y + 5, rect.bottom)))
 
     def draw_toast(self, message):
         if not message:
             return
+        s = self.k
         image = self.f_small.render(message, True, INK)
         box = image.get_rect()
-        box.inflate_ip(28, 18)
+        box.inflate_ip(int(28 * s), int(18 * s))
         box.centerx = self.w // 2
-        box.bottom = self.h - self.act_h - self.pad
-        self.rounded(self.screen, box, (8, 10, 14), LINE, radius=9)
+        box.bottom = self.bar.y - int(8 * s)
+        self.rounded(self.screen, box, CARD_ALT, LINE_SOFT, radius=int(10 * s))
         self.screen.blit(image, image.get_rect(center=box.center))
 
     # -- input ----------------------------------------------------------------
@@ -993,38 +1299,72 @@ class Panel:
     def tap(self, position):
         for button in self.tabs:
             if button.rect.collidepoint(position):
-                if self.tab != button.payload:
-                    self.tab, self.scroll = button.payload, 0.0
+                self.tab = button.payload
                 return
         for button in self.actions:
             if button.rect.collidepoint(position):
                 self.act(button.kind)
                 return
-        area = self.content_area(self.showing_progress)
-        if not area.collidepoint(position):
-            return
         for button in self.buttons:
-            if button.kind == "head" or not button.rect.collidepoint(position):
+            if not button.rect.collidepoint(position):
                 continue
-            if button.kind == "scene":
+            kind = button.kind
+            if kind == "scene":
                 self.apply_scene(button.payload)
-            elif button.kind == "target":
+            elif kind == "target":
                 self.target, self.target_name = button.payload
-            elif button.kind == "device":
+            elif kind == "device":
                 device = button.payload
                 self.target = "device:" + device["address"]
-                self.target_name = device["name"]
-                self.tab, self.scroll = "colour", 0.0
-                self.sign.say("Now setting %s only" % device["name"])
-            elif button.kind == "swatch":
+                self.target_name = device["name"].replace("_", " ")
+                self.tab = "colour"
+                self.sign.say("Now colouring %s only" % self.target_name)
+            elif kind == "swatch":
+                self.chosen_colour, self.chosen_pattern = button.payload, None
                 self.apply_state({"color": button.payload, "brightness": 100,
                                   "power": True},
                                  "%s on %s" % (button.label, self.target_name.lower()))
-            elif button.kind == "pattern":
-                self.apply_state({"mode": button.payload, "speed": PATTERN_SPEED,
+            elif kind == "pattern":
+                self.chosen_pattern, self.chosen_colour = button.payload, None
+                self.apply_state({"mode": button.payload, "speed": self.speed,
                                   "power": True},
                                  "%s on %s" % (button.label, self.target_name.lower()))
+            elif kind == "speed":
+                fraction = (position[0] - button.rect.x) / float(max(1, button.rect.w))
+                self.speed = max(10, min(100, int(round(fraction * 100))))
+                self.sign.say("Speed %d" % self.speed)
+                if self.chosen_pattern:
+                    self.apply_state({"mode": self.chosen_pattern,
+                                      "speed": self.speed, "power": True},
+                                     "Speed %d" % self.speed)
+            elif kind == "shelf":
+                name, total = button.payload
+                page = 5
+                self.shelf[name] = 0 if self.shelf[name] + page >= total \
+                    else self.shelf[name] + page
+            elif kind == "retry":
+                self.retry(button.payload)
+            elif kind == "save":
+                # Naming needs a keyboard, and the panel deliberately has none.
+                self.sign.say("Saving a scene needs a name -- use the phone UI")
+            elif kind == "revert":
+                self.act("revert")
             return
+
+    def retry(self, devices):
+        """Re-send to whatever is silent, rather than waiting for the next sweep."""
+        self.sign.say("Retrying " + ", ".join(
+            d["name"].replace("_", " ") for d in devices))
+        for device in devices:
+            threading.Thread(target=self._retry_one, args=(device,),
+                             daemon=True).start()
+
+    @staticmethod
+    def _retry_one(device):
+        try:
+            _post("/api/devices/%s/test" % device["address"], {})
+        except Exception:
+            pass
 
     def apply_state(self, changes, said):
         payload = dict(changes, target=self.target)
@@ -1063,6 +1403,14 @@ class Panel:
                 _post("/api/power", {"target": self.target, "on": False})
                 self.sign.say("Turning off " + ("everything" if self.target == "all"
                                                 else self.target_name.lower()))
+            elif kind == "revert":
+                with self.sign.lock:
+                    playing = self.sign.playing
+                if playing:
+                    _post("/api/scene/apply", {"scene": playing})
+                    self.sign.say("Back to " + playing)
+                else:
+                    self.sign.say("Nothing to go back to")
             elif kind == "next":
                 result = _post("/api/rotation/next", {})
                 self.sign.say(("Now playing " + result["scene"]) if result.get("ok")
@@ -1121,52 +1469,45 @@ class Panel:
 
     def run(self, frames=None, on_frame=None):
         self.sign.start()
-        self.layout_actions()
-        self.layout_tabs()
+        self.measure()
         clock = pygame.time.Clock()
-        self.showing_progress = False
-        drawn = 0
-        running = True
+        drawn, running = 0, True
         while running:
             for kind, x, y in self.gestures():
                 if kind == "quit":
                     running = False
                 elif kind == "down":
-                    self.drag_from = (x, y)
+                    self.drag_from, self.last_point = (x, y), (x, y)
                     self.dragging = False
-                    self.last_point = (x, y)
                 elif kind == "move" and self.drag_from:
-                    if abs(y - self.drag_from[1]) > 8:
-                        self.dragging = True
-                    if self.dragging:
-                        self.scroll = max(0.0, min(self.scroll_max,
-                                                   self.scroll - (y - self.last_point[1])))
+                    if abs(x - self.drag_from[0]) > 24:
+                        self.dragging = True      # the shelf is swiped sideways
                     self.last_point = (x, y)
                 elif kind == "up":
-                    # A drag scrolls; only a still finger counts as a press.
-                    if self.drag_from and not self.dragging:
+                    if self.drag_from and self.dragging:
+                        self.swipe(self.last_point[0] - self.drag_from[0])
+                    elif self.drag_from:
                         self.tap((x, y))
                     self.drag_from, self.dragging = None, False
 
             state = self.sign.snapshot()
-            self.showing_progress = bool(state["busy"] or state["queued"] or state["job"])
-            area = self.content_area(self.showing_progress)
-            self.layout_content(state, area)
-            self.scroll = max(0.0, min(self.scroll_max, self.scroll))
-
+            self.buttons = []
             self.screen.fill(BG)
-            if state["scenes"] or state["devices"]:
-                self.draw_content(state, area)
+            if state["online"] and (state["scenes"] or state["devices"]):
+                self.draw_preview(state)
+                self.draw_tabs(state)
+                if self.tab == "scenes":
+                    self.draw_scenes(state)
+                elif self.tab == "colour":
+                    self.draw_colour(state)
+                else:
+                    self.draw_lights(state)
+                self.draw_bottom(state)
             else:
-                self.text(self.screen, self.f_small,
-                          "Waiting for the sign…" if state["online"]
+                self.text(self.screen, self.f_head2,
+                          "Waiting for the sign\u2026" if state["online"]
                           else "Cannot reach the sign", MUTED,
-                          center=(self.w // 2, area.centery))
-            self.draw_bar(state)
-            self.draw_tabs()
-            if self.showing_progress:
-                self.draw_progress(state)
-            self.draw_actions(state)
+                          center=(self.w // 2, self.h // 2))
             self.draw_toast(state["toast"])
             self.present()
 
@@ -1184,6 +1525,19 @@ class Panel:
             self.fb.close()
         pygame.quit()
 
+    def swipe(self, dx):
+        """Page the shelf. Only Scenes has one; the other tabs ignore it."""
+        if self.tab != "scenes":
+            return
+        which = "scenes"
+        page = 5
+        with self.sign.lock:
+            total = sum(1 for s in self.sign.scenes if s["animated"])
+        if dx < 0:
+            self.shelf[which] = 0 if self.shelf[which] + page >= total \
+                else self.shelf[which] + page
+        else:
+            self.shelf[which] = max(0, self.shelf[which] - page)
 
 def main():
     windowed = "--windowed" in sys.argv
