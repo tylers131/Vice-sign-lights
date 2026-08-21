@@ -47,9 +47,8 @@ apt-get update || echo "    (apt update had trouble; continuing with cached inde
 apt-get install -y --no-install-recommends python3-pygame
 
 echo "==> group access for the framebuffer and the touchscreen"
-# KMSDRM needs the GPU nodes; libinput needs the event devices. Without input
-# the panel draws perfectly and ignores every touch, which is a confusing way
-# to fail.
+# The service runs as root and does not need these, but they let you reproduce
+# the panel by hand as $KIOSK_USER when something needs debugging.
 for group in video render input; do
   getent group "$group" >/dev/null || continue
   usermod -aG "$group" "$KIOSK_USER"
@@ -73,8 +72,15 @@ After=getty@tty1.service
 
 [Service]
 Type=simple
-User=$KIOSK_USER
-# A real login session on a VT, so SDL can take DRM master on the display.
+# Root, because taking DRM master on the panel needs CAP_SYS_ADMIN unless the
+# process is the session leader on the active VT -- which a systemd service is
+# not, whatever groups its user is in. Running as $KIOSK_USER fails with
+# "EGL not initialized" while the very same command works under sudo. The
+# vice-lights service is already root for port 80 and the clock, so this adds
+# no privilege that is not already on the box, and the panel only ever talks to
+# 127.0.0.1.
+User=root
+# A real login session on a VT, so SDL can take the display."
 PAMName=login
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -131,8 +137,8 @@ Touch panel configured.
   Talking to: $URL
   Service:    vice-kiosk    (systemctl restart vice-kiosk to reload it)
 
-The group memberships above only take effect on a fresh login, so if the panel
-is blank or ignores touches, reboot once before investigating further.
+If the panel is blank or ignores touches, reboot once before investigating
+further -- the group memberships above only apply to a fresh login.
 
 Turn the panel off again:  sudo systemctl disable --now vice-kiosk
 MSG
