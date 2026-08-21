@@ -64,6 +64,12 @@ Description=Vice sign touch panel
 # service is not up yet it shows "cannot reach the sign" and recovers by itself.
 After=vice-lights.service systemd-user-sessions.service
 Wants=vice-lights.service
+# getty owns tty1 and holds DRM master on the display it is drawing the console
+# on. Two processes cannot both be master, so SDL fails with "EGL not
+# initialized" while the login prompt sits there looking fine. Conflicts= stops
+# getty when the panel starts and brings it back if the panel is ever disabled.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
 
 [Service]
 Type=simple
@@ -91,6 +97,13 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 CONF
+
+echo "==> handing tty1 to the panel"
+# Disabled rather than only stopped: otherwise it comes back on the next boot
+# and races the panel for the display. Console login moves to SSH, which is how
+# this machine is administered anyway.
+systemctl disable --now getty@tty1.service 2>/dev/null || true
+echo "    getty@tty1 disabled (console login is over SSH)"
 
 echo "==> disabling console blanking on tty1"
 if [[ -f /boot/firmware/cmdline.txt ]] && ! grep -q consoleblank /boot/firmware/cmdline.txt; then
