@@ -235,12 +235,34 @@ class Sign:
 
 # ----------------------------------------------------------------------- view
 
+# Font files, opened by path. Never pygame.font.SysFont: that shells out to
+# fc-list, which Pi OS Lite does not ship, and rather than failing it stalls --
+# the panel opens the display successfully and then hangs before drawing
+# anything, which looks like a graphics problem and is not one.
+FONT_DIRS = (
+    ("/usr/share/fonts/truetype/dejavu", "DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
+    ("/usr/share/fonts/truetype/liberation",
+     "LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf"),
+    ("/usr/share/fonts/truetype/freefont", "FreeSans.ttf", "FreeSansBold.ttf"),
+)
+
+
+def _font_file(bold=False):
+    for directory, regular, heavy in FONT_DIRS:
+        candidate = os.path.join(directory, heavy if bold else regular)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def load_font(size, bold=False):
-    for name in ("dejavusans", "liberationsans", "freesans", "notosans"):
+    path = _font_file(bold)
+    if path:
         try:
-            return pygame.font.SysFont(name, size, bold=bold)
+            return pygame.font.Font(path, size)
         except Exception:
-            continue
+            pass
+    # pygame ships a font of its own; ugly, but it always works.
     return pygame.font.Font(None, size)
 
 

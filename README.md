@@ -202,6 +202,20 @@ apt, outside the venv.
 When the API is unreachable it says "cannot reach the sign" and keeps trying,
 so the panel surviving a service restart needs no coordination between them.
 
+### The panel opens and then hangs before drawing
+
+`pygame.font.SysFont` shells out to `fc-list`, which Pi OS Lite does not ship.
+Rather than failing it stalls, so the log shows the display opening
+successfully and then nothing at all -- which reads as a graphics problem and
+is not one:
+
+    display: native fullscreen -> 800x480
+    UserWarning: 'fc-list' is missing, system fonts cannot be loaded
+
+The panel opens font files by path now and never calls `SysFont`. Installing
+`fontconfig` would also work, but a touch panel should not need a font
+database to draw twelve buttons.
+
 ### "EGL not initialized"
 
 SDL's KMSDRM backend dlopens libEGL at runtime instead of declaring it as a
