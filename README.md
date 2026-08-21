@@ -171,6 +171,26 @@ offer devtools, not to zoom, not to navigate, and above all not to show the
 "Restore pages?" bubble after the plug is pulled -- which on a screen with no
 keyboard cannot be dismissed at all. None of that exists here.
 
+### What is on it
+
+Three tabs, and a target that persists across them.
+
+- **SCENES** -- every saved scene, movement first, the playing one outlined.
+- **COLOUR** -- pick what to act on, then a colour or a pattern. Targets are
+  Everything, then every group in the config, so creating a group from the
+  phone makes it appear here with no code change.
+- **LIGHTS** -- all twelve controllers with live reachability. Tapping one
+  makes it the target and jumps to COLOUR, which is how you set a single
+  letter without touching the rest of the sign.
+
+`OFF` acts on the current target, not always the whole sign, so it can black
+out one straw and leave everything else running. `NEXT` and `ROTATE` are
+whole-sign by nature and ignore the target.
+
+Only the multi-colour patterns get buttons. A single-colour fade needs speed
+85+ to be visible at all (see **Fade speed**) and reads as a solid colour
+otherwise, which is a poor thing to offer as a one-tap choice.
+
 ### It talks to the same API a phone does
 
 The panel is a separate process from the service, speaking HTTP to

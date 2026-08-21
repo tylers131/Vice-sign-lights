@@ -46,6 +46,25 @@ BAD     = (239, 68, 68)
 OFF_BG  = (42, 21, 32)
 OFF_INK = (255, 180, 198)
 
+TABS = (("scenes", "SCENES"), ("colour", "COLOUR"), ("lights", "LIGHTS"))
+
+# One tap each. Deliberately short: a wall of swatches is harder to use in the
+# dark than a dozen that are clearly different from each other.
+SWATCHES = (
+    ("#ff2d78", "Vice"),   ("#ff0033", "Red"),    ("#ff6a00", "Orange"),
+    ("#ffb400", "Amber"),  ("#ffd9a0", "Warm"),   ("#ffffff", "White"),
+    ("#22d3ee", "Cyan"),   ("#0066ff", "Blue"),   ("#8000ff", "Violet"),
+    ("#ff00ff", "Magenta"),("#00ff66", "Green"),  ("#00ffcc", "Mint"),
+)
+
+# Group names that read better than the config's own keys.
+GROUP_LABELS = {
+    "letters": "All letters", "drink": "Whole drink", "cup": "Cups",
+    "straw": "Straws", "side-a": "Side A", "side-b": "Side B",
+    "border": "Border",
+}
+PATTERN_SPEED = 70
+
 
 # --------------------------------------------------------------------- client
 
@@ -72,6 +91,9 @@ class Sign:
     def __init__(self):
         self.lock = threading.Lock()
         self.scenes = []
+        self.groups = []
+        self.devices = []
+        self.patterns = []
         self.moving_modes = set()
         self.playing = ""
         self.rotation = {}
@@ -114,6 +136,8 @@ class Sign:
                 "done": self.down, "total": self.total, "online": self.online,
                 "pending": self.pending,
                 "devices_total": self.devices_total, "devices_bad": self.devices_bad,
+                "groups": list(self.groups), "devices": list(self.devices),
+                "patterns": list(self.patterns),
                 "toast": self.toast if time.monotonic() < self.toast_until else "",
             }
 
@@ -129,7 +153,8 @@ class Sign:
         state = _get("/api/state")
         if not state.get("ok"):
             return
-        moving = {m["value"] for m in state.get("modes", []) if m.get("animates")}
+        modes = state.get("modes", [])
+        moving = {m["value"] for m in modes if m.get("animates")}
         scenes = []
         for scene in state.get("scenes", []):
             steps = scene.get("steps") or []
@@ -137,9 +162,26 @@ class Sign:
             scenes.append({"name": scene.get("name", "?"), "animated": animated})
         # Movement first, matching how the web UI groups them.
         scenes.sort(key=lambda s: (not s["animated"],))
+
+        # Patterns worth a button: the ones that move through several colours.
+        # A single-colour fade needs speed 85+ to be visible at all and reads
+        # as a solid colour otherwise, which is a poor thing to offer as a
+        # one-tap choice.
+        patterns = [m for m in modes if m.get("animates")
+                    and ("7 colour" in m["name"].lower() or "rgb" in m["name"].lower())]
+
+        devices = [{"name": d.get("name", "?"), "address": d.get("address", ""),
+                    "groups": d.get("groups", []), "reachable": d.get("reachable")}
+                   for d in state.get("devices", []) if d.get("enabled", True)]
+
         with self.lock:
             self.scenes = scenes
             self.moving_modes = moving
+            self.patterns = patterns
+            self.devices = devices
+            # Straight from the config, so a group added from the phone shows
+            # up here with no code change.
+            self.groups = list(state.get("groups", []))
 
     def _poll_status(self):
         status = _get("/api/status")
@@ -164,6 +206,10 @@ class Sign:
             devices = status.get("devices") or {}
             self.devices_total = len(devices)
             self.devices_bad = sum(1 for d in devices.values() if d.get("reachable") is False)
+            for device in self.devices:
+                runtime = devices.get(device["address"])
+                if runtime:
+                    device["reachable"] = runtime.get("reachable")
             # Drop the tapped highlight once the sign confirms, or after 45s so
             # a scene that never lands cannot leave the button stuck lit.
             if self.pending and (self.playing == self.pending
@@ -228,50 +274,144 @@ class Panel:
         self.pad = int(9 * scale)
         self.btn_h = int(62 * scale)
 
+        self.tab_h = int(42 * scale)
+        self.chip_h = int(38 * scale)
+        self.swatch_h = int(52 * scale)
+
         self.sign = Sign()
         self.scroll = 0.0
         self.scroll_max = 0.0
         self.buttons = []
         self.actions = []
+        self.tabs = []
         self.drag_from = None
         self.dragging = False
         self.content_h = 0
+        self.tab = "scenes"
+        # What the colour and pattern buttons act on. Scenes carry their own
+        # targets, so this is ignored there.
+        self.target = "all"
+        self.target_name = "Everything"
 
     # -- layout ---------------------------------------------------------------
 
-    def scene_area(self, showing_progress):
-        top = self.bar_h + (self.prog_h if showing_progress else 0)
+    def content_area(self, showing_progress):
+        top = self.bar_h + self.tab_h + (self.prog_h if showing_progress else 0)
         return pygame.Rect(0, top, self.w, self.h - top - self.act_h)
 
-    def layout_scenes(self, scenes, area):
-        """Grid of scene buttons, grouped with movement first."""
-        self.buttons = []
-        columns = max(2, (self.w - self.pad) // int(150 * max(0.75, self.w / 800.0)))
+    def layout_tabs(self):
+        self.tabs = []
+        width = self.w // len(TABS)
+        for i, (key, label) in enumerate(TABS):
+            self.tabs.append(Button((i * width, self.bar_h, width, self.tab_h),
+                                    label, "tab", key))
+
+    def _row(self, area, y, items, height, gap=None, min_w=0):
+        """Lay `items` out left to right, wrapping. Returns the new y."""
+        gap = self.pad if gap is None else gap
+        x = self.pad
+        for make in items:
+            width = max(min_w, make[0])
+            if x + width > area.w - self.pad:
+                x, y = self.pad, y + height + gap
+            make[1](pygame.Rect(x, y, width, height))
+            x += width + gap
+        return y + height + gap
+
+    def head(self, text, y, area):
+        self.buttons.append(Button((self.pad, y, area.w - self.pad * 2,
+                                    int(self.f_head.get_height() * 1.4)), text, "head"))
+        return y + int(self.f_head.get_height() * 1.4)
+
+    def layout_scenes(self, state, area):
+        columns = max(2, (area.w - self.pad) // int(150 * max(0.75, self.w / 800.0)))
         col_w = (area.w - self.pad * (columns + 1)) // columns
         y = area.y + self.pad - int(self.scroll)
         index, last_group = 0, None
-
-        for scene in scenes:
+        for scene in state["scenes"]:
             group = "Animated" if scene["animated"] else "Solid"
             if group != last_group:
-                if index % columns:                     # finish the current row
+                if index % columns:
                     y += self.btn_h + self.pad
-                index = 0
-                self.buttons.append(Button((self.pad, y, area.w - self.pad * 2,
-                                            int(self.f_head.get_height() * 1.5)),
-                                           group, "head"))
-                y += int(self.f_head.get_height() * 1.5)
-                last_group = group
+                index, last_group = 0, group
+                y = self.head(group, y, area)
             column = index % columns
             x = self.pad + column * (col_w + self.pad)
-            self.buttons.append(Button((x, y, col_w, self.btn_h), scene["name"], "scene",
-                                       scene["name"]))
+            self.buttons.append(Button((x, y, col_w, self.btn_h), scene["name"],
+                                       "scene", scene["name"]))
             index += 1
             if column == columns - 1:
                 y += self.btn_h + self.pad
         if index % columns:
             y += self.btn_h + self.pad
-        self.content_h = (y + int(self.scroll)) - area.y
+        return y
+
+    def target_options(self, state):
+        """Everything, then whatever groups the config defines, in a useful order."""
+        preferred = ["letters", "drink", "cup", "straw", "border", "side-a", "side-b"]
+        groups = list(state["groups"])
+        ordered = [g for g in preferred if g in groups]
+        ordered += [g for g in groups if g not in ordered]
+        options = [("all", "Everything")]
+        options += [("group:" + g, GROUP_LABELS.get(g, g.replace("-", " ").title()))
+                    for g in ordered]
+        return options
+
+    def layout_colour(self, state, area):
+        y = area.y + self.pad - int(self.scroll)
+        y = self.head("APPLY TO", y, area)
+        items = []
+        for target, label in self.target_options(state):
+            width = self.f_body.size(label)[0] + int(26 * max(0.75, self.w / 800.0))
+            items.append((width, (lambda rect, t=target, l=label:
+                                  self.buttons.append(Button(rect, l, "target", (t, l))))))
+        y = self._row(area, y, items, self.chip_h)
+
+        y = self.head("COLOUR", y, area)
+        columns = max(4, (area.w - self.pad) // int(120 * max(0.75, self.w / 800.0)))
+        col_w = (area.w - self.pad * (columns + 1)) // columns
+        for i, (hexcode, name) in enumerate(SWATCHES):
+            x = self.pad + (i % columns) * (col_w + self.pad)
+            row = i // columns
+            self.buttons.append(Button((x, y + row * (self.swatch_h + self.pad),
+                                        col_w, self.swatch_h), name, "swatch", hexcode))
+        y += ((len(SWATCHES) + columns - 1) // columns) * (self.swatch_h + self.pad)
+
+        if state["patterns"]:
+            y = self.head("PATTERN", y, area)
+            items = []
+            for pattern in state["patterns"]:
+                label = pattern["name"]
+                width = self.f_small.size(label)[0] + int(28 * max(0.75, self.w / 800.0))
+                items.append((width, (lambda rect, p=pattern:
+                                      self.buttons.append(Button(rect, p["name"],
+                                                                 "pattern", p["value"])))))
+            y = self._row(area, y, items, self.chip_h)
+        return y
+
+    def layout_lights(self, state, area):
+        y = area.y + self.pad - int(self.scroll)
+        y = self.head("ONE LIGHT AT A TIME", y, area)
+        columns = max(2, (area.w - self.pad) // int(150 * max(0.75, self.w / 800.0)))
+        col_w = (area.w - self.pad * (columns + 1)) // columns
+        for i, device in enumerate(state["devices"]):
+            x = self.pad + (i % columns) * (col_w + self.pad)
+            row = i // columns
+            self.buttons.append(Button((x, y + row * (self.btn_h + self.pad),
+                                        col_w, self.btn_h),
+                                       device["name"], "device", device))
+        rows = (len(state["devices"]) + columns - 1) // columns
+        return y + rows * (self.btn_h + self.pad)
+
+    def layout_content(self, state, area):
+        self.buttons = []
+        if self.tab == "scenes":
+            end = self.layout_scenes(state, area)
+        elif self.tab == "colour":
+            end = self.layout_colour(state, area)
+        else:
+            end = self.layout_lights(state, area)
+        self.content_h = (end + int(self.scroll)) - area.y
         self.scroll_max = max(0.0, self.content_h - area.h + self.pad)
 
     def layout_actions(self):
@@ -310,40 +450,57 @@ class Panel:
             r = self.text(self.screen, self.f_brand, glyph, color,
                           topleft=(x, self.bar_h // 2 - self.f_brand.get_height() // 2))
             x = r.right
+        mid = self.bar_h // 2 - self.f_small.get_height() // 2
 
         if not state["online"]:
             self.text(self.screen, self.f_small, "no answer from the sign", WARN,
-                      topleft=(x + self.pad, self.bar_h // 2 - self.f_small.get_height() // 2))
+                      topleft=(x + self.pad, mid))
             return
-        label = ("Now playing  " + state["playing"]) if state["playing"] else "Ready"
-        self.text(self.screen, self.f_small, label, INK,
-                  topleft=(x + self.pad, self.bar_h // 2 - self.f_small.get_height() // 2))
+        if self.tab == "scenes":
+            label = ("Now playing  " + state["playing"]) if state["playing"] else "Ready"
+            color = INK
+        else:
+            # On the acting tabs, what you are about to change matters more than
+            # what is currently playing.
+            label = "Target:  " + self.target_name
+            color = ACCENT2
+        self.text(self.screen, self.f_small, label, color, topleft=(x + self.pad, mid))
 
         bad, total = state["devices_bad"], state["devices_total"]
         health = "%d lit" % total if not bad else "%d down" % bad
         color = OK if not bad else (WARN if bad <= 2 else BAD)
         image = self.f_small.render(health, True, MUTED)
-        self.screen.blit(image, (self.w - image.get_width() - self.pad,
-                                 self.bar_h // 2 - image.get_height() // 2))
+        self.screen.blit(image, (self.w - image.get_width() - self.pad, mid))
         pygame.draw.circle(self.screen, color,
                            (self.w - image.get_width() - self.pad - 10, self.bar_h // 2), 4)
 
+    def draw_tabs(self):
+        rect = pygame.Rect(0, self.bar_h, self.w, self.tab_h)
+        pygame.draw.rect(self.screen, PANEL, rect)
+        pygame.draw.line(self.screen, LINE, (0, rect.bottom - 1), (self.w, rect.bottom - 1))
+        for button in self.tabs:
+            on = button.payload == self.tab
+            if on:
+                pygame.draw.rect(self.screen, PANEL2, button.rect)
+                pygame.draw.rect(self.screen, ACCENT,
+                                 (button.rect.x, button.rect.bottom - 3, button.rect.w, 3))
+            self.text(self.screen, self.f_head, button.label, INK if on else MUTED,
+                      center=button.rect.center)
+
     def draw_progress(self, state):
         """A sweep is ~30s. Without this the panel looks frozen and people jab it."""
-        rect = pygame.Rect(0, self.bar_h, self.w, self.prog_h)
+        rect = pygame.Rect(0, self.bar_h + self.tab_h, self.w, self.prog_h)
         pygame.draw.rect(self.screen, PANEL, rect)
         pygame.draw.line(self.screen, LINE, (0, rect.bottom - 1), (self.w, rect.bottom - 1))
         job = state["job"] or {}
         label = (job.get("label") or "Working").replace("scene: ", "Applying ")
-        self.text(self.screen, self.f_small, label, MUTED,
-                  topleft=(self.pad, rect.y + 5))
+        self.text(self.screen, self.f_small, label[:48], MUTED, topleft=(self.pad, rect.y + 5))
         total = max(1, state["total"])
         count = "%d of %d" % (state["done"], total)
         if state["queued"]:
             count += "   (+%d queued)" % state["queued"]
         image = self.f_small.render(count, True, MUTED)
         self.screen.blit(image, (self.w - image.get_width() - self.pad, rect.y + 5))
-
         track = pygame.Rect(self.pad, rect.bottom - 12, self.w - self.pad * 2, 6)
         self.rounded(self.screen, track, PANEL2, radius=3)
         filled = int(track.w * state["done"] / total)
@@ -351,23 +508,58 @@ class Panel:
             self.rounded(self.screen, pygame.Rect(track.x, track.y, filled, track.h),
                          ACCENT, radius=3)
 
-    def draw_scenes(self, state, area):
+    def draw_content(self, state, area):
         self.screen.set_clip(area)
         for button in self.buttons:
             if button.rect.bottom < area.y or button.rect.y > area.bottom:
-                continue                                  # off-screen, skip drawing
-            if button.kind == "head":
+                continue
+            kind = button.kind
+            if kind == "head":
                 self.text(self.screen, self.f_head, button.label.upper(), MUTED,
                           topleft=(button.rect.x, button.rect.y))
-                continue
-            playing = button.payload == state["playing"] and button.payload != state["pending"]
-            pending = button.payload == state["pending"]
-            fill = (36, 23, 38) if playing else ((21, 36, 48) if pending else PANEL)
-            border = ACCENT if playing else (ACCENT2 if pending else LINE)
-            self.rounded(self.screen, button.rect, fill, border, radius=11,
-                         width=2 if (playing or pending) else 1)
-            self.text(self.screen, self.f_body, button.label,
-                      INK if not pending else ACCENT2, center=button.rect.center)
+            elif kind == "scene":
+                playing = (button.payload == state["playing"]
+                           and button.payload != state["pending"])
+                pending = button.payload == state["pending"]
+                fill = (36, 23, 38) if playing else ((21, 36, 48) if pending else PANEL)
+                border = ACCENT if playing else (ACCENT2 if pending else LINE)
+                self.rounded(self.screen, button.rect, fill, border, radius=11,
+                             width=2 if (playing or pending) else 1)
+                self.text(self.screen, self.f_body, button.label,
+                          ACCENT2 if pending else INK, center=button.rect.center)
+            elif kind == "target":
+                on = button.payload[0] == self.target
+                self.rounded(self.screen, button.rect, PANEL2 if on else PANEL,
+                             ACCENT2 if on else LINE, radius=self.chip_h // 2,
+                             width=2 if on else 1)
+                self.text(self.screen, self.f_body, button.label, INK if on else MUTED,
+                          center=button.rect.center)
+            elif kind == "swatch":
+                colour = pygame.Color(button.payload)
+                self.rounded(self.screen, button.rect, (colour.r, colour.g, colour.b),
+                             LINE, radius=11)
+                # Dark text on pale swatches, so the name stays readable.
+                luma = 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b
+                self.text(self.screen, self.f_small, button.label,
+                          (10, 12, 16) if luma > 150 else (255, 255, 255),
+                          center=button.rect.center)
+            elif kind == "pattern":
+                self.rounded(self.screen, button.rect, PANEL, LINE,
+                             radius=self.chip_h // 2)
+                self.text(self.screen, self.f_small, button.label, INK,
+                          center=button.rect.center)
+            elif kind == "device":
+                device = button.payload
+                on = self.target == "device:" + device["address"]
+                self.rounded(self.screen, button.rect, PANEL2 if on else PANEL,
+                             ACCENT2 if on else LINE, radius=11, width=2 if on else 1)
+                self.text(self.screen, self.f_body, device["name"], INK,
+                          center=(button.rect.centerx, button.rect.centery - 6))
+                reach = device.get("reachable")
+                colour = MUTED if reach is None else (OK if reach else BAD)
+                word = "unknown" if reach is None else ("ok" if reach else "not answering")
+                self.text(self.screen, self.f_small, word, colour,
+                          center=(button.rect.centerx, button.rect.centery + 13))
         self.screen.set_clip(None)
 
     def draw_actions(self, state):
@@ -380,14 +572,15 @@ class Panel:
             sub, sub_ink = "", MUTED
             if button.kind == "off":
                 fill, border, ink = OFF_BG, (74, 34, 48), OFF_INK
-                sub = "all lights"
+                # Off acts on whatever is targeted, so it can turn one letter
+                # off without touching the rest of the sign.
+                sub = "everything" if self.target == "all" else self.target_name.lower()
             elif button.kind == "next":
                 sub = "new scene"
             else:
                 on = bool(rotation.get("enabled"))
                 if on:
-                    border = (40, 80, 60)
-                    sub_ink = OK
+                    border, sub_ink = (40, 80, 60), OK
                 if not on:
                     sub = "off"
                 elif rotation.get("holding"):
@@ -403,7 +596,7 @@ class Panel:
             self.text(self.screen, self.f_body, button.label, ink,
                       center=(button.rect.centerx, centre))
             if sub:
-                self.text(self.screen, self.f_small, sub, sub_ink,
+                self.text(self.screen, self.f_small, sub[:18], sub_ink,
                           center=(button.rect.centerx, centre + self.f_body.get_height() - 2))
 
     def draw_toast(self, message):
@@ -420,17 +613,53 @@ class Panel:
     # -- input ----------------------------------------------------------------
 
     def tap(self, position):
+        for button in self.tabs:
+            if button.rect.collidepoint(position):
+                if self.tab != button.payload:
+                    self.tab, self.scroll = button.payload, 0.0
+                return
         for button in self.actions:
             if button.rect.collidepoint(position):
                 self.act(button.kind)
                 return
-        area = self.scene_area(self.showing_progress)
+        area = self.content_area(self.showing_progress)
         if not area.collidepoint(position):
             return
         for button in self.buttons:
-            if button.kind == "scene" and button.rect.collidepoint(position):
+            if button.kind == "head" or not button.rect.collidepoint(position):
+                continue
+            if button.kind == "scene":
                 self.apply_scene(button.payload)
-                return
+            elif button.kind == "target":
+                self.target, self.target_name = button.payload
+            elif button.kind == "device":
+                device = button.payload
+                self.target = "device:" + device["address"]
+                self.target_name = device["name"]
+                self.tab, self.scroll = "colour", 0.0
+                self.sign.say("Now setting %s only" % device["name"])
+            elif button.kind == "swatch":
+                self.apply_state({"color": button.payload, "brightness": 100,
+                                  "power": True},
+                                 "%s on %s" % (button.label, self.target_name.lower()))
+            elif button.kind == "pattern":
+                self.apply_state({"mode": button.payload, "speed": PATTERN_SPEED,
+                                  "power": True},
+                                 "%s on %s" % (button.label, self.target_name.lower()))
+            return
+
+    def apply_state(self, changes, said):
+        payload = dict(changes, target=self.target)
+        threading.Thread(target=self._apply_state, args=(payload, said),
+                         daemon=True).start()
+
+    def _apply_state(self, payload, said):
+        try:
+            result = _post("/api/apply", payload)
+            self.sign.say(said if result.get("ok") else
+                          (result.get("error") or "could not apply"))
+        except Exception:
+            self.sign.say("no answer from the sign")
 
     def apply_scene(self, name):
         self.sign.mark_pending(name)
@@ -453,8 +682,9 @@ class Panel:
         try:
             if kind == "off":
                 self.sign.clear_pending()
-                _post("/api/power", {"target": "all", "on": False})
-                self.sign.say("Turning everything off")
+                _post("/api/power", {"target": self.target, "on": False})
+                self.sign.say("Turning off " + ("everything" if self.target == "all"
+                                                else self.target_name.lower()))
             elif kind == "next":
                 result = _post("/api/rotation/next", {})
                 self.sign.say(("Now playing " + result["scene"]) if result.get("ok")
@@ -472,6 +702,7 @@ class Panel:
     def run(self, frames=None, on_frame=None):
         self.sign.start()
         self.layout_actions()
+        self.layout_tabs()
         clock = pygame.time.Clock()
         self.showing_progress = False
         drawn = 0
@@ -499,18 +730,20 @@ class Panel:
 
             state = self.sign.snapshot()
             self.showing_progress = bool(state["busy"] or state["queued"] or state["job"])
-            area = self.scene_area(self.showing_progress)
-            self.layout_scenes(state["scenes"], area)
+            area = self.content_area(self.showing_progress)
+            self.layout_content(state, area)
+            self.scroll = max(0.0, min(self.scroll_max, self.scroll))
 
             self.screen.fill(BG)
-            if state["scenes"]:
-                self.draw_scenes(state, area)
+            if state["scenes"] or state["devices"]:
+                self.draw_content(state, area)
             else:
                 self.text(self.screen, self.f_small,
                           "Waiting for the sign…" if state["online"]
                           else "Cannot reach the sign", MUTED,
                           center=(self.w // 2, area.centery))
             self.draw_bar(state)
+            self.draw_tabs()
             if self.showing_progress:
                 self.draw_progress(state)
             self.draw_actions(state)
