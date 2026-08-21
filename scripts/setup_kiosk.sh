@@ -30,17 +30,28 @@ else
   echo "    found $(basename "$DSI") (status: $(cat "$DSI/status" 2>/dev/null || echo unknown))"
 fi
 
-# SDL's KMSDRM backend opens /dev/dri/card0 unless told otherwise, and on a
-# Pi 4 that is the render node with no connectors on it -- the display lives on
-# card1. Pick the card that actually has something plugged into it.
+# Reported, not pinned. The panel probes the DRM devices itself and keeps the
+# first that opens a display, which is what the generator build does -- forcing
+# SDL_KMSDRM_DEVICE_INDEX disables that and is only worth doing to lock down a
+# configuration already known good. This line just says what to expect.
 CARD_INDEX=""
 for connector in /sys/class/drm/card*-*/status; do
   [[ "$(cat "$connector" 2>/dev/null)" == "connected" ]] || continue
   name="$(basename "$(dirname "$connector")")"       # e.g. card1-DSI-1
   CARD_INDEX="${name#card}"; CARD_INDEX="${CARD_INDEX%%-*}"
-  echo "    display is on /dev/dri/card$CARD_INDEX ($name)"
+  echo "    display should come up on /dev/dri/card$CARD_INDEX ($name)"
   break
 done
+
+CONFIG_TXT=/boot/firmware/config.txt
+[[ -f "$CONFIG_TXT" ]] || CONFIG_TXT=/boot/config.txt
+if [[ -f "$CONFIG_TXT" ]]; then
+  grep -q "^dtoverlay=vc4-kms-v3d" "$CONFIG_TXT" \
+    || echo "    NOTE: $CONFIG_TXT has no 'dtoverlay=vc4-kms-v3d' line" >&2
+  grep -qE "^dtoverlay=vc4-kms-dsi" "$CONFIG_TXT" \
+    || echo "    NOTE: no 'dtoverlay=vc4-kms-dsi-*' line; some third-party DSI" \
+            "panels need one (the Waveshare 4.3\" uses vc4-kms-dsi-7inch)" >&2
+fi
 
 echo "==> installing pygame"
 apt-get update || echo "    (apt update had trouble; continuing with cached indexes)"
@@ -52,7 +63,7 @@ apt-get update || echo "    (apt update had trouble; continuing with cached inde
 # hard dependency while its EGL counterpart does not, which is what makes this
 # so easy to miss.
 apt-get install -y --no-install-recommends \
-    python3-pygame libegl1 libegl-mesa0 libgles2 libgbm1 libgl1-mesa-dri
+    python3-pygame libegl-dev libegl1 libegl-mesa0 libgles2 libgbm1 libgl1-mesa-dri
 
 echo "==> group access for the framebuffer and the touchscreen"
 # The service runs as root and does not need these, but they let you reproduce
@@ -95,7 +106,6 @@ TTYReset=yes
 TTYVHangup=yes
 StandardInput=tty-force
 Environment=SDL_VIDEODRIVER=kmsdrm
-${CARD_INDEX:+Environment=SDL_KMSDRM_DEVICE_INDEX=$CARD_INDEX}
 Environment=VICE_KIOSK_URL=$URL
 Environment=PYTHONUNBUFFERED=1
 # Explicit, because StandardInput=tty-force otherwise sends output to the TTY:
@@ -104,6 +114,10 @@ Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal
 WorkingDirectory=$APP_DIR
+# Three separate things can blank this screen and none of them knows about
+# the others. The panel is the only control at the sign, so all three are off.
+ExecStartPre=-/usr/bin/setterm --blank 0 --powerdown 0 --term linux
+ExecStartPre=-/bin/sh -c 'for b in /sys/class/backlight/*/bl_power; do echo 0 > "\$b" || true; done'
 ExecStart=/usr/bin/python3 $APP_DIR/vice_kiosk.py
 Restart=always
 RestartSec=5

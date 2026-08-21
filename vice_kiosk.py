@@ -18,8 +18,14 @@ the system interpreter with no venv.
 
 from __future__ import annotations
 
+import ctypes
+import errno
+import fcntl
 import json
+import mmap
 import os
+import select
+import struct
 import sys
 import threading
 import time
@@ -235,6 +241,211 @@ class Sign:
 
 # ----------------------------------------------------------------------- view
 
+# --------------------------------------------------------------- output ---
+#
+# SDL's KMSDRM backend sets the mode and scans out its cursor plane on this Pi
+# but never presents the primary plane, so the panel stays on whatever was
+# drawn last while the app runs happily at 30fps. DOUBLEBUF does not change it.
+#
+# /dev/fb0 is the same display through the DRM driver's fbdev emulation, and it
+# demonstrably works here: it is what put the console -- and a stale Python
+# traceback -- on this screen. Writing pixels into it needs no EGL, no GBM, no
+# DRM master and no planes, which removes every layer that has failed so far.
+
+FBIOGET_VSCREENINFO = 0x4600
+FBIOGET_FSCREENINFO = 0x4602
+
+
+def _ioc(direction, kind, number, size):
+    return (direction << 30) | (size << 16) | (ord(kind) << 8) | number
+
+
+class FrameBuffer:
+    """The panel as a block of memory."""
+
+    def __init__(self, path="/dev/fb0"):
+        self.path = path
+        self.fd = os.open(path, os.O_RDWR)
+        try:
+            var = bytearray(160)
+            fcntl.ioctl(self.fd, FBIOGET_VSCREENINFO, var, True)
+            (self.width, self.height, _vw, _vh, _xo, _yo,
+             self.bpp, _gray) = struct.unpack_from("<8I", var, 0)
+            # fb_bitfield red/green/blue/transp, each offset/length/msb_right.
+            self.red, self.green, self.blue, self.transp = [
+                struct.unpack_from("<3I", var, 32 + i * 12) for i in range(4)]
+
+            fix = bytearray(80)
+            fcntl.ioctl(self.fd, FBIOGET_FSCREENINFO, fix, True)
+            self.stride = struct.unpack_from("<I", fix, 48)[0]
+            if not self.stride:
+                self.stride = self.width * (self.bpp // 8)
+        except Exception:
+            os.close(self.fd)
+            raise
+
+        if self.bpp not in (16, 32):
+            os.close(self.fd)
+            raise SystemExit("%s is %d bits per pixel; only 16 and 32 are handled"
+                             % (path, self.bpp))
+        self.map = mmap.mmap(self.fd, self.stride * self.height,
+                             mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        # 32bpp on this hardware is XRGB8888, which in memory is B,G,R,X --
+        # exactly pygame's "BGRA" byte order, so no per-pixel work is needed.
+        self.packed = self.width * (self.bpp // 8) == self.stride
+
+    def describe(self):
+        return "%s %dx%d %dbpp stride %d (r@%d g@%d b@%d)" % (
+            self.path, self.width, self.height, self.bpp, self.stride,
+            self.red[0], self.green[0], self.blue[0])
+
+    def _pixels(self, surface):
+        if self.bpp == 32:
+            return pygame.image.tostring(surface, "BGRA")
+        # RGB565, the other format these panels come up in.
+        import numpy
+        view = pygame.surfarray.array3d(surface).swapaxes(0, 1).astype(numpy.uint16)
+        packed = (((view[:, :, 0] >> 3) << 11)
+                  | ((view[:, :, 1] >> 2) << 5)
+                  | (view[:, :, 2] >> 3))
+        return packed.tobytes()
+
+    def blit(self, surface):
+        data = self._pixels(surface)
+        if self.packed:
+            self.map.seek(0)
+            self.map.write(data)
+            return
+        # Padded scanlines: copy a row at a time so the padding is left alone.
+        row = self.width * (self.bpp // 8)
+        for y in range(self.height):
+            self.map.seek(y * self.stride)
+            self.map.write(data[y * row:(y + 1) * row])
+
+    def close(self):
+        try:
+            self.map.close()
+        finally:
+            os.close(self.fd)
+
+
+class Touch:
+    """Touches from the kernel, without SDL in the way.
+
+    Reads evdev directly: a touchscreen reports absolute coordinates in its own
+    units, so the ranges come from the driver rather than being assumed.
+    """
+
+    EV_SYN, EV_KEY, EV_ABS = 0x00, 0x01, 0x03
+    BTN_TOUCH = 0x14A
+    ABS_X, ABS_Y = 0x00, 0x01
+    ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0x35, 0x36
+    EVENT_SIZE = struct.calcsize("llHHi")
+
+    def __init__(self, width, height):
+        self.width, self.height = width, height
+        self.devices = []
+        self.x = self.y = None
+        self.down = False
+        self._pending = None
+        for path in sorted(self._candidates()):
+            info = self._open(path)
+            if info:
+                self.devices.append(info)
+
+    @staticmethod
+    def _candidates():
+        try:
+            return ["/dev/input/" + name for name in os.listdir("/dev/input")
+                    if name.startswith("event")]
+        except OSError:
+            return []
+
+    def _absinfo(self, fd, axis):
+        """EVIOCGABS: value, min, max, fuzz, flat, resolution."""
+        buffer = bytearray(24)
+        fcntl.ioctl(fd, _ioc(2, "E", 0x40 + axis, 24), buffer, True)
+        return struct.unpack("<6i", buffer)
+
+    def _open(self, path):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return None
+        for axis_x, axis_y in ((self.ABS_MT_POSITION_X, self.ABS_MT_POSITION_Y),
+                               (self.ABS_X, self.ABS_Y)):
+            try:
+                x_info = self._absinfo(fd, axis_x)
+                y_info = self._absinfo(fd, axis_y)
+            except OSError:
+                continue
+            if x_info[2] > x_info[1] and y_info[2] > y_info[1]:
+                return {"fd": fd, "path": path,
+                        "x": (axis_x, x_info[1], x_info[2]),
+                        "y": (axis_y, y_info[1], y_info[2])}
+        os.close(fd)
+        return None
+
+    def describe(self):
+        if not self.devices:
+            return "no touchscreen found in /dev/input"
+        return ", ".join("%s x:%d-%d y:%d-%d" % (d["path"], d["x"][1], d["x"][2],
+                                                 d["y"][1], d["y"][2])
+                         for d in self.devices)
+
+    def _scale(self, value, low, high, span):
+        if high <= low:
+            return 0
+        return int((value - low) / float(high - low) * (span - 1))
+
+    def poll(self):
+        """Return (kind, x, y) tuples: 'down', 'move', 'up'."""
+        if not self.devices:
+            return []
+        readable, _, _ = select.select([d["fd"] for d in self.devices], [], [], 0)
+        out = []
+        for device in self.devices:
+            if device["fd"] not in readable:
+                continue
+            try:
+                data = os.read(device["fd"], self.EVENT_SIZE * 64)
+            except OSError as exc:
+                if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    continue
+                raise
+            for offset in range(0, len(data) - self.EVENT_SIZE + 1, self.EVENT_SIZE):
+                _s, _us, kind, code, value = struct.unpack_from("llHHi", data, offset)
+                if kind == self.EV_ABS:
+                    if code == device["x"][0]:
+                        self.x = self._scale(value, device["x"][1], device["x"][2],
+                                             self.width)
+                    elif code == device["y"][0]:
+                        self.y = self._scale(value, device["y"][1], device["y"][2],
+                                             self.height)
+                elif kind == self.EV_KEY and code == self.BTN_TOUCH:
+                    self._pending = "down" if value else "up"
+                elif kind == self.EV_SYN:
+                    if self.x is None or self.y is None:
+                        continue
+                    if self._pending == "down":
+                        self.down = True
+                        out.append(("down", self.x, self.y))
+                    elif self._pending == "up":
+                        self.down = False
+                        out.append(("up", self.x, self.y))
+                    elif self.down:
+                        out.append(("move", self.x, self.y))
+                    self._pending = None
+        return out
+
+    def close(self):
+        for device in self.devices:
+            try:
+                os.close(device["fd"])
+            except OSError:
+                pass
+
+
 # Font files, opened by path. Never pygame.font.SysFont: that shells out to
 # fc-list, which Pi OS Lite does not ship, and rather than failing it stalls --
 # the panel opens the display successfully and then hangs before drawing
@@ -275,7 +486,18 @@ class Button:
 
 
 class Panel:
-    def __init__(self, size=None, fullscreen=True):
+    def __init__(self, size=None, fullscreen=True, backend=None):
+        backend = backend or os.environ.get("VICE_KIOSK_BACKEND", "auto")
+        if backend == "auto":
+            # SDL/KMSDRM, which is proven on this hardware in the generator
+            # build. VICE_KIOSK_BACKEND=fb switches to writing /dev/fb0
+            # directly, which needs no EGL at all.
+            backend = "sdl"
+        self.backend = backend
+        if backend == "fb":
+            # Nothing is drawn by SDL, but pygame still wants a video system
+            # initialised before it will make surfaces or load fonts.
+            os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         try:
             pygame.display.init()
         except pygame.error as exc:
@@ -286,8 +508,9 @@ class Panel:
                 % (os.environ.get("SDL_VIDEODRIVER", "<unset>"), exc))
         pygame.font.init()
         pygame.mouse.set_visible(False)
-        self.screen = self._open_display(size, fullscreen)
-        pygame.display.set_caption("Vice Sign")
+        self.fb = None
+        self.touch = None
+        self.screen = self._open_output(size, fullscreen, backend)
         self.w, self.h = self.screen.get_size()
 
         scale = max(0.75, min(1.4, self.w / 800.0))
@@ -314,12 +537,67 @@ class Panel:
         self.tabs = []
         self.drag_from = None
         self.dragging = False
+        self.last_point = (0, 0)
         self.content_h = 0
         self.tab = "scenes"
         # What the colour and pattern buttons act on. Scenes carry their own
         # targets, so this is ignored there.
         self.target = "all"
         self.target_name = "Everything"
+
+    def _open_output(self, size, fullscreen, backend):
+        if backend != "fb":
+            if fullscreen and os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" \
+                    and not os.environ.get("SDL_KMSDRM_DEVICE_INDEX"):
+                screen = self._probe_kmsdrm(size, fullscreen)
+            else:
+                screen = self._open_display(size, fullscreen)
+            pygame.display.set_caption("Vice Sign")
+            # The panel must never blank: it is the only control at the sign.
+            try:
+                pygame.display.set_allow_screensaver(False)
+            except Exception:
+                pass
+            return screen
+        self.fb = FrameBuffer(os.environ.get("VICE_KIOSK_FB", "/dev/fb0"))
+        print("framebuffer: " + self.fb.describe(), flush=True)
+        self.touch = Touch(self.fb.width, self.fb.height)
+        print("touch: " + self.touch.describe(), flush=True)
+        # A plain off-screen surface; it reaches the panel through fb.blit.
+        return pygame.Surface((self.fb.width, self.fb.height))
+
+    @staticmethod
+    def _drm_indices():
+        try:
+            return sorted(int(name[4:]) for name in os.listdir("/dev/dri")
+                          if name.startswith("card") and name[4:].isdigit())
+        except OSError:
+            return []
+
+    @classmethod
+    def _probe_kmsdrm(cls, size, fullscreen):
+        """Find the DRM device that is actually a display.
+
+        Not every /dev/dri/cardN is one: on a Pi 4 the render-only v3d node
+        takes card0 and the vc4 display controller takes card1. Pinning the
+        wrong one fails in ways that send you hunting through /dev/input for a
+        problem that is really the wrong card. Probing and reporting the choice
+        beats asserting it.
+        """
+        errors = []
+        for index in cls._drm_indices():
+            os.environ["SDL_KMSDRM_DEVICE_INDEX"] = str(index)
+            try:
+                pygame.display.quit()
+                pygame.display.init()
+                screen = cls._open_display(size, fullscreen)
+                print("panel: display on DRM device %d (KMSDRM)" % index, flush=True)
+                return screen
+            except (pygame.error, SystemExit) as exc:
+                errors.append("card%d: %s" % (index, exc))
+        os.environ.pop("SDL_KMSDRM_DEVICE_INDEX", None)
+        raise SystemExit("no DRM device would open a display.\n  "
+                         + "\n  ".join(errors or ["/dev/dri is empty"]))
 
     @staticmethod
     def _open_display(size, fullscreen):
@@ -755,6 +1033,38 @@ class Panel:
         except Exception:
             self.sign.say("no answer from the sign")
 
+    def present(self):
+        if self.fb:
+            self.fb.blit(self.screen)
+        else:
+            pygame.display.flip()
+
+    def gestures(self):
+        """Pointer events, from the touchscreen or from SDL.
+
+        Normalised to (kind, x, y) so the main loop does not care which backend
+        is running -- the panel behaves the same on a desktop as on the sign.
+        """
+        if self.touch is not None:
+            events = self.touch.poll()
+            # Without a display SDL delivers nothing, so a quit has to come
+            # from elsewhere; systemd stops this service, and Ctrl-C raises.
+            return events
+        out = []
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                out.append(("quit", 0, 0))
+            elif event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE,
+                                                                pygame.K_q):
+                out.append(("quit", 0, 0))
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                out.append(("down",) + event.pos)
+            elif event.type == pygame.MOUSEMOTION and event.buttons[0]:
+                out.append(("move",) + event.pos)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                out.append(("up",) + event.pos)
+        return out
+
     # -- main loop ------------------------------------------------------------
 
     def run(self, frames=None, on_frame=None):
@@ -766,24 +1076,24 @@ class Panel:
         drawn = 0
         running = True
         while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+            for kind, x, y in self.gestures():
+                if kind == "quit":
                     running = False
-                elif event.type == pygame.KEYDOWN and event.key in (pygame.K_ESCAPE, pygame.K_q):
-                    running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.drag_from = event.pos
+                elif kind == "down":
+                    self.drag_from = (x, y)
                     self.dragging = False
-                elif event.type == pygame.MOUSEMOTION and self.drag_from:
-                    if abs(event.pos[1] - self.drag_from[1]) > 8:
+                    self.last_point = (x, y)
+                elif kind == "move" and self.drag_from:
+                    if abs(y - self.drag_from[1]) > 8:
                         self.dragging = True
                     if self.dragging:
                         self.scroll = max(0.0, min(self.scroll_max,
-                                                   self.scroll - event.rel[1]))
-                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                                                   self.scroll - (y - self.last_point[1])))
+                    self.last_point = (x, y)
+                elif kind == "up":
                     # A drag scrolls; only a still finger counts as a press.
                     if self.drag_from and not self.dragging:
-                        self.tap(event.pos)
+                        self.tap((x, y))
                     self.drag_from, self.dragging = None, False
 
             state = self.sign.snapshot()
@@ -806,7 +1116,7 @@ class Panel:
                 self.draw_progress(state)
             self.draw_actions(state)
             self.draw_toast(state["toast"])
-            pygame.display.flip()
+            self.present()
 
             drawn += 1
             if on_frame:
@@ -816,17 +1126,23 @@ class Panel:
             clock.tick(FPS)
 
         self.sign.stop()
+        if self.touch:
+            self.touch.close()
+        if self.fb:
+            self.fb.close()
         pygame.quit()
 
 
 def main():
     windowed = "--windowed" in sys.argv
-    size = None
+    size, backend = None, None
     for argument in sys.argv[1:]:
         if argument.startswith("--size="):
             width, _, height = argument[7:].partition("x")
             size = (int(width), int(height))
-    Panel(size=size, fullscreen=not windowed).run()
+        elif argument.startswith("--backend="):
+            backend = argument.split("=", 1)[1]
+    Panel(size=size, fullscreen=not windowed, backend=backend).run()
 
 
 if __name__ == "__main__":
