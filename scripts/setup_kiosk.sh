@@ -44,7 +44,15 @@ done
 
 echo "==> installing pygame"
 apt-get update || echo "    (apt update had trouble; continuing with cached indexes)"
-apt-get install -y --no-install-recommends python3-pygame
+# libegl-mesa0 is named explicitly, and this is not optional. SDL's KMSDRM
+# backend dlopens libEGL at runtime rather than declaring it, so pygame
+# installs and imports perfectly happily without any EGL driver present -- and
+# then fails at set_mode with "EGL not initialized", which reads like a
+# configuration problem rather than a missing package. libgbm1 arrives as a
+# hard dependency while its EGL counterpart does not, which is what makes this
+# so easy to miss.
+apt-get install -y --no-install-recommends \
+    python3-pygame libegl1 libegl-mesa0 libgles2 libgbm1 libgl1-mesa-dri
 
 echo "==> group access for the framebuffer and the touchscreen"
 # The service runs as root and does not need these, but they let you reproduce

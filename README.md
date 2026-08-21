@@ -202,6 +202,29 @@ apt, outside the venv.
 When the API is unreachable it says "cannot reach the sign" and keeps trying,
 so the panel surviving a service restart needs no coordination between them.
 
+### "EGL not initialized"
+
+SDL's KMSDRM backend dlopens libEGL at runtime instead of declaring it as a
+dependency, so `python3-pygame` installs and imports perfectly happily on a
+machine with no EGL driver at all, then fails at `set_mode`. The message reads
+like a configuration problem and is really a missing package. What makes it
+easy to miss is that `libgbm1` **is** a hard dependency and gets pulled in,
+so a quick look suggests the graphics stack is present.
+
+    dpkg -l libegl1 libegl-mesa0 libgles2 libgbm1 | grep ^ii
+
+All four should be there. If only `libgbm1` is:
+
+    sudo apt-get install -y --no-install-recommends libegl1 libegl-mesa0 libgles2
+
+`setup_kiosk.sh` names them explicitly now, so this only bites an install that
+predates that, or one where apt failed partway through.
+
+Two things that look like this but are not: the panel showing a console login
+prompt means `getty` holds the display (see below), and a `set_mode` failure at
+an explicit resolution can mean the size does not match a mode the connector
+advertises -- the panel asks for the native mode first for that reason.
+
 ### If the panel is dark, or ignores touches
 
 Check whether the service is running first: `systemctl status vice-kiosk`. A
