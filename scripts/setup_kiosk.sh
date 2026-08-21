@@ -30,6 +30,18 @@ else
   echo "    found $(basename "$DSI") (status: $(cat "$DSI/status" 2>/dev/null || echo unknown))"
 fi
 
+# SDL's KMSDRM backend opens /dev/dri/card0 unless told otherwise, and on a
+# Pi 4 that is the render node with no connectors on it -- the display lives on
+# card1. Pick the card that actually has something plugged into it.
+CARD_INDEX=""
+for connector in /sys/class/drm/card*-*/status; do
+  [[ "$(cat "$connector" 2>/dev/null)" == "connected" ]] || continue
+  name="$(basename "$(dirname "$connector")")"       # e.g. card1-DSI-1
+  CARD_INDEX="${name#card}"; CARD_INDEX="${CARD_INDEX%%-*}"
+  echo "    display is on /dev/dri/card$CARD_INDEX ($name)"
+  break
+done
+
 echo "==> installing pygame"
 apt-get update || echo "    (apt update had trouble; continuing with cached indexes)"
 apt-get install -y --no-install-recommends python3-pygame
@@ -63,8 +75,14 @@ TTYReset=yes
 TTYVHangup=yes
 StandardInput=tty-force
 Environment=SDL_VIDEODRIVER=kmsdrm
+${CARD_INDEX:+Environment=SDL_KMSDRM_DEVICE_INDEX=$CARD_INDEX}
 Environment=VICE_KIOSK_URL=$URL
 Environment=PYTHONUNBUFFERED=1
+# Explicit, because StandardInput=tty-force otherwise sends output to the TTY:
+# a traceback would scroll past on the panel instead of landing in the journal,
+# which is precisely when you need to read it.
+StandardOutput=journal
+StandardError=journal
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/python3 $APP_DIR/vice_kiosk.py
 Restart=always
