@@ -466,6 +466,16 @@ def _font_file(bold=False):
     return None
 
 
+def _sdl_touch_devices():
+    """How many touchscreens SDL found. Zero here with a working picture means
+    the input side is the problem, not the display -- worth stating in the log
+    rather than leaving someone to infer it from taps doing nothing."""
+    try:
+        return pygame.get_num_touch_devices()
+    except Exception:
+        return -1
+
+
 def load_font(size, bold=False):
     path = _font_file(bold)
     if path:
@@ -558,6 +568,13 @@ class Panel:
                 pygame.display.set_allow_screensaver(False)
             except Exception:
                 pass
+            # SDL draws, the kernel supplies the touches. Worth having when SDL
+            # renders correctly but reports no input, which is a common way for
+            # a DSI panel to half-work.
+            if os.environ.get("VICE_KIOSK_INPUT") == "evdev":
+                width, height = screen.get_size()
+                self.touch = Touch(width, height)
+                print("touch (evdev): " + self.touch.describe(), flush=True)
             return screen
         self.fb = FrameBuffer(os.environ.get("VICE_KIOSK_FB", "/dev/fb0"))
         print("framebuffer: " + self.fb.describe(), flush=True)
@@ -591,7 +608,10 @@ class Panel:
                 pygame.display.quit()
                 pygame.display.init()
                 screen = cls._open_display(size, fullscreen)
-                print("panel: display on DRM device %d (KMSDRM)" % index, flush=True)
+                print("panel: display on DRM device %d (KMSDRM)" % index,
+                      flush=True)
+                print("panel: SDL sees %d touch device(s)" % _sdl_touch_devices(),
+                      flush=True)
                 return screen
             except (pygame.error, SystemExit) as exc:
                 errors.append("card%d: %s" % (index, exc))
@@ -1063,6 +1083,16 @@ class Panel:
                 out.append(("move",) + event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 out.append(("up",) + event.pos)
+            # Touchscreens report fingers, and SDL only turns those into mouse
+            # events when its touch-mouse hint is on -- which it is not under
+            # KMSDRM. Handling both is why the panel draws and ignores taps.
+            # Finger coordinates are fractions of the window, not pixels.
+            elif event.type == pygame.FINGERDOWN:
+                out.append(("down", int(event.x * self.w), int(event.y * self.h)))
+            elif event.type == pygame.FINGERMOTION:
+                out.append(("move", int(event.x * self.w), int(event.y * self.h)))
+            elif event.type == pygame.FINGERUP:
+                out.append(("up", int(event.x * self.w), int(event.y * self.h)))
         return out
 
     # -- main loop ------------------------------------------------------------

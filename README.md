@@ -239,6 +239,34 @@ prompt means `getty` holds the display (see below), and a `set_mode` failure at
 an explicit resolution can mean the size does not match a mode the connector
 advertises -- the panel asks for the native mode first for that reason.
 
+### The picture works but taps do nothing
+
+Three causes, cheapest first.
+
+**SDL delivers finger events, not mouse events.** Its touch-to-mouse
+translation is off under KMSDRM, so a panel that only handles MOUSEBUTTONDOWN
+draws perfectly and ignores every touch. Both are handled now; this is only
+history if you are reading old code.
+
+**SDL cannot see the touchscreen.** The log says so on startup:
+
+    panel: SDL sees 0 touch device(s)
+
+Zero, with a working picture, means the input side is the problem. Check the
+kernel found it at all:
+
+    cat /proc/bus/input/devices | grep -iA4 touch
+
+If the kernel has it and SDL does not, take the input from the kernel directly
+and leave SDL to draw:
+
+    VICE_KIOSK_INPUT=evdev
+
+**The overlay.** On the generator build, a DSI panel whose picture works while
+touch does not is fixed by swapping `dtoverlay=vc4-kms-v3d` for
+`dtoverlay=vc4-fkms-v3d` in `/boot/firmware/config.txt`. Try this last: it
+changes how the display comes up as well, so verify the picture again after.
+
 ### If the panel is dark, or ignores touches
 
 Check whether the service is running first: `systemctl status vice-kiosk`. A
