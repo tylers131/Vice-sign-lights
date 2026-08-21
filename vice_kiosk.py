@@ -254,11 +254,17 @@ class Button:
 
 class Panel:
     def __init__(self, size=None, fullscreen=True):
-        pygame.display.init()
+        try:
+            pygame.display.init()
+        except pygame.error as exc:
+            raise SystemExit(
+                "could not start the video driver (SDL_VIDEODRIVER=%s): %s\n"
+                "On a Pi panel this wants kmsdrm, and SDL_KMSDRM_DEVICE_INDEX "
+                "must name the card the display is on (see /sys/class/drm)."
+                % (os.environ.get("SDL_VIDEODRIVER", "<unset>"), exc))
         pygame.font.init()
         pygame.mouse.set_visible(False)
-        flags = pygame.FULLSCREEN if fullscreen else 0
-        self.screen = pygame.display.set_mode(size or (800, 480), flags)
+        self.screen = self._open_display(size, fullscreen)
         pygame.display.set_caption("Vice Sign")
         self.w, self.h = self.screen.get_size()
 
@@ -292,6 +298,36 @@ class Panel:
         # targets, so this is ignored there.
         self.target = "all"
         self.target_name = "Everything"
+
+    @staticmethod
+    def _open_display(size, fullscreen):
+        """Open the panel, trying the least presumptuous mode first.
+
+        On KMSDRM an explicit size has to match a mode the connector actually
+        advertises; asking for 800x480 when the panel reports slightly
+        different timings fails inside EGL, which surfaces as the unhelpful
+        "EGL not initialized". (0, 0) means "whatever this display already is",
+        which is what a panel bolted to a sign should use anyway.
+        """
+        attempts = []
+        if fullscreen:
+            attempts.append(((0, 0), pygame.FULLSCREEN, "native fullscreen"))
+            if size:
+                attempts.append((size, pygame.FULLSCREEN, "%dx%d fullscreen" % size))
+            attempts.append(((0, 0), 0, "native, windowed"))
+        else:
+            attempts.append((size or (800, 480), 0, "windowed"))
+
+        errors = []
+        for wanted, flags, described in attempts:
+            try:
+                screen = pygame.display.set_mode(wanted, flags)
+                print("display: %s -> %dx%d" % (described, *screen.get_size()),
+                      flush=True)
+                return screen
+            except pygame.error as exc:
+                errors.append("%s: %s" % (described, exc))
+        raise SystemExit("could not open the display.\n  " + "\n  ".join(errors))
 
     # -- layout ---------------------------------------------------------------
 
