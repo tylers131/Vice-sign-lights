@@ -563,7 +563,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "playlist", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
-                       "pixel_layout")
+                       "pixel_layout", "scale")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -676,16 +676,24 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         sign several people are looking at.
         """
         text = request.args.get("text", "")[:matrix.MAX_TEXT]
-        height = store.matrix().get("height", 16)
+        panel = store.matrix()
+        width, height = panel.get("width", 96), panel.get("height", 16)
+        # Preview at the scale the panel will actually use, so what the phone
+        # draws is the size the message really appears at -- previewing a 5x7
+        # glyph for something that goes up 2x is a picture of a different thing.
+        scale = matrix.scale_for(panel, text)
+        drawn = matrix.text_width(text, scale=scale)
         return jsonify({
             "ok": True,
             "text": text,
-            "width": matrix.text_width(text),
-            "height": matrix.FONT_HEIGHT,
-            "fits": matrix.text_width(text) <= store.matrix().get("width", 32),
-            "rows": matrix.render_bitmap(text, height=matrix.FONT_HEIGHT),
+            "width": drawn,
+            "height": matrix.FONT_HEIGHT * scale,
+            "scale": scale,
+            "fits": drawn <= width,
+            "rows": matrix.render_bitmap(text, height=matrix.FONT_HEIGHT * scale,
+                                         scale=scale),
             "ascii": matrix.preview(text),
-            "panel": {"width": store.matrix().get("width", 32), "height": height},
+            "panel": {"width": width, "height": height},
         })
 
     @app.route("/api/config", methods=["GET", "PUT"])

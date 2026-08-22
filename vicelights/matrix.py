@@ -198,24 +198,79 @@ def render_columns(text: str, spacing: int = 1) -> list:
     return columns
 
 
-def render_bitmap(text: str, height: int = FONT_HEIGHT, spacing: int = 1) -> list:
-    """Render to rows of 0/1, top row first, vertically centred in ``height``."""
+def render_bitmap(text: str, height: int = FONT_HEIGHT, spacing: int = 1,
+                  scale: int = 1) -> list:
+    """Render to rows of 0/1, top row first, vertically centred in ``height``.
+
+    ``scale`` repeats each pixel, so a 5x7 glyph at scale 2 is 10x14. Whole
+    numbers only: a fractional scale would have to interpolate, and on a panel
+    where one pixel is one LED that turns a crisp letter into a smear.
+    """
+    scale = max(1, int(scale))
     columns = render_columns(text, spacing)
-    top = max(0, (height - FONT_HEIGHT) // 2)
-    rows = []
+    rows = [[(column >> y) & 1 for column in columns] for y in range(FONT_HEIGHT)]
+    if scale > 1:
+        rows = [[bit for bit in row for _ in range(scale)] for row in rows]
+        rows = [row for row in rows for _ in range(scale)]
+    glyph_height = FONT_HEIGHT * scale
+    blank = [0] * (len(rows[0]) if rows else 0)
+    top = max(0, (height - glyph_height) // 2)
+    out = []
     for y in range(height):
         source = y - top
-        if 0 <= source < FONT_HEIGHT:
-            rows.append([(column >> source) & 1 for column in columns])
-        else:
-            rows.append([0] * len(columns))
-    return rows
+        out.append(list(rows[source]) if 0 <= source < glyph_height else list(blank))
+    return out
 
 
-def text_width(text: str, spacing: int = 1) -> int:
+def text_width(text: str, spacing: int = 1, scale: int = 1) -> int:
     if not text:
         return 0
-    return len(text) * FONT_WIDTH + (len(text) - 1) * spacing
+    return (len(text) * FONT_WIDTH + (len(text) - 1) * spacing) * max(1, int(scale))
+
+
+def scale_for(config: dict, text: str) -> int:
+    """The scale a given panel config would draw this text at.
+
+    Module level rather than a driver method because the preview needs it for a
+    panel that may not be paired yet, and asking an unresolved driver quietly
+    returned 1 -- so the phone drew a 5x7 glyph for a message the panel would
+    have shown at twice that.
+    """
+    config = config or {}
+    try:
+        width = max(4, min(256, int(config.get("width") or 96)))
+        height = max(4, min(256, int(config.get("height") or 16)))
+    except (TypeError, ValueError):
+        width, height = 96, 16
+    largest = best_scale(text or "", width, height)
+    setting = str(config.get("scale") or "auto").strip().lower()
+    if setting == "auto":
+        return largest
+    try:
+        return max(1, min(int(setting), largest))
+    except (TypeError, ValueError):
+        return largest
+
+
+def best_scale(text: str, width: int, height: int, spacing: int = 1,
+               limit: int = 8) -> int:
+    """The largest whole scale at which this message still fits.
+
+    Bigger is better right up until it does not fit, and which of width or
+    height binds depends on the message: four letters on a 96x16 panel are
+    limited by the height, eleven letters by the width. Picking the larger of
+    the two constraints is the whole job.
+    """
+    if not text:
+        return 1
+    best = 1
+    for scale in range(1, max(1, limit) + 1):
+        if FONT_HEIGHT * scale > height:
+            break
+        if text_width(text, spacing, scale) > width:
+            break
+        best = scale
+    return best
 
 
 def preview(text: str, on: str = "#", off: str = ".") -> str:
@@ -228,14 +283,15 @@ def preview(text: str, on: str = "#", off: str = ".") -> str:
                      for row in render_bitmap(text))
 
 
-def text_pixels(text: str, width: int, height: int, colour, background):
+def text_pixels(text: str, width: int, height: int, colour, background,
+                scale: int = 1):
     """The message as rows of RGB tuples, sized to the panel.
 
     Left-aligned and vertically centred, clipped rather than scaled: a panel
     pixel is a panel pixel, and squeezing a wide message into a narrow display
     turns readable letters into mush.
     """
-    rows = render_bitmap(text, height=height)
+    rows = render_bitmap(text, height=height, scale=scale)
     out = []
     for y in range(height):
         row = rows[y] if y < len(rows) else []
@@ -520,10 +576,15 @@ class IPixel(MatrixDriver):
             return self.png_frames(message)
         return self.pixel_frames(message, previous=previous)
 
+    def scale_for(self, message: dict) -> int:
+        """How many LEDs per font pixel, for this message on this panel."""
+        return scale_for(self.config, (message or {}).get("text") or "")
+
     def lit_pixels(self, message: dict) -> set:
         """Which pixels a message turns on."""
         width, height = self.size()
-        rows = render_bitmap((message or {}).get("text") or "", height=height)
+        rows = render_bitmap((message or {}).get("text") or "", height=height,
+                             scale=self.scale_for(message))
         on = set()
         for y in range(height):
             row = rows[y] if y < len(rows) else []
@@ -581,7 +642,9 @@ class IPixel(MatrixDriver):
         colour = parse_color(message.get("color"))
         background = parse_color(message.get("background"), (0, 0, 0))
         blob = png_bytes(text_pixels(message.get("text") or "", width, height,
-                                     colour, background), width, height)
+                                     colour, background,
+                                     scale=self.scale_for(message)),
+                         width, height)
         opt = int(self.config.get("png_opt", 0)) & 0xFF
         buffer = int(self.config.get("png_buffer", 0)) & 0xFF
         import binascii

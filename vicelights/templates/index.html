@@ -1098,13 +1098,29 @@ function previewMessage(){
     get("/api/matrix/preview?text="+encodeURIComponent(text)).then(function(j){
       if(!j.ok) return;
       var colour = $("msgColor").value;
+      /* Smaller cells when the glyph is scaled up, so the preview stays the
+         same physical size on screen however big the message is. */
+      var cell = j.scale > 1 ? 3 : 4;
       $("msgPreview").innerHTML = j.rows.map(function(row){
         return '<div class="prow">' + row.map(function(bit){
-          return bit ? '<i class="on" style="background:'+esc(colour)+'"></i>' : '<i></i>';
+          var size = 'width:'+cell+'px;height:'+cell+'px;';
+          return bit ? '<i class="on" style="'+size+'background:'+esc(colour)+'"></i>'
+                     : '<i style="'+size+'"></i>';
         }).join("") + '</div>';
       }).join("");
-      $("msgFit").textContent = j.width + " pixels wide on a "
-        + j.panel.width + "-pixel panel" + (j.fits ? " — fits" : " — will scroll");
+      /* Say the size it will really be drawn at, and what is capping it.
+         "7 pixels tall on a 16-pixel panel" is the complaint that prompted
+         this; the answer is only useful if the screen shows the tradeoff. */
+      var tall = j.height, high = j.panel.height;
+      var bits = [j.width + "\u00d7" + tall + " on a " + j.panel.width
+                  + "\u00d7" + high + " panel"];
+      if(j.scale > 1) bits.push(j.scale + "\u00d7 size");
+      if(!j.fits){
+        bits.push("too long — trim it to fit");
+      } else if(j.scale === 1 && tall * 2 <= high && j.text){
+        bits.push("shorter text would go bigger");
+      }
+      $("msgFit").textContent = bits.join(" \u00b7 ");
     });
   }, 200);
 }

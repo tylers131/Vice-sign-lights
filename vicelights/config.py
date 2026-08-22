@@ -108,6 +108,11 @@ DEFAULT_MATRIX = {
     # transfer but has two header bytes nobody has written down. See
     # matrix_probe.py png-sweep.
     "text_mode": "pixels",
+    # How many LEDs per font pixel. "auto" picks the largest whole scale the
+    # message still fits at, which is what you want almost always: four letters
+    # on this panel go up to 2x and fill its height, eleven letters stay at 1x
+    # because 2x would run off the end.
+    "scale": "auto",
     # Where the four colour bytes of a set-pixel command go. The published
     # protocol says rgba; this sign's panel is agrb. matrix_probe.py colortest
     # works it out from what the panel shows.
@@ -225,6 +230,14 @@ def _matrix(raw) -> dict:
     value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
     mode = str(value.get("text_mode") or "pixels").strip().lower()
     value["text_mode"] = mode if mode in ("pixels", "png") else "pixels"
+    scale = str(value.get("scale") or "auto").strip().lower()
+    if scale != "auto":
+        try:
+            scale = str(max(1, min(8, int(scale))))
+        except (TypeError, ValueError):
+            log.warning("ignoring unusable matrix scale %r", value.get("scale"))
+            scale = "auto"
+    value["scale"] = scale
     from .matrix import PIXEL_LAYOUTS, DEFAULT_PIXEL_LAYOUT
     layout = str(value.get("pixel_layout") or DEFAULT_PIXEL_LAYOUT).strip().lower()
     if layout not in PIXEL_LAYOUTS:
