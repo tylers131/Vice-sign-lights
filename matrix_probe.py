@@ -495,6 +495,14 @@ Say which numbers actually happened on the panel. The split matters:
   * everything works      -> say so and the driver gets marked confirmed.""")
 
 
+def _short_uuid(uuid: str) -> str:
+    """The 16-bit part of a Bluetooth base UUID, which is all that varies."""
+    text = str(uuid).lower()
+    if text.endswith("-0000-1000-8000-00805f9b34fb"):
+        return text[4:8]
+    return text[:8]
+
+
 def _decode_reply(data: bytes) -> str:
     """Read one of this panel's status replies.
 
@@ -511,6 +519,59 @@ def _decode_reply(data: bytes) -> str:
     meaning = {0x01: "accepted?", 0x02: "rejected / not understood?"}.get(
         status, "status 0x%02x, meaning unknown" % status)
     return "echoes cmd %02x %02x, %s" % (data[2], data[3], meaning)
+
+
+
+async def _trace_one(client, char, chunks, replies, args) -> int:
+    """Write one payload to one characteristic, narrating the replies.
+
+    ``replies`` is the shared list the notification handler appends to; it is
+    cleared before each chunk so a reply is attributed to the write that
+    provoked it rather than to whatever came before.
+    """
+    answered = 0
+    silent_since = None
+    for index, chunk in enumerate(chunks, 1):
+        replies.clear()
+        try:
+            await client.write_gatt_char(char, chunk, response=False)
+        except Exception as exc:
+            print("%3d/%d  WRITE FAILED: %s: %s"
+                  % (index, len(chunks), type(exc).__name__, exc))
+            return answered
+        await asyncio.sleep(args.gap)
+        head = "%3d/%d  %-3d bytes  %s" % (index, len(chunks), len(chunk),
+                                           chunk[:12].hex(" "))
+        if replies:
+            answered += len(replies)
+            if silent_since is not None:
+                print("        (silent from chunk %d to %d)"
+                      % (silent_since, index - 1))
+                silent_since = None
+            print(head)
+            for uuid, reply in replies:
+                print("        <- %s  %s   %s"
+                      % (_short_uuid(uuid), reply.hex(" "), _decode_reply(reply)))
+        else:
+            if silent_since is None:
+                silent_since = index
+                print("%s   (no reply)" % head)
+    if silent_since is not None and silent_since < len(chunks):
+        print("        (silent from chunk %d to %d)" % (silent_since, len(chunks)))
+
+    # Some panels only answer once the declared length has arrived.
+    if args.settle > 0:
+        print("waiting %.0fs for anything late ..." % args.settle)
+        replies.clear()
+        await asyncio.sleep(args.settle)
+        if replies:
+            answered += len(replies)
+            for uuid, reply in replies:
+                print("  late <- %s  %s   %s"
+                      % (_short_uuid(uuid), reply.hex(" "), _decode_reply(reply)))
+        else:
+            print("  nothing further")
+    return answered
 
 
 async def do_trace(args):
@@ -552,10 +613,11 @@ async def do_trace(args):
     print("%d chunk(s) of up to %d bytes, %.1fs between them\n"
           % (len(chunks), args.chunk, args.gap))
 
+    # (characteristic uuid, bytes). Which notify channel answers is itself
+    # evidence: a panel with a control characteristic and a data characteristic
+    # usually pairs each with its own notify, so the pairing says which write
+    # channel a reply belongs to.
     replies = []
-
-    def on_notify(_sender, data):
-        replies.append(bytes(data))
 
     holder = connected(args.address, args.timeout, args.retries)
     async with holder as client:
@@ -565,45 +627,55 @@ async def do_trace(args):
         listening = []
         for service in services:
             for characteristic in service.characteristics:
-                if "notify" in (characteristic.properties or ()):
-                    try:
-                        await client.start_notify(characteristic.uuid, on_notify)
-                        listening.append(characteristic.uuid)
-                    except Exception:
-                        pass
+                if "notify" not in (characteristic.properties or ()):
+                    continue
+                uuid = characteristic.uuid
 
-        silent_since = None
-        for index, chunk in enumerate(chunks, 1):
-            replies.clear()
-            await client.write_gatt_char(char, chunk, response=False)
-            await asyncio.sleep(args.gap)
-            head = "%3d/%d  %-3d bytes  %s" % (index, len(chunks), len(chunk),
-                                               chunk[:12].hex(" "))
-            if replies:
-                if silent_since is not None:
-                    print("        (silent from chunk %d to %d)"
-                          % (silent_since, index - 1))
-                    silent_since = None
-                for reply in replies:
-                    print("%s\n        <- %s   %s"
-                          % (head, reply.hex(" "), _decode_reply(reply)))
-            else:
-                if silent_since is None:
-                    silent_since = index
-                    print("%s   (no reply)" % head)
-        if silent_since is not None and silent_since < len(chunks):
-            print("        (silent from chunk %d to %d)"
-                  % (silent_since, len(chunks)))
+                def on_notify(_sender, data, _uuid=uuid):
+                    replies.append((_uuid, bytes(data)))
 
-        # Some panels only answer once the declared length has arrived.
-        print("\nwaiting %.0fs for anything late ..." % args.settle)
-        replies.clear()
-        await asyncio.sleep(args.settle)
-        if replies:
-            for reply in replies:
-                print("  late <- %s   %s" % (reply.hex(" "), _decode_reply(reply)))
-        else:
-            print("  nothing further")
+                try:
+                    await client.start_notify(uuid, on_notify)
+                    listening.append(uuid)
+                except Exception:
+                    pass
+        if listening:
+            print("listening on %s\n" % ", ".join(listening))
+
+        targets = [char]
+        if args.sweep_chars:
+            # A panel with more than one writable characteristic usually has a
+            # control channel and a bulk data channel, and the GATT tree does
+            # not say which is which. This sign's panel exposes two; the driver
+            # picked one by UUID preference and the other has never been tried.
+            targets = []
+            for service in services:
+                for characteristic in service.characteristics:
+                    if set(characteristic.properties or ()) \
+                            & {"write", "write-without-response"}:
+                        targets.append(characteristic.uuid)
+            print("sweeping %d writable characteristic(s)\n" % len(targets))
+
+        summary = []
+        for target in targets:
+            if len(targets) > 1:
+                print("=" * 70)
+                print("writing to %s" % target)
+                print("=" * 70)
+            answered = await _trace_one(client, target, chunks, replies, args)
+            summary.append((target, answered))
+            if len(targets) > 1 and target != targets[-1]:
+                # Let the panel settle before the next characteristic, so a
+                # reply cannot be attributed to the wrong one.
+                await asyncio.sleep(1.5)
+                print()
+
+        if len(summary) > 1:
+            print("\n===== per characteristic =====")
+            for target, answered in summary:
+                print("  %-42s %s" % (target,
+                                      "%d repl%s" % (answered, "y" if answered == 1 else "ies")
+                                      if answered else "silent"))
 
         for characteristic in listening:
             try:
@@ -1020,6 +1092,8 @@ def build_parser():
                    help="seconds to wait after each chunk (default 0.35)")
     p.add_argument("--settle", type=float, default=4.0,
                    help="seconds to wait for a late reply (default 4)")
+    p.add_argument("--sweep-chars", action="store_true",
+                   help="repeat the payload on every writable characteristic")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_trace(a)))
 
