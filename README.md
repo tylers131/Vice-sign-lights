@@ -415,6 +415,35 @@ Not wired up, because it depends on how the panel physically mounts and that is
 not known until it is on the sign. If it comes up upside down, say so rather
 than guessing at `config.txt` values.
 
+### Diagnostics without a laptop
+
+At the sign there is a phone, a touchscreen and nothing else -- so a check
+that needs SSH is a check that does not get run. The *System* tab has a
+**Checks** card that runs them on the Pi and shows the output on the phone:
+
+| Button | What it runs |
+| --- | --- |
+| Go / no-go | `scripts/preflight.sh` -- services, AP band, radio, controllers, panel, disk, clock |
+| Bluetooth and system | `scripts/diagnose.sh` -- adapter state, throttling, temperature, what is advertising |
+| Service journal | the last 300 lines systemd holds, including whatever killed the service before it could log |
+
+The exit code is reported alongside the output, because preflight's whole
+purpose is its verdict and a wall of ticks with one failure buried in it reads
+as a pass.
+
+**Fixed commands, chosen by name from a table in `web.py`.** Nothing from the
+request reaches a command line. The service runs as root on a network whose
+passphrase is in this repository, so "run what you are told" would be a remote
+root shell; adding a check means adding an entry to that table.
+
+Scanning is already a button on the *Devices* tab, and it queues through the
+BLE worker like any other job rather than shelling out -- two things scanning
+the same radio at once is how you get a scan that finds nothing.
+
+Not offered as a button, deliberately: `scripts/ble_connect_test.sh`. It takes
+the access point down as part of the measurement, which would disconnect the
+phone you are reading the result on.
+
 ### Turning the panel off
 
     sudo systemctl disable --now vice-kiosk
@@ -1552,6 +1581,8 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | GET/POST | `/api/time` | `{iso: "2026-08-28T19:30:00"}` or `{epoch: ...}` |
 | GET/PUT | `/api/config` | Whole config |
 | GET | `/api/log?n=200` | Log tail |
+| GET | `/api/checks` | The diagnostics that can be run from the phone |
+| GET/POST | `/api/checks/<name>` | Run one, or read its output |
 | GET | `/healthz` | Liveness |
 
 ```bash

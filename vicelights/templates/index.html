@@ -460,6 +460,13 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 <!-- ------------------------------------------------------------- system -->
 <section id="tab-system">
   <div class="card">
+    <h2>Checks</h2>
+    <p class="muted">The things that used to need a laptop and an SSH session.
+      At the sign there is a phone and nothing else.</p>
+    <div id="checkButtons"></div>
+    <pre class="log" id="checkOut" style="display:none;margin-top:10px"></pre>
+  </div>
+  <div class="card">
     <h2>Log</h2>
     <pre class="log" id="logBox">loading...</pre>
     <div class="row" style="margin-top:10px">
@@ -524,6 +531,7 @@ Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b)
     $("tab-"+b.dataset.tab).classList.add("on");
     if(b.dataset.tab==="system"){ loadLog(); loadConfig(); }
     if(b.dataset.tab==="message"){ loadState(); previewMessage(); loadScan(); }
+    if(b.dataset.tab==="system"){ loadChecks(); }
   };
 });
 
@@ -1425,6 +1433,53 @@ function addSchedule(){
 function deleteSchedule(id){ del("/api/schedules/"+id).then(loadState); }
 
 /* -------------------------------------------------------------- system */
+/* Diagnostics, run on the Pi and read on the phone. The server picks the
+   command from a fixed table -- the name is all that crosses the wire. */
+var CHECK_TIMER = null;
+function loadChecks(){
+  get("/api/checks").then(function(j){
+    if(!j.ok) return;
+    $("checkButtons").innerHTML = (j.checks||[]).map(function(c){
+      var busy = c.state === "running";
+      return '<div style="margin-bottom:10px">'
+        + '<button class="btn sm'+(busy?"":" primary")+'" '
+        + (busy?"disabled ":"") + 'onclick="runCheck(\''+esc(c.name)+'\')">'
+        + (busy ? "Running\u2026" : esc(c.label)) + '</button>'
+        + '<div class="meta muted" style="margin-top:4px">'+esc(c.about)+'</div>'
+        + '</div>';
+    }).join("");
+  });
+}
+function runCheck(name){
+  post("/api/checks/"+encodeURIComponent(name)).then(function(j){
+    if(!j.ok){ toast(j.error||"could not start it"); return; }
+    $("checkOut").style.display = "";
+    $("checkOut").textContent = "running\u2026";
+    loadChecks();
+    pollCheck(name);
+  });
+}
+function pollCheck(name){
+  clearTimeout(CHECK_TIMER);
+  get("/api/checks/"+encodeURIComponent(name)).then(function(j){
+    if(!j.ok) return;
+    if(j.state === "running"){
+      CHECK_TIMER = setTimeout(function(){ pollCheck(name); }, 1500);
+      return;
+    }
+    /* Say how it ended as well as what it printed: preflight's whole job is
+       its exit code, and a wall of green ticks with a failure buried in it
+       reads as a pass. */
+    var verdict = j.code === 0 ? "\u2014 passed"
+                : (j.code === null ? "\u2014 did not finish"
+                                   : "\u2014 FAILED (exit " + j.code + ")");
+    $("checkOut").textContent = (j.output || "(no output)")
+      + "\n\n" + j.label + " " + verdict;
+    $("checkOut").scrollTop = $("checkOut").scrollHeight;
+    loadChecks();
+  });
+}
+
 function loadLog(){
   get("/api/log?n=250").then(function(j){
     if(!j.ok) return;

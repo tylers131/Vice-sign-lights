@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -23,6 +24,12 @@ from .ble import describe_state
 from .config import ConfigError, normalize_address
 
 log = logging.getLogger("vicelights.web")
+
+# Where the scripts live: the directory holding this package. Works both from
+# a checkout and from /opt/vice-sign-lights, which is the same layout.
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _json_error(message, code=400):
@@ -466,6 +473,110 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             return _json_error(exc)
         job = worker.submit_test(address)
         return jsonify({"ok": True, "job": _slim_job(job.to_dict())})
+
+    # ------------------------------------------------------------- checks
+    #
+    # The diagnostics that used to need SSH. At the sign there is a phone and
+    # a touchscreen and nothing else, so a check you can only run from a
+    # laptop is a check that does not get run.
+    #
+    # Fixed commands only, chosen by name from this table -- nothing from the
+    # request reaches a command line. The service runs as root, so "run what
+    # you are told" would be a remote root shell on a network whose password
+    # is in the repository.
+    CHECKS = {
+        "preflight": {
+            "label": "Go / no-go",
+            "about": "Services, access point, radio, controllers, panel, disk,"
+                     " clock. Exits non-zero if anything would stop the sign.",
+            "argv": ["/bin/bash", os.path.join(APP_DIR, "scripts", "preflight.sh")],
+            "timeout": 180.0,
+        },
+        "diagnose": {
+            "label": "Bluetooth and system",
+            "about": "Adapter state, throttling, temperature, what is"
+                     " advertising nearby.",
+            "argv": ["/bin/bash", os.path.join(APP_DIR, "scripts", "diagnose.sh")],
+            "timeout": 240.0,
+        },
+        "journal": {
+            "label": "Service journal",
+            "about": "The last 300 lines systemd has for this service --"
+                     " including anything that killed it before it could log.",
+            "argv": ["journalctl", "-u", "vice-lights", "-n", "300",
+                     "--no-pager"],
+            "timeout": 30.0,
+        },
+    }
+    checks = {}
+    checks_lock = threading.Lock()
+
+    def _check_state(name, **changes):
+        with checks_lock:
+            state = checks.setdefault(name, {"state": "idle", "output": "",
+                                             "code": None, "started": None,
+                                             "finished": None})
+            state.update(changes)
+            return dict(state)
+
+    def _run_check(name):
+        entry = CHECKS[name]
+        try:
+            done = subprocess.run(entry["argv"], stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT,
+                                  timeout=entry["timeout"], cwd=APP_DIR)
+            output = done.stdout.decode("utf-8", "replace")
+            code = done.returncode
+        except subprocess.TimeoutExpired as exc:
+            output = (exc.stdout or b"").decode("utf-8", "replace")
+            output += "\n\n-- gave up after %.0fs --" % entry["timeout"]
+            code = None
+        except Exception as exc:
+            output = "could not run it: %s: %s" % (type(exc).__name__, exc)
+            code = None
+        # These scripts colour their output for a terminal, and a phone shows
+        # those escapes as literal rubbish around every verdict.
+        output = _ANSI.sub("", output)
+        # A check that prints a megabyte would be a phone that stops
+        # scrolling; the tail is the part with the verdict in it.
+        if len(output) > 40000:
+            output = "-- earlier output trimmed --\n" + output[-40000:]
+        _check_state(name, state="done", output=output, code=code,
+                     finished=time.time())
+        log.info("check %s finished (exit %s)", name, code)
+
+    @app.route("/api/checks")
+    def api_checks():
+        with checks_lock:
+            running = {name: dict(state) for name, state in checks.items()}
+        rows = []
+        for name, entry in CHECKS.items():
+            # A check nobody has run yet is "idle", not absent -- the UI reads
+            # this to decide whether a button is a button or a spinner.
+            state = dict(running.get(name) or {})
+            state.pop("output", None)
+            state.setdefault("state", "idle")
+            rows.append({"name": name, "label": entry["label"],
+                         "about": entry["about"], **state})
+        return jsonify({"ok": True, "checks": rows})
+
+    @app.route("/api/checks/<name>", methods=["GET", "POST"])
+    def api_check(name):
+        if name not in CHECKS:
+            return _json_error("no check called %r" % name, 404)
+        if request.method == "POST":
+            with checks_lock:
+                current = checks.get(name) or {}
+                if current.get("state") == "running":
+                    return _json_error("that one is already running")
+            _check_state(name, state="running", output="", code=None,
+                         started=time.time(), finished=None)
+            threading.Thread(target=_run_check, args=(name,), daemon=True,
+                             name="check:" + name).start()
+            log.info("check %s started from the web UI", name)
+        state = _check_state(name)
+        return jsonify({"ok": True, "name": name,
+                        "label": CHECKS[name]["label"], **state})
 
     @app.route("/api/scan", methods=["POST"])
     def api_scan():
