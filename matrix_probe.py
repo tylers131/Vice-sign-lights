@@ -198,12 +198,121 @@ async def do_scan(args):
               "Then: ./matrix_probe.py info <address>")
 
 
+# ------------------------------------------------------------------ connecting
+#
+# Always find the device before connecting to it, and hand bleak the object it
+# found rather than the address string. On BlueZ a bare address resolves through
+# bluetoothd's device cache, which is discarded once a device stops being seen,
+# so `scan` then `info` a few minutes later connects to a stale entry and hangs
+# until the timeout -- the failure looks like a radio problem and is not one.
+# Finding it first also turns "not advertising" into its own answer, which is a
+# different problem with a different fix.
+
+
+async def find_device(address, seconds=8.0):
+    """The advertising device at this address, or None."""
+    try:
+        return await BleakScanner.find_device_by_address(address, timeout=seconds)
+    except Exception as exc:
+        print("scan failed while looking for %s: %s" % (address, exc), file=sys.stderr)
+        return None
+
+
+def _connect_failed(address, exc, device_found):
+    """Say what a failed connect means, instead of a traceback."""
+    kind = type(exc).__name__
+    print("\ncould not connect to %s (%s)" % (address, kind), file=sys.stderr)
+    print("", file=sys.stderr)
+    if not device_found:
+        print("It is not advertising right now. That usually means one of:",
+              file=sys.stderr)
+        print("  * it is powered off, asleep, or out of range", file=sys.stderr)
+        print("  * something else is already connected to it -- these panels", file=sys.stderr)
+        print("    stop advertising and refuse a second central. Close the", file=sys.stderr)
+        print("    vendor app on your phone, or power-cycle the panel.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("  ./matrix_probe.py scan --all      # confirm it is on the air",
+              file=sys.stderr)
+    else:
+        print("It IS advertising, so the radio can hear it -- the connection",
+              file=sys.stderr)
+        print("itself is what failed. Usually:", file=sys.stderr)
+        print("  * something else holds a connection to it (close the app)",
+              file=sys.stderr)
+        print("  * the sign's own service is mid-sweep and owns the adapter:",
+              file=sys.stderr)
+        print("      sudo systemctl stop vice-lights", file=sys.stderr)
+        print("  * BlueZ is wedged:  sudo systemctl restart bluetooth",
+              file=sys.stderr)
+        print("", file=sys.stderr)
+        print("  Then retry with a longer window:", file=sys.stderr)
+        print("      ./matrix_probe.py info %s --timeout 25 --retries 3" % address,
+              file=sys.stderr)
+    return 1
+
+
+class connected:
+    """`async with connected(args) as client` -- found first, retried, explained.
+
+    A context manager rather than a helper function because every caller needs
+    the client for the length of a block, and the failure message has to be the
+    same wherever the connection is made.
+    """
+
+    def __init__(self, address, timeout=15.0, retries=1, quiet=False):
+        self.address = address
+        self.timeout = timeout
+        self.retries = max(1, int(retries))
+        self.quiet = quiet
+        self.client = None
+        self.device = None
+
+    async def __aenter__(self):
+        need_bleak()
+        last = None
+        for attempt in range(1, self.retries + 1):
+            if not self.quiet:
+                print("looking for %s ..." % self.address)
+            self.device = await find_device(self.address, seconds=min(self.timeout, 10.0))
+            target = self.device or self.address
+            if self.device is None and not self.quiet:
+                print("  not seen in that window; trying the address anyway")
+            if not self.quiet:
+                print("connecting%s ..."
+                      % ("" if self.device is None else
+                         " to %s" % (getattr(self.device, "name", "") or self.address)))
+            client = BleakClient(target, timeout=self.timeout)
+            try:
+                await client.connect()
+                self.client = client
+                return client
+            except Exception as exc:
+                last = exc
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                if attempt < self.retries:
+                    print("  attempt %d/%d failed (%s); retrying"
+                          % (attempt, self.retries, type(exc).__name__))
+                    await asyncio.sleep(1.5)
+        raise SystemExit(_connect_failed(self.address, last, self.device is not None))
+
+    async def __aexit__(self, *_exc):
+        if self.client is not None:
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+        return False
+
+
 # ------------------------------------------------------------------ inspection
 
 async def do_info(args):
     need_bleak()
-    print("connecting to %s ..." % args.address)
-    async with BleakClient(args.address, timeout=args.timeout) as client:
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
         services = getattr(client, "services", None)
         if services is None:
             services = await client.get_services()
@@ -220,13 +329,9 @@ async def do_info(args):
                         "write-without-response" in (char.properties or ()):
                     writable.append((char.uuid, char.handle, props))
 
-        name = args.name or ""
-        if not name:
-            try:
-                found = await BleakScanner.find_device_by_address(args.address, timeout=5.0)
-                name = getattr(found, "name", "") or ""
-            except Exception:
-                pass
+        # The connect already found the device; reuse that name rather than
+        # scanning again while holding a connection open.
+        name = args.name or getattr(holder.device, "name", "") or ""
 
         family = M.identify(name, char_uuids=char_uuids,
                             service_uuids=[s.uuid for s in services])
@@ -260,11 +365,12 @@ async def do_info(args):
 
 # -------------------------------------------------------------------- sending
 
-async def write_frames(address, char_uuid, frames, timeout, delay, response=False):
+async def write_frames(address, char_uuid, frames, timeout, delay, response=False,
+                       retries=1):
     need_bleak()
     total = sum(len(f) for f in frames)
     print("writing %d frame(s), %d bytes to %s on %s" % (len(frames), total, address, char_uuid))
-    async with BleakClient(address, timeout=timeout) as client:
+    async with connected(address, timeout, retries) as client:
         for index, frame in enumerate(frames, 1):
             print("  %2d/%d  %s" % (index, len(frames), frame.hex(" ")))
             await client.write_gatt_char(char_uuid, frame, response=response)
@@ -293,7 +399,7 @@ async def do_send(args):
     print()
     frames = driver.text_frames(message)
     await write_frames(args.address, driver.characteristic(), frames,
-                       args.timeout, args.delay)
+                       args.timeout, args.delay, retries=args.retries)
 
 
 async def do_control(args):
@@ -309,7 +415,7 @@ async def do_control(args):
     if not frames:
         sys.exit("this driver has no command for %r" % args.what)
     await write_frames(args.address, driver.characteristic(), frames,
-                       args.timeout, args.delay)
+                       args.timeout, args.delay, retries=args.retries)
 
 
 async def do_raw(args):
@@ -321,7 +427,7 @@ async def do_raw(args):
     payload = bytes.fromhex(cleaned)
     frames = [payload[at:at + args.chunk] for at in range(0, len(payload), args.chunk)]
     await write_frames(args.address, args.char, frames, args.timeout, args.delay,
-                       response=args.response)
+                       response=args.response, retries=args.retries)
 
 
 def do_render(args):
@@ -600,9 +706,11 @@ def build_parser():
     def ble_args(p):
         p.add_argument("address")
         p.add_argument("--timeout", type=float, default=15.0)
+        p.add_argument("--retries", type=int, default=2,
+                       help="connection attempts before giving up (default 2)")
         p.add_argument("--delay", type=float, default=0.02,
                        help="seconds between frames (default 0.02)")
-        p.add_argument("--char", help="characteristic UUID to write to")
+        p.add_argument("-c", "--char", help="characteristic UUID to write to")
         p.add_argument("--family", choices=sorted(M.FAMILIES) + ["auto"], default="auto")
         p.add_argument("--name", default="", help="advertised name, to help auto-detect")
         p.add_argument("--chunk", type=int, default=20)
@@ -617,6 +725,8 @@ def build_parser():
     p = sub.add_parser("info", help="connect and dump the GATT tree")
     p.add_argument("address")
     p.add_argument("--timeout", type=float, default=15.0)
+    p.add_argument("--retries", type=int, default=2,
+                   help="connection attempts before giving up (default 2)")
     p.add_argument("--name", default="")
     p.set_defaults(run=lambda a: asyncio.run(do_info(a)))
 
@@ -681,6 +791,14 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\ninterrupted")
         return 130
+    except BrokenPipeError:
+        # `btsnoop ... | head` is the normal way to read a long capture, and a
+        # traceback on a closed pipe reads like the decode failed.
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+        return 0
     return 0
 
 

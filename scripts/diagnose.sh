@@ -67,6 +67,18 @@ if [[ $SCAN -eq 1 ]]; then
   # something is interfering, not failing.
   echo "    scanning ~30s ..."
   ( cd "$SRC_DIR" && ./elk_scan.py scan --repeat 3 --elk-only 2>&1 ) | sed 's/^/    /'
+  # An empty table above is ambiguous on its own, and the ambiguity matters: it
+  # is the difference between "the sign is unplugged / you are not near it" and
+  # "the radio has failed". Say how many OTHER devices were heard, because a
+  # radio that hears forty strangers and none of the twelve is not a broken
+  # radio.
+  echo
+  echo "    how many devices were audible at all (ELK or not):"
+  ( cd "$SRC_DIR" && ./elk_scan.py scan --repeat 1 2>&1 ) \
+    | grep -cE '^[0-9A-F]{2}:' | sed 's/^/      /' || echo "      (scan failed)"
+  echo "      If that number is healthy but no controller is listed, the"
+  echo "      controllers are out of range, unpowered, or already connected to"
+  echo "      something -- not a fault on this Pi."
 else
   echo "    skipped (--no-scan)"
 fi
