@@ -5,7 +5,7 @@ a phone over the Raspberry Pi's own wifi network. Built for an off-grid art sign
 no internet, no cloud, no CDN, no NTP.
 
 * Runs on a **Pi Zero W (ARMv6), Raspberry Pi OS Lite 32-bit**
-* The Pi **broadcasts its own wifi AP**; the UI lives at **http://192.168.4.1/**
+* The Pi **broadcasts its own wifi AP**; the UI lives at **http://192.168.50.1/**
 * All BLE is **serialized** through one worker: connect &rarr; write &rarr; disconnect,
   one device at a time. Never 12 open connections.
 * The web UI **never blocks**: commands are queued and you watch progress.
@@ -748,7 +748,7 @@ sudo ./scripts/setup_ap_networkmanager.sh "ViceSign" "yourpassphrase" 6
 
 Creates a saved connection profile named `vice-ap` with `802-11-wireless.mode ap`
 and `ipv4.method shared` (NetworkManager runs its own dnsmasq for DHCP), pinned
-to `192.168.4.1/24`, autoconnect on. It comes back on its own after a reboot.
+to `192.168.50.1/24`, autoconnect on. It comes back on its own after a reboot.
 
 The script warns before switching (five seconds to Ctrl-C), checks the adapter
 advertises AP mode, installs `dnsmasq-base` if missing, and gives up after 30
@@ -780,31 +780,43 @@ sudo reboot
 ```
 
 Writes `/etc/hostapd/hostapd.conf`, a dnsmasq DHCP range of
-`192.168.4.10–60`, a static `192.168.4.1` on `wlan0`, and tells NetworkManager
+`192.168.50.10–60`, a static `192.168.50.1` on `wlan0`, and tells NetworkManager
 to leave `wlan0` alone if it's installed. Its dnsmasq also resolves *every*
 hostname to the Pi, so a phone browser lands on the UI whatever you type.
 
 ### Pick a subnet that does not collide with home
 
-The AP defaults to `192.168.4.1/24`. **Check what your home network uses first:**
+The AP defaults to `192.168.50.1/24`, chosen because almost nothing ships
+on it. The setup script **refuses to run** if that subnet overlaps anything
+this machine already uses, and says what to pass instead.
+
+That guard exists because getting it wrong is not a small mistake. This sign
+was briefly configured with the AP on `192.168.4.1` -- the same address as
+the house router. `wlan0` took the gateway's address, the Pi began resolving
+DNS against itself, and dnsmasq's catch-all answered every name with the Pi.
+It lost apt, git and its own uplink in one step. At the sign, recovering that
+needs a keyboard.
+
+**Check what your home network uses anyway:**
 
 ```bash
 ip addr show wlan0 | grep 'inet '
 ```
 
-A home LAN of `192.168.4.0/22` — which is what this Pi sits on — spans
-192.168.4.0 to 192.168.7.255, so `192.168.4.1` is almost certainly the home
-router. The two networks never run at once, so nothing breaks, but typing
-`192.168.4.1` into a browser then reaches the router or the sign depending on
-which wifi you are joined to. Avoid the ambiguity:
+This Pi sits on a home LAN of `192.168.4.0/22`, which spans 192.168.4.0 to
+192.168.7.255 — so anything in that range is taken, and `192.168.4.1` is the
+router itself. The default of `192.168.50.1` is outside it, which is the point.
+
+If your own LAN happens to use `192.168.50.x`, pick something else:
 
 ```bash
-AP_ADDR=192.168.50.1/24 sudo ./scripts/setup_ap_networkmanager.sh "ViceSign" "passphrase"
-AP_IP=192.168.50.1      sudo ./scripts/setup_ap_hostapd.sh        "ViceSign" "passphrase"
+AP_ADDR=10.42.0.1/24 sudo ./scripts/setup_ap_networkmanager.sh "ViceSign" "passphrase"
+AP_IP=10.42.0.1      sudo ./scripts/setup_ap_hostapd.sh        "ViceSign" "passphrase"
 ```
 
-The hostapd script derives its DHCP range from whatever address you give it.
-Substitute your chosen address wherever this README says `192.168.4.1`.
+The hostapd script derives its DHCP range from whatever address you give it, and
+refuses anything that overlaps a network this machine already uses. Substitute
+your chosen address wherever this README says `192.168.50.1`.
 
 ### Switching between the AP and normal wifi
 
@@ -830,10 +842,10 @@ sudo ./scripts/ap.sh off --delay 5
 
 Then reconnect on the other network. Coming **from** the AP, the Pi returns to
 whatever address your router gives it; going **to** the AP, it is always
-`192.168.4.1`.
+`192.168.50.1`.
 
 If you are locked out with the AP up: join **ViceSign** from a laptop and
-`ssh <user>@192.168.4.1`.
+`ssh <user>@192.168.50.1`.
 
 ### Locked out with no network at all
 
@@ -947,7 +959,7 @@ strand you.
 
 Either way:
 
-* Join **ViceSign** from your phone, open **http://192.168.4.1/**
+* Join **ViceSign** from your phone, open **http://192.168.50.1/**
 * The URL is logged on every boot: `journalctl -u vice-lights | grep "web UI"`
 * Set a **wifi country** or the radio stays rfkill-blocked — both scripts do this
   (`COUNTRY=US` by default; override with `COUNTRY=XX sudo ./scripts/...`).
@@ -1521,9 +1533,9 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | GET | `/healthz` | Liveness |
 
 ```bash
-curl -X POST http://192.168.4.1/api/apply -H 'Content-Type: application/json' \
+curl -X POST http://192.168.50.1/api/apply -H 'Content-Type: application/json' \
      -d '{"target":"group:letters","color":"#ff2d78","brightness":80}'
-curl -X POST http://192.168.4.1/api/scene/apply -H 'Content-Type: application/json' \
+curl -X POST http://192.168.50.1/api/scene/apply -H 'Content-Type: application/json' \
      -d '{"scene":"All off"}'
 ```
 
@@ -1616,7 +1628,7 @@ runs as root because it binds port 80 and sets the system clock.
 | UI reachable but nothing happens | Check the Queue card and the log — jobs may be queued behind a slow retry |
 | `pip install` hangs on "Building wheel for dbus-fast" | Ctrl-C, re-run with `SKIP_CYTHON=1` (see above) |
 | `backend: simulated` badge | `bleak` failed to import — search the log for `bleak` and reinstall requirements |
-| Can't reach 192.168.4.1 | `nmcli con show --active` (or `systemctl status hostapd`), `ip addr show wlan0` |
+| Can't reach 192.168.50.1 | `nmcli con show --active` (or `systemctl status hostapd`), `ip addr show wlan0` |
 | Schedules never fire | Clock unset — see the red banner; use timers instead |
 
 **Dust and power.** Cold boots lose the clock (see §5) and half-written files

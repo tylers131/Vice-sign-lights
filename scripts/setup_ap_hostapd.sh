@@ -39,8 +39,58 @@ else
 fi
 IFACE="${IFACE:-wlan0}"
 COUNTRY="${COUNTRY:-US}"
-IP="${AP_IP:-192.168.4.1}"
+# 192.168.4.1 is the single most common home-router address, and standing on
+# it is not a small mistake: wlan0 takes the gateway's address, the Pi starts
+# resolving DNS against itself, and dnsmasq's catch-all answers every name with
+# the Pi -- so the machine loses its own uplink, apt, and git in one step.
+# 192.168.50.0/24 is picked because almost nothing ships on it.
+IP="${AP_IP:-192.168.50.1}"
 NET="${IP%.*}"
+
+ip_to_int() {
+  local IFS=. a b c d; read -r a b c d <<<"$1"
+  echo $(( (a << 24) | (b << 16) | (c << 8) | d ))
+}
+
+# Refuse to stand on a network this machine already uses. Getting this wrong
+# costs the Pi its uplink, and at the sign the only way back is a keyboard.
+AP_INT="$(ip_to_int "$IP")"
+CLASH=""
+while read -r iface addr; do
+  [[ "$iface" == "$IFACE" || -z "$addr" ]] && continue
+  other="${addr%%/*}"; bits="${addr##*/}"
+  [[ "$other" == "$addr" ]] && bits=32
+  mask=$(( bits == 0 ? 0 : (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+  other_int="$(ip_to_int "$other")"
+  # Overlap either way: their network containing our address, or ours (a /24)
+  # containing theirs.
+  if (( (other_int & mask) == (AP_INT & mask) ))      || (( (other_int & 0xFFFFFF00) == (AP_INT & 0xFFFFFF00) )); then
+    CLASH="$iface already holds $addr"
+    break
+  fi
+done < <(ip -4 -brief addr 2>/dev/null | awk '{for (i = 3; i <= NF; i++) print $1, $i}')
+
+GW="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
+if [[ -z "$CLASH" && -n "$GW" ]]; then
+  gw_int="$(ip_to_int "$GW")"
+  (( (gw_int & 0xFFFFFF00) == (AP_INT & 0xFFFFFF00) ))     && CLASH="the default gateway is $GW"
+fi
+
+if [[ -n "$CLASH" ]]; then
+  cat >&2 <<CLASHMSG
+Refusing to put the access point on $IP: $CLASH.
+
+Standing on a network this machine already uses breaks its own routing and
+DNS -- and because dnsmasq answers every name with the AP address, the Pi
+then cannot reach apt, git, or anything else. Recovering that needs a
+keyboard on the sign.
+
+Pick a subnet nothing else here uses:
+
+    sudo AP_IP=192.168.50.1 $0 ${1:+\'$1\'} ${2:+\'$2\'}
+CLASHMSG
+  exit 1
+fi
 
 [[ $EUID -eq 0 ]] || { echo "run me with sudo" >&2; exit 1; }
 [[ ${#PSK} -ge 8 ]] || { echo "WPA passphrase must be >= 8 characters" >&2; exit 1; }

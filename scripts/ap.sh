@@ -37,13 +37,27 @@ if [[ "$DELAY" != "0" && "${VICE_AP_DETACHED:-}" != "1" ]]; then
   echo "switching in ${DELAY}s -- this session will drop."
   case "$ACTION" in
     off) echo "  reconnect on your normal wifi, then ssh to the Pi's usual address" ;;
-    on)  echo "  join ViceSign, then: ssh ${SUDO_USER:-pi}@192.168.4.1" ;;
+    on)  echo "  join ViceSign, then: ssh ${SUDO_USER:-pi}@$(ap_address)" ;;
   esac
   VICE_AP_DETACHED=1 systemd-run --quiet --on-active="$DELAY" \
     --setenv=VICE_AP_DETACHED=1 --unit="vice-ap-switch-$$" \
     "$(readlink -f "${BASH_SOURCE[0]}")" "$ACTION" ${TARGET_SSID:+"$TARGET_SSID"}
   exit 0
 fi
+
+ap_address() {
+  # Whatever the AP is actually on. Never a literal: this address is chosen at
+  # setup time, and printing a stale guess sends someone to the wrong machine.
+  local found
+  found="$(ip -4 -brief addr show "$IFACE" 2>/dev/null | awk '{print $3}')"
+  found="${found%%/*}"
+  if [[ -z "$found" ]]; then
+    # dnsmasq's catch-all records the AP address as "address=/#/1.2.3.4".
+    found="$(sed -n 's|^[[:space:]]*address=/#/||p' \
+             /etc/dnsmasq.d/vice-ap.conf 2>/dev/null | head -1)"
+  fi
+  echo "${found:-the Pi}"
+}
 
 client_profiles() {
   nmcli -t -f NAME,TYPE connection show \
@@ -60,7 +74,7 @@ case "$ACTION" in
       nmcli -t -f connection.autoconnect,802-11-wireless.mode,ipv4.addresses \
         connection show "$CON" | sed 's/^/    /'
       nmcli -t -f NAME connection show --active | grep -qx "$CON" \
-        && echo "    ACTIVE -- web UI at http://192.168.4.1/" \
+        && echo "    ACTIVE -- web UI at http://$(ap_address)/" \
         || echo "    not active"
     else
       echo "    not configured (run setup_ap_networkmanager.sh)"
@@ -99,7 +113,7 @@ case "$ACTION" in
     sleep 3
     nmcli -f GENERAL.CONNECTION,IP4.ADDRESS device show "$IFACE" || true
     echo
-    echo "Join ViceSign, then the web UI is at http://192.168.4.1/"
+    echo "Join ViceSign, then the web UI is at http://$(ap_address)/"
     echo "There is no uplink in this mode: no git pull, no apt."
     ;;
 
