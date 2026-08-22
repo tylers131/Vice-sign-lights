@@ -1091,6 +1091,106 @@ What is on it now?
                                   ./matrix_probe.py screens %s""" % args.address)
 
 
+async def do_colortest(args):
+    """Show pure red, green and blue in order, and work out the wiring.
+
+    This sign's panel showed blue, magenta and cyan when sent red, green and
+    blue, so its colour bytes are not in the documented order. Rather than
+    infer a permutation from a photograph, paint the three primaries in a known
+    order, read back what appeared, and let the arithmetic pick the setting.
+    """
+    from vicelights.matrix import IPixel, CHANNEL_ORDERS, apply_channel_order
+
+    driver = IPixel({"width": args.width, "height": args.height})
+    primaries = [("RED", (255, 0, 0)), ("GREEN", (0, 255, 0)), ("BLUE", (0, 0, 255))]
+
+    frames = driver.diy_frames(True)
+    for y in range(args.height):
+        for x in range(args.width):
+            _name, rgb = primaries[min(2, x * 3 // args.width)]
+            # Bypass the channel setting: this test has to send the raw bytes,
+            # or it would be measuring the correction rather than the panel.
+            r, g, b = rgb
+            frames.append(driver.packet(driver.CMD_PIXEL,
+                                        [r, g, b, 0xFF, x & 0xFF, y & 0xFF]))
+
+    print("painting three bands along the long axis, in this order:")
+    for index, (name, rgb) in enumerate(primaries, 1):
+        print("   band %d  sending %-5s  bytes %02x %02x %02x" % ((index, name) + rgb))
+    print("\n%d packets, about %.0fs\n" % (len(frames), len(frames) * args.delay))
+
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        sent = 0
+        for frame in frames:
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            sent += 1
+            if sent % 250 == 0:
+                print("  %d/%d" % (sent, len(frames)))
+            await asyncio.sleep(args.delay)
+
+    if not args.saw:
+        print("""
+Now tell it what appeared, first band to last:
+
+    ./matrix_probe.py colortest %s --saw blue,magenta,cyan
+
+Any of: red green blue cyan magenta yellow white. It will work out the
+channel order from that and print the setting to apply.""" % args.address)
+        return
+
+    seen = [name.strip().lower() for name in args.saw.split(",")]
+    if len(seen) != 3:
+        sys.exit("--saw needs three colours, one per band")
+    named = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255),
+             "cyan": (0, 255, 255), "magenta": (255, 0, 255),
+             "yellow": (255, 255, 0), "white": (255, 255, 255),
+             "off": (0, 0, 0), "black": (0, 0, 0)}
+    unknown = [name for name in seen if name not in named]
+    if unknown:
+        sys.exit("do not know the colour %s; use one of: %s"
+                 % (", ".join(unknown), ", ".join(sorted(named))))
+
+    print("\nsent      %s" % "  ".join("%-8s" % n for n, _c in primaries))
+    print("appeared  %s" % "  ".join("%-8s" % n.upper() for n in seen))
+    print()
+
+    # Each band sent exactly one byte set to 255: band 1 was byte 0, band 2
+    # byte 1, band 3 byte 2. So whichever channel lit up tells us where that
+    # byte lands. Reading it off this way gives the setting directly -- solving
+    # for "which order reproduces what I saw" would find the panel's wiring and
+    # then need inverting, which differs for two of the six.
+    destination = []
+    for index, name in enumerate(seen):
+        lit = [channel for channel, value
+               in zip("rgb", named[name]) if value == 255]
+        print("  byte %d (sent as %-5s) lit: %s"
+              % (index, primaries[index][0].lower(),
+                 ", ".join(lit) if lit else "nothing"))
+        destination.append(lit)
+
+    single = [lit[0] for lit in destination if len(lit) == 1]
+    if len(single) == 3 and len(set(single)) == 3:
+        order = "".join(single)
+        print("\nEach byte drives one channel, so the panel's order is %s."
+              % order.upper())
+        print("Apply it:")
+        print('  curl -s -X POST http://127.0.0.1/api/matrix '
+              '-H "Content-Type: application/json" \\')
+        print('    -d \'{"channels":"%s"}\'' % order)
+        print("\nthen run this again: the bands should come out red, green, blue.")
+        return
+
+    print("""
+That is not a plain reordering -- at least one byte lit more than one channel,
+or two bytes lit the same one. Two things do that:
+
+  * the camera. Saturated LEDs photograph badly and red often reads as pink or
+    magenta. Look at the panel directly, in a dim room, and try again.
+  * the panel mixing channels itself, which no channels= setting can fix.
+
+Look with your eyes rather than through a lens before assuming the second.""")
+
 async def do_screens(args):
     """Step through the display buffers, one per pause.
 
@@ -1568,6 +1668,16 @@ def build_parser():
                    help="select this display buffer first (1-9)")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_fill(a)))
+
+    p = sub.add_parser("colortest",
+                       help="find the panel's colour byte order from what it shows")
+    ble_args(p)
+    p.add_argument("--width", type=int, default=96)
+    p.add_argument("--height", type=int, default=16)
+    p.add_argument("--saw", default="",
+                   help="the three colours you saw, e.g. blue,magenta,cyan")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_colortest(a)))
 
     p = sub.add_parser("screens", help="step through the display buffers")
     ble_args(p)

@@ -108,6 +108,9 @@ DEFAULT_MATRIX = {
     # transfer but has two header bytes nobody has written down. See
     # matrix_probe.py png-sweep.
     "text_mode": "pixels",
+    # Which order this panel wants its colour bytes in. Same six orders the
+    # light controllers use; find this one's with matrix_probe.py colortest.
+    "channels": "rgb",
     # Paint the dark pixels too, so a new message erases the last one. Costs
     # width x height packets, so it is off by default.
     "fill_background": False,
@@ -221,6 +224,12 @@ def _matrix(raw) -> dict:
     value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
     mode = str(value.get("text_mode") or "pixels").strip().lower()
     value["text_mode"] = mode if mode in ("pixels", "png") else "pixels"
+    from .matrix import CHANNEL_ORDERS
+    order = str(value.get("channels") or "rgb").strip().lower()
+    if order not in CHANNEL_ORDERS:
+        log.warning("ignoring unknown matrix channel order %r", value.get("channels"))
+        order = "rgb"
+    value["channels"] = order
     value["fill_background"] = bool(value.get("fill_background"))
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
                                     ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),

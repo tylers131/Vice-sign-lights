@@ -35,6 +35,23 @@ log = logging.getLogger("vicelights.matrix")
 # What the panel should do with a message once it has it.  Not every panel
 # supports every mode; a driver maps these onto whatever its firmware has and
 # falls back to "scroll" rather than refusing.
+CHANNEL_ORDERS = ("rgb", "rbg", "grb", "gbr", "brg", "bgr")
+
+
+def apply_channel_order(rgb, order: str = "rgb"):
+    """Reorder a colour's bytes for a panel that wires them differently.
+
+    Same idea, and the same six orders, as the ELK controllers use -- but its
+    own copy, because the two device classes share no other code and importing
+    protocol.py here to borrow one function would tie them together for no
+    reason.
+    """
+    if order == "rgb" or order not in CHANNEL_ORDERS:
+        return tuple(rgb)
+    lookup = dict(zip("rgb", rgb))
+    return tuple(lookup[channel] for channel in order)
+
+
 MODES = ("scroll", "static", "marquee", "flash", "fade")
 DEFAULT_MODE = "scroll"
 
@@ -451,8 +468,19 @@ class IPixel(MatrixDriver):
     def diy_frames(self, on: bool) -> list:
         return [self.packet(self.CMD_DIY, [0x01 if on else 0x00])]
 
+    def channels(self) -> str:
+        """Which order this panel wants its colour bytes in.
+
+        The documented command carries R, G, B -- and this sign's panel does
+        not agree: sent red, green and blue, it showed blue, magenta and cyan.
+        The controllers on the sign needed the same treatment, so the fix is
+        the one already used there rather than a new idea.
+        """
+        order = str(self.config.get("channels") or "rgb").strip().lower()
+        return order if order in ("rgb", "rbg", "grb", "gbr", "brg", "bgr") else "rgb"
+
     def pixel_frame(self, x: int, y: int, rgb) -> bytes:
-        r, g, b = rgb
+        r, g, b = apply_channel_order(tuple(rgb), self.channels())
         return self.packet(self.CMD_PIXEL, [r, g, b, 0xFF, x & 0xFF, y & 0xFF])
 
     def clear_frames(self) -> list:
