@@ -39,6 +39,10 @@ class MatrixRunner:
         self._current_at = None       # wall clock, for the UI
         self._index = -1
         self._last_error = ""
+        self._pages = []              # a long message, cut into panel-width pages
+        self._page = 0
+        self._page_at = None          # monotonic; when to turn the page
+        self._source = None           # the whole message the pages came from
         self._warned_unconfigured = False
 
     # ------------------------------------------------------------------ state
@@ -73,10 +77,15 @@ class MatrixRunner:
         driver = matrix_module.driver_for(matrix)
         queue = self.store.messages()
         with self._lock:
-            current = dict(self._current) if self._current else None
+            # The whole message, not the page fragment on the glass. Someone
+            # reading "now showing" wants to know which of their messages is
+            # up; "BAR IS" is not one of them.
+            current = dict(self._source or self._current or {}) or None
             next_at = self._next_at
             error = self._last_error
             since = self._current_at
+            pages = len(self._pages)
+            page = self._page
         remaining = None
         if next_at is not None and current and (current.get("dwell") or 0) > HOLD:
             remaining = max(0, int(next_at - time.monotonic()))
@@ -103,14 +112,18 @@ class MatrixRunner:
             "queued": len(queue),
             "current": current,
             "showing_since": since,
+            "pages": pages,
+            "page": (page + 1) if pages else 0,
+            "paging": bool(matrix.get("paging", True)),
+            "page_seconds": self._page_seconds(),
             "next_in": remaining,
             "last_error": error or self.unusable(),
         }
 
     # ------------------------------------------------------------------ sends
 
-    def _send(self, message: dict, label: str, hold: float) -> bool:
-        """Encode and queue one message, and record it as what the panel shows.
+    def _paint(self, page: dict, label: str) -> bool:
+        """Put one page on the panel and record it as what is showing.
 
         Recorded on submission rather than on completion, deliberately: the
         dwell is about how long a reader has the message in front of them, and
@@ -119,31 +132,129 @@ class MatrixRunner:
         """
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)
-        # What is on the panel now, so the new message can erase exactly what
-        # the old one lit rather than repainting every pixel or leaving the two
+        # What is on the panel now, so the new page can erase exactly what the
+        # old one lit rather than repainting every pixel or leaving the two
         # superimposed.
         with self._lock:
             previous = dict(self._current) if self._current else None
         try:
-            frames = driver.text_frames(message, previous=previous)
+            frames = driver.text_frames(page, previous=previous)
         except Exception as exc:
             with self._lock:
                 self._last_error = "%s: %s" % (type(exc).__name__, exc)
-            log.exception("could not encode %s", matrix_module.describe_message(message))
+            log.exception("could not encode %s", matrix_module.describe_message(page))
             return False
         job = self.worker.submit_matrix(
             frames, label, coalesce_key="matrix:text",
-            payload={"message_id": message.get("id"), "text": message.get("text")})
+            payload={"message_id": page.get("id"), "text": page.get("text")})
         if job is None:
             with self._lock:
                 self._last_error = self.unusable() or "the panel did not take it"
             return False
         with self._lock:
-            self._current = dict(message)
+            self._current = dict(page)
             self._current_at = time.time()
-            self._next_at = time.monotonic() + max(0.0, hold)
             self._last_error = ""
         return True
+
+    def _page_seconds(self) -> float:
+        """How long one page of a long message stays up.
+
+        Floored at the scheduler's tick: pages turn from that thread, so
+        asking for two seconds on a five-second tick would not give two
+        seconds, it would give five and a status line that lies about it.
+        """
+        matrix = self.store.matrix()
+        try:
+            seconds = float(matrix.get("page_seconds", 5.0))
+        except (TypeError, ValueError):
+            seconds = 5.0
+        return max(5.0, min(120.0, seconds))
+
+    def _split(self, message: dict) -> tuple:
+        """(pages, style) for a message too wide for the panel, else ([], None).
+
+        This is what the panel does instead of scrolling.  Shifting a message
+        one column moves nearly every lit pixel, so a scroll frame costs about
+        as many writes as the message has pixels -- under two frames a second
+        here -- and it never stops, so the panel would hold the radio the
+        twelve controllers share for as long as the message is up.  Paging
+        costs one draw per page and then nothing.
+        """
+        matrix = self.store.matrix()
+        if not matrix.get("paging", True):
+            return [], None
+        plan = matrix_module.paginate(matrix, message.get("text") or "")
+        pages = plan.get("pages") or []
+        if len(pages) < 2:
+            return [], None
+        style = {"scale": plan["scale"], "bold": plan["bold"],
+                 "spacing": plan["spacing"]}
+        return [dict(message, text=page, plan=style) for page in pages], style
+
+    def _send(self, message: dict, label: str, hold: float) -> bool:
+        """Show a message, in pages if it is too wide to fit at once."""
+        pages, _style = self._split(message)
+        first = pages[0] if pages else dict(message)
+        if pages:
+            label = "%s (1/%d)" % (label, len(pages))
+        if not self._paint(first, label):
+            return False
+        seconds = self._page_seconds()
+        now = time.monotonic()
+        with self._lock:
+            self._source = dict(message)
+            self._pages = pages
+            self._page = 0
+            # Hold a paged message at least long enough to read all of it --
+            # otherwise a 20-second dwell on a four-page message would show
+            # page one, page two, and then move on mid-sentence.
+            span = len(pages) * seconds if pages else 0.0
+            self._page_at = (now + seconds) if pages else None
+            self._next_at = now + max(max(0.0, hold), span)
+        if pages:
+            log.info("panel: %d pages at %.0fs each", len(pages), seconds)
+        return True
+
+    def _reset_pages(self):
+        """Called with the lock held."""
+        self._pages = []
+        self._page = 0
+        self._page_at = None
+        self._source = None
+
+    def _turn_page(self) -> bool:
+        """Show the next page of the current message, wrapping at the end.
+
+        Wrapping matters for a standing message: a hand-sent message holds
+        until something replaces it, and stopping on the last page would mean
+        the sign spent the night showing the tail of a sentence.
+        """
+        seconds = self._page_seconds()
+        with self._lock:
+            pages = list(self._pages)
+            index = (self._page + 1) % len(pages) if pages else 0
+        if len(pages) < 2:
+            with self._lock:
+                self._reset_pages()
+            return False
+        ok = self._paint(pages[index],
+                         "panel: page %d/%d" % (index + 1, len(pages)))
+        with self._lock:
+            if ok:
+                self._page = index
+                self._page_at = time.monotonic() + seconds
+            else:
+                # Do not spin on a panel that is not answering; the message
+                # itself will be retried by the playlist.
+                self._page_at = time.monotonic() + seconds
+        return ok
+
+    def _page_due(self) -> bool:
+        with self._lock:
+            at = self._page_at
+            more = len(self._pages) > 1
+        return more and at is not None and time.monotonic() >= at
 
     def send(self, raw: dict, hold: float = None) -> dict:
         """Show a message right now, ahead of whatever the playlist had queued.
@@ -199,6 +310,7 @@ class MatrixRunner:
         """
         with self._lock:
             self._current = None
+            self._reset_pages()
 
     def clear(self) -> bool:
         """Blank the panel, and mean it.
@@ -219,6 +331,7 @@ class MatrixRunner:
             self._current = None
             self._current_at = None
             self._next_at = None
+            self._reset_pages()
         return ok
 
     def power(self, on: bool) -> bool:
@@ -272,7 +385,25 @@ class MatrixRunner:
         matrix = self.store.matrix()
         if not (matrix.get("enabled") and matrix.get("address")):
             return
-        if not matrix.get("playlist"):
+        # Pages turn whether or not the playlist is running: a message sent by
+        # hand is still too long to fit, and its later pages are as much of the
+        # message as the first one.  But the playlist wins when the dwell is
+        # up, or a paged message would wrap forever and nothing else would ever
+        # get a turn.
+        playing = bool(matrix.get("playlist"))
+        with self._lock:
+            dwell_up = self._next_at is not None and time.monotonic() >= self._next_at
+        if self._page_due() and not (playing and dwell_up):
+            if self.worker.busy:
+                # A page cannot turn while the radio is busy elsewhere, and a
+                # page nobody saw is not a page: restart its clock rather than
+                # turning the instant a scene sweep ends.
+                with self._lock:
+                    self._page_at = time.monotonic() + self._page_seconds()
+            else:
+                self._turn_page()
+            return
+        if not playing:
             return
         queue = self.store.messages(enabled_only=True)
         if not queue:

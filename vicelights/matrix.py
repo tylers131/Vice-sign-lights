@@ -317,6 +317,117 @@ def scale_for(config: dict, text: str) -> int:
     return layout_for(config, text)["scale"]
 
 
+def _style(config: dict, scale: int):
+    """(bold, spacing) at a given scale, by the same rule layout_for uses."""
+    want = str((config or {}).get("bold", "auto")).strip().lower()
+    allowed = want not in ("0", "false", "no", "off")
+    forced = want in ("1", "true", "yes", "on")
+    bold = allowed and (scale == 1 or forced)
+    return bold, (BOLD_SPACING if bold else PLAIN_SPACING)
+
+
+def _hard_split(word: str, width: int, spacing: int, scale: int) -> list:
+    """Break a word that cannot fit however it is set. Last resort."""
+    pieces, current = [], ""
+    for char in word:
+        trial = current + char
+        if current and text_width(trial, spacing, scale) > width:
+            pieces.append(current)
+            current = char
+        else:
+            current = trial
+    if current:
+        pieces.append(current)
+    return pieces or [word[:1]]
+
+
+def paginate(config: dict, text: str, max_pages: int = 20) -> dict:
+    """Split a long message into panel-width pages.
+
+    True scrolling is not available here. Shifting a message one column moves
+    nearly every lit pixel, so a frame costs about as many writes as the
+    message has pixels -- under two frames a second on this panel -- and it
+    never stops, so the panel would hold the radio the twelve controllers
+    share. Paging costs one draw per page and then nothing.
+
+    Pages are cut at word boundaries, and the scale is chosen for the message
+    as a whole rather than per page: sized page by page, a two-word page would
+    jump to double height and the next back down, which reads worse than small
+    text held steady.
+    """
+    config = config or {}
+    text = (text or "").strip()
+    try:
+        width = max(4, min(256, int(config.get("width") or 96)))
+        height = max(4, min(256, int(config.get("height") or 16)))
+    except (TypeError, ValueError):
+        width, height = 96, 16
+    if not text:
+        return {"scale": 1, "bold": False, "spacing": PLAIN_SPACING, "pages": []}
+
+    ceiling = 1
+    for scale in range(1, 9):
+        if FONT_HEIGHT * scale > height:
+            break
+        ceiling = scale
+    setting = str(config.get("scale") or "auto").strip().lower()
+    if setting != "auto":
+        try:
+            ceiling = max(1, min(int(setting), ceiling))
+        except (TypeError, ValueError):
+            pass
+
+    # A message that fits is never paged, however small it had to go to fit.
+    # Shrinking "BAR IS OPEN" to one screenful reads better than flipping it
+    # across two, and this is the same answer the panel gave before there was
+    # any paging at all.
+    whole = layout_for(config, text)
+    if whole["fits"]:
+        return {"scale": whole["scale"], "bold": whole["bold"],
+                "spacing": whole["spacing"], "pages": [text]}
+
+    words = text.split()
+    best = None
+    for scale in range(ceiling, 0, -1):
+        bold, spacing = _style(config, scale)
+        if any(text_width(word, spacing, scale) > width for word in words):
+            continue                      # a single word does not fit; go smaller
+        pages, current = [], ""
+        for word in words:
+            trial = (current + " " + word) if current else word
+            if current and text_width(trial, spacing, scale) > width:
+                pages.append(current)
+                current = word
+            else:
+                current = trial
+        if current:
+            pages.append(current)
+        if len(pages) > max_pages:
+            continue
+        # Fewest pages wins, and a tie goes to the bigger text: a page turn
+        # costs a reader the thread of the sentence, so trading one for larger
+        # letters is a bad trade -- but at equal pages, larger is free.
+        if best is None or len(pages) < len(best["pages"]):
+            best = {"scale": scale, "bold": bold, "spacing": spacing,
+                    "pages": pages}
+    if best is not None:
+        return best
+
+    # Even at 1x a word is wider than the panel: break it mid-word rather than
+    # letting it run off the edge.
+    bold, spacing = _style(config, 1)
+    pages = []
+    for word in words:
+        if text_width(word, spacing, 1) > width:
+            pages.extend(_hard_split(word, width, spacing, 1))
+        elif pages and text_width(pages[-1] + " " + word, spacing, 1) <= width:
+            pages[-1] += " " + word
+        else:
+            pages.append(word)
+    return {"scale": 1, "bold": bold, "spacing": spacing,
+            "pages": pages[:max_pages]}
+
+
 def best_scale(text: str, width: int, height: int, spacing: int = 1,
                limit: int = 8) -> int:
     """The largest whole scale at which this message still fits.
@@ -659,8 +770,30 @@ class IPixel(MatrixDriver):
 
         Not "layout" -- that name is taken by the pixel BYTE layout above, and
         having both meant every colour lookup called this instead and crashed.
+
+        A message may carry its own ``plan``, and when it does that wins. That
+        is how a paged message keeps one size across its pages: sized here,
+        page by page, a two-word page would jump to double height and the next
+        back down.
         """
-        return layout_for(self.config, (message or {}).get("text") or "")
+        message = message or {}
+        text = message.get("text") or ""
+        plan = layout_for(self.config, text)
+        override = message.get("plan")
+        if isinstance(override, dict):
+            for key in ("scale", "bold", "spacing"):
+                if key in override and override[key] is not None:
+                    plan[key] = override[key]
+            plan["scale"] = max(1, int(plan["scale"]))
+            plan["spacing"] = max(0, int(plan["spacing"]))
+            plan["bold"] = bool(plan["bold"])
+            plan["width"] = text_width(text, plan["spacing"], plan["scale"])
+            plan["fits"] = plan["width"] <= plan["panel_width"]
+            plan["height"] = (plan["panel_height"]
+                              if self.config.get("stretch", True)
+                              else min(plan["panel_height"],
+                                       FONT_HEIGHT * plan["scale"]))
+        return plan
 
     def stretch(self) -> bool:
         return bool(self.config.get("stretch", True))

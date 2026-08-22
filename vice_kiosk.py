@@ -1421,10 +1421,19 @@ class Panel:
                                strip.centery - self.f_tiny.get_height() // 2))
             y = strip.bottom + int(8 * s)
 
-        # The two that change the machine sit apart from the read-only rows.
+        # The ones that change something sit apart from the read-only rows.
         width = int(150 * s)
         height = int(40 * s)
-        retry = pygame.Rect(self.middle.x, y, width, height)
+        # First, because it is the one you want in a hurry: a sweep of
+        # controllers that are out of range runs for minutes, and everything
+        # else -- a test message, a scene, a retry -- waits behind it.
+        stop = pygame.Rect(self.middle.x, y, width, height)
+        self.rounded(self.screen, stop, over(ORANGE, 0.10), over(ORANGE, 0.45),
+                     radius=height // 2)
+        self.text(self.screen, self.f_small, "STOP NOW", ORANGE, center=stop.center)
+        self.buttons.append(Button(stop, "STOP NOW", "stop-all"))
+
+        retry = pygame.Rect(stop.right + int(10 * s), y, width, height)
         self.rounded(self.screen, retry, CARD, LINE, radius=height // 2)
         self.text(self.screen, self.f_small, "RETRY DOWN", INK, center=retry.center)
         self.buttons.append(Button(retry, "RETRY DOWN", "retry-down"))
@@ -1508,6 +1517,11 @@ class Panel:
                 right.append("next in %ds" % panel["next_in"])
         elif current.get("text"):
             right.append("holding")
+        # A message too wide for the panel is shown a page at a time. Without
+        # this the sign looks like it is repainting the same message over and
+        # over for no reason.
+        if panel.get("pages", 0) > 1:
+            right.append("page %d/%d" % (panel.get("page") or 1, panel["pages"]))
         if panel.get("last_error"):
             right = [panel["last_error"][:40]]
         if right:
@@ -1862,6 +1876,8 @@ class Panel:
                     else self.shelf[name] + page
             elif kind == "retry":
                 self.retry(button.payload)
+            elif kind == "stop-all":
+                self.stop_everything()
             elif kind == "retry-down":
                 down = self.sign.snapshot()["unreachable"]
                 if down:
@@ -1904,6 +1920,35 @@ class Panel:
             _post("/api/system", {"action": action}, timeout=10.0)
         except Exception:
             pass
+
+    def stop_everything(self):
+        """Drop the queue and cancel the write in flight.
+
+        On a thread, like every other request from this screen: the UI thread
+        making a call that can block for seconds is how a touch panel comes to
+        feel broken -- and this is the button people press *because* something
+        is already stuck.
+        """
+        self.sign.say("Stopping\u2026")
+        threading.Thread(target=self._stop_everything, daemon=True).start()
+
+    def _stop_everything(self):
+        """Says what will start something again, because otherwise a scene that
+        rotation puts straight back looks like the button doing nothing.
+        """
+        try:
+            reply = _post("/api/stop", {})
+        except Exception:
+            self.sign.say("Could not reach the sign")
+            return
+        said = reply.get("stopped") or ("cleared %d queued" % reply["cleared"]
+                                        if reply.get("cleared") else "")
+        said = ("Stopped " + said) if said else "Nothing was running"
+        if reply.get("rotation"):
+            said += " -- rotation is still on"
+        elif reply.get("playlist"):
+            said += " -- the message cycle is still on"
+        self.sign.say(said, seconds=4.0)
 
     def retry(self, devices):
         """Re-send to whatever is silent, rather than waiting for the next sweep."""

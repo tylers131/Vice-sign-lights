@@ -99,6 +99,12 @@ DEFAULT_MATRIX = {
     # Cycle the saved messages, one at a time, each for its own dwell.
     "playlist": False,
     "default_dwell": 20.0,
+    # A message wider than the panel is shown a page at a time rather than
+    # scrolled. Scrolling moves nearly every lit pixel every frame, which on
+    # this panel is under two frames a second and never stops -- and the panel
+    # shares its radio with the twelve sign controllers.
+    "paging": True,
+    "page_seconds": 5.0,
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
@@ -288,6 +294,13 @@ def _matrix(raw) -> dict:
         value["default_dwell"] = max(0.0, min(3600.0, float(value.get("default_dwell", 20.0))))
     except (TypeError, ValueError):
         value["default_dwell"] = 20.0
+    value["paging"] = bool(value.get("paging", True))
+    try:
+        # Floored at the scheduler tick: pages turn from that thread, so a
+        # smaller number would not be honoured, it would just be a lie.
+        value["page_seconds"] = max(5.0, min(120.0, float(value.get("page_seconds", 5.0))))
+    except (TypeError, ValueError):
+        value["page_seconds"] = 5.0
     try:
         value["frame_delay"] = max(0.0, min(1.0, float(value.get("frame_delay", 0.02))))
     except (TypeError, ValueError):
@@ -867,6 +880,24 @@ class ConfigStore:
                 names.pop(key, None)
             data["mode_names"] = _mode_names(names)
             return data["mode_names"]
+
+        return self.mutate(apply)
+
+    def update_settings(self, changes: dict) -> dict:
+        """Change settings at runtime, validated by the usual normaliser.
+
+        Only for the handful worth reaching without an editor -- the boot
+        scene above all, because it fires a full twelve-device sweep on every
+        service restart, and during troubleshooting that is a restart every
+        few minutes.
+        """
+        def apply(data):
+            merged = dict(data.get("settings") or DEFAULT_SETTINGS)
+            merged.update(changes or {})
+            cleaned = dict(DEFAULT_SETTINGS)
+            cleaned.update(merged)
+            data["settings"] = cleaned
+            return cleaned
 
         return self.mutate(apply)
 

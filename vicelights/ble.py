@@ -123,6 +123,10 @@ class BleWorker:
         # Disconnects we stopped waiting on. Held so they are not garbage
         # collected mid-flight, discarded as they finish.
         self._pending_disconnects = set()
+        # The write happening right now, so it can be cancelled. Without this,
+        # stopping meant waiting out attempts x connect_timeout -- up to 36s per
+        # unreachable device -- which is exactly when you most want to stop.
+        self._inflight = None
         # When someone last drove the sign by hand. Rotation backs off after it
         # so the sign is not changing under you while you are looking at it.
         # Monotonic, not wall clock -- see note_manual. None, not 0.0: on the
@@ -469,6 +473,30 @@ class BleWorker:
         log.info("cleared %d queued job(s)", cleared)
         return cleared
 
+    def abort(self) -> dict:
+        """Stop everything now: the running job and anything behind it.
+
+        Marking the running job superseded makes _do_writes skip its remaining
+        devices, but the device being written to at this instant would still
+        run out its retries -- 36s at the defaults, and the whole reason for
+        wanting to stop is usually that a device is timing out. So the in-flight
+        write is cancelled too.
+        """
+        cleared = self.clear_queue()
+        stopped = None
+        with self._lock:
+            current = self._current
+            if current is not None and current.state == "running":
+                current.state = "superseded"
+                stopped = current.label
+            task = self._inflight
+        if task is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(_cancel, task)
+        log.warning("aborted: %s%s",
+                    ("running job %r" % stopped) if stopped else "nothing running",
+                    (", %d queued" % cleared) if cleared else "")
+        return {"stopped": stopped, "cleared": cleared}
+
     def _note_device(self, address, ok, detail="", char_uuid=None, elapsed=None):
         state = self.device_state.setdefault(address, {
             "reachable": None, "last_ok": None, "last_error": "",
@@ -574,21 +602,32 @@ class BleWorker:
         backoff = float(settings.get("retry_backoff", 0.8))
         last_error = "no attempt made"
         for attempt in range(1, attempts + 1):
+            task = None
             try:
                 phases = {}
-                char_uuid = await asyncio.wait_for(
+                # Held on the worker so abort() can cancel it. A bare await
+                # cannot be reached from another thread.
+                task = asyncio.ensure_future(
                     self._connect_and_write(address, frames, settings, phases,
                                             char_override=char_override,
                                             frame_delay=frame_delay,
-                                            response=response, batch=batch),
-                    timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
-                )
+                                            response=response, batch=batch))
+                self._inflight = task
+                char_uuid = await asyncio.wait_for(
+                    task, timeout=float(settings.get("connect_timeout", 12.0)) + 15.0)
                 phases["attempts"] = attempt
                 return True, "ok on attempt %d" % attempt, char_uuid, phases
+            except asyncio.CancelledError:
+                # Cancelled on purpose. Not an error, and not something to
+                # retry -- CancelledError is a BaseException, so without this
+                # it would escape and take the worker loop with it.
+                return False, "stopped", None, {}
             except asyncio.TimeoutError:
                 last_error = "timeout (attempt %d/%d)" % (attempt, attempts)
             except Exception as exc:
                 last_error = "%s: %s" % (type(exc).__name__, exc)
+            finally:
+                self._inflight = None
             log.debug("write to %s failed: %s", address, last_error)
             if attempt < attempts:
                 await asyncio.sleep(backoff * (2 ** (attempt - 1)))
@@ -772,6 +811,11 @@ def pack_frames(frames, mtu: int) -> list:
     if current:
         packed.append(bytes(current))
     return packed
+
+
+def _cancel(task):
+    if not task.done():
+        task.cancel()
 
 
 async def get_services(client):

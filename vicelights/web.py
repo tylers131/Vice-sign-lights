@@ -396,6 +396,52 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
 
     # ---------------------------------------------------------------- devices
 
+    @app.route("/api/stop", methods=["POST"])
+    def api_stop():
+        """Stop the running job and everything behind it.
+
+        Distinct from /api/queue/clear, which only drops what has not started.
+        A sweep of unreachable controllers takes minutes, and during
+        troubleshooting that is minutes of not being able to do anything else.
+        """
+        result = worker.abort()
+        # Stopping the job is half the answer to "why does this scene keep
+        # coming back". Rotation puts it back on its next tick, and someone
+        # pressing stop twice deserves to be told that rather than left
+        # guessing at a haunted sign.
+        rotation = store.rotation()
+        if rotation.get("enabled"):
+            result["rotation"] = int(rotation.get("interval_minutes") or 0)
+        # Same for the panel: the playlist re-sends within seconds.
+        if store.matrix().get("playlist"):
+            result["playlist"] = True
+        return jsonify({"ok": True, **result})
+
+    @app.route("/api/settings", methods=["GET", "POST"])
+    def api_settings():
+        """The few settings worth changing without an editor."""
+        if request.method == "POST":
+            body = _body()
+            allowed = ("apply_on_boot", "force_full_brightness", "exit_pattern",
+                       "connect_timeout", "attempts", "retry_backoff",
+                       "inter_device_delay", "cooldown_after", "failure_cooldown",
+                       "scan_seconds", "log_level")
+            changes = {k: body[k] for k in allowed if k in body}
+            if not changes:
+                return _json_error("nothing to change; settable: "
+                                   + ", ".join(allowed))
+            if "apply_on_boot" in changes:
+                name = str(changes["apply_on_boot"] or "").strip()
+                if name and not store.scene(name):
+                    return _json_error("no scene called %r" % name)
+                changes["apply_on_boot"] = name
+            try:
+                store.update_settings(changes)
+            except ConfigError as exc:
+                return _json_error(exc)
+            log.info("settings changed: %s", ", ".join(sorted(changes)))
+        return jsonify({"ok": True, "settings": store.settings})
+
     @app.route("/api/devices", methods=["POST"])
     def api_device_upsert():
         try:
@@ -565,7 +611,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
                        "pixel_layout", "scale", "write_response", "stretch",
-                       "bold", "batch_writes")
+                       "bold", "batch_writes", "paging", "page_seconds")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -684,22 +730,42 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         # draws is the size the message really appears at -- previewing a 5x7
         # glyph for something that goes up 2x is a picture of a different thing.
         plan = matrix.layout_for(panel, text)
+        # Too wide to fit means the panel will page it, so preview the first
+        # page rather than a picture of something that never appears: the whole
+        # message drawn at a scale it will not be drawn at, running off the
+        # edge.  The page list goes back too, so the composer can say so.
+        pages = []
+        shown = text
+        if panel.get("paging", True):
+            paged = matrix.paginate(panel, text)
+            if len(paged.get("pages") or []) > 1:
+                pages = paged["pages"]
+                shown = pages[0]
+                plan = dict(plan, scale=paged["scale"], bold=paged["bold"],
+                            spacing=paged["spacing"])
+                plan["width"] = matrix.text_width(shown, paged["spacing"],
+                                                  paged["scale"])
+                plan["height"] = (height if panel.get("stretch", True)
+                                  else min(height,
+                                           matrix.FONT_HEIGHT * paged["scale"]))
         scale, drawn = plan["scale"], plan["width"]
         stretch = bool(panel.get("stretch", True))
         tall = plan["height"]
         return jsonify({
             "ok": True,
             "text": text,
+            "showing": shown,
+            "pages": pages,
             "width": drawn,
             "height": tall,
             "scale": scale,
             "stretch": stretch,
             "fits": drawn <= width,
             "bold": plan["bold"],
-            "rows": matrix.render_bitmap(text, height=tall, scale=scale,
+            "rows": matrix.render_bitmap(shown, height=tall, scale=scale,
                                          stretch=stretch, spacing=plan["spacing"],
                                          bold=plan["bold"]),
-            "ascii": matrix.preview(text),
+            "ascii": matrix.preview(shown),
             "panel": {"width": width, "height": height},
         })
 
@@ -739,7 +805,7 @@ def _slim_panel(panel: dict) -> dict:
     showing" is forty times the bytes for none of the information.
     """
     keep = ("enabled", "configured", "name", "address", "playlist", "queued",
-            "current", "next_in", "last_error", "brightness")
+            "current", "next_in", "last_error", "brightness", "pages", "page")
     return {key: panel.get(key) for key in keep}
 
 

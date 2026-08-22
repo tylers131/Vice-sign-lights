@@ -190,7 +190,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <h2>Queue</h2>
     <div id="jobs"><p class="muted">Nothing queued.</p></div>
     <button class="btn ghost sm" style="margin-top:10px;width:100%"
-            onclick="post('/api/queue/clear',{}).then(refreshStatus)">Clear queued jobs</button>
+            onclick="stopEverything()">Stop everything</button>
   </div>
 </section>
 
@@ -827,12 +827,13 @@ function refreshStatus(){
       var changed = (PANEL.playlist !== j.panel.playlist)
                  || (PANEL.queued !== j.panel.queued)
                  || ((PANEL.current||{}).id !== (j.panel.current||{}).id);
-      ["playlist","queued","current","next_in","last_error","brightness"]
+      ["playlist","queued","current","next_in","last_error","brightness",
+       "pages","page"]
         .forEach(function(k){ PANEL[k] = j.panel[k]; });
       if(changed) renderPanel(PANEL);
       else if($("panelCycleMeta") && PANEL.configured){
         $("panelCycleMeta").textContent = PANEL.playlist
-          ? ((PANEL.current ? 'showing "'+PANEL.current.text+'"' : "starting...")
+          ? (panelShowing(PANEL)
              + (PANEL.next_in!=null ? " \u00b7 next in "+PANEL.next_in+"s" : ""))
           : (PANEL.queued ? PANEL.queued+" message"+(PANEL.queued===1?"":"s")
                             +" saved, not cycling"
@@ -854,6 +855,26 @@ function refreshStatus(){
        && $("tab-system").classList.contains("on")) loadLog();
   }).catch(function(){ $("hdrQueue").textContent="offline";
                        $("hdrQueue").className="pill bad"; });
+}
+function stopEverything(){
+  /* Not just the queue: a sweep of unreachable controllers runs for minutes,
+     and waiting that out is what makes troubleshooting painful. This cancels
+     the write in flight too. */
+  post("/api/stop").then(function(j){
+    if(!j.ok) return;
+    var said = j.stopped ? ("Stopped " + j.stopped
+                           + (j.cleared ? ", cleared " + j.cleared : ""))
+                        : (j.cleared ? "Cleared " + j.cleared + " queued"
+                                     : "Nothing was running");
+    /* Stopping the job is not stopping the cause. Rotation and the message
+       playlist both start something again on their own, which reads as the
+       stop button not working. */
+    if(j.rotation) said += " — rotation is on, next scene in up to "
+                           + j.rotation + " min (Timing tab)";
+    else if(j.playlist) said += " — the message cycle is still on";
+    toast(said);
+    refreshStatus();
+  });
 }
 function renderJobs(jobs){
   var live = jobs.filter(function(j){ return j.state==="running"||j.state==="queued"; });
@@ -1094,7 +1115,7 @@ function renderPanel(p){
 
   $("panelCycleBtn").textContent = p.playlist ? "Stop" : "Start";
   $("panelCycleMeta").textContent = p.playlist
-    ? ((p.current ? 'showing "'+p.current.text+'"' : "starting...")
+    ? (panelShowing(p)
        + (p.next_in!=null ? " · next in "+p.next_in+"s" : ""))
     : (p.queued ? p.queued+" message"+(p.queued===1?"":"s")+" saved, not cycling"
                 : "nothing queued yet");
@@ -1118,6 +1139,17 @@ function renderPanel(p){
       + '<button class="btn sm bad" onclick="deleteMsg(\''+m.id+'\')">&times;</button>'
       + '</div>';
   }).join("") : '<p class="muted">Nothing queued. Type something above and add it.</p>';
+}
+
+/* One line for two callers -- the full render and the two-second poll -- so
+   the cycle meta cannot say two different things depending on which drew it.
+   The page counter is the part worth having: a message flipping between pages
+   otherwise looks like the panel resending the same thing over and over. */
+function panelShowing(p){
+  if(!p.current) return "starting...";
+  var line = 'showing "' + p.current.text + '"';
+  if(p.pages > 1) line += " \u00b7 page " + p.page + "/" + p.pages;
+  return line;
 }
 
 /* Preview comes from the Pi, not from a browser font: the panel renders our
@@ -1148,7 +1180,13 @@ function previewMessage(){
                   + "\u00d7" + high + " panel"];
       if(j.scale > 1) bits.push(j.scale + "\u00d7 size");
       if(j.bold) bits.push("bold");
-      if(!j.fits){
+      var pages = j.pages || [];
+      if(pages.length > 1){
+        /* Say it before it goes up, not after: the preview above is page one
+           of several, and someone reading it would otherwise think the rest of
+           their message had been thrown away. */
+        bits.push(pages.length + " pages, one at a time");
+      } else if(!j.fits){
         bits.push("too long — trim it to fit");
       } else if(j.scale === 1 && tall * 2 <= high && j.text){
         bits.push("shorter text would go bigger");

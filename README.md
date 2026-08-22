@@ -1502,6 +1502,7 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/power` | `{target, on}` |
 | POST | `/api/scene/apply` | `{scene}` |
 | POST | `/api/queue/clear` | Drop everything still queued |
+| POST | `/api/stop` | Stop now: drops the queue *and* cancels the write in flight |
 | POST | `/api/devices` | Create/update `{address, name, groups, enabled}` |
 | DELETE | `/api/devices/<addr>` | |
 | POST | `/api/devices/<addr>/test` | Blink it green |
@@ -1516,7 +1517,7 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/rotation/next` | Skip to the next scene now |
 | GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |
 | POST | `/api/rotation/next` | Skip to the next scene now |
-| GET/POST | `/api/matrix` | Panel settings: `{enabled, address, name, family, char_uuid, playlist, width, height, default_dwell, chunk, frame_delay, commands}` |
+| GET/POST | `/api/matrix` | Panel settings: `{enabled, address, name, family, char_uuid, playlist, width, height, default_dwell, paging, page_seconds, chunk, frame_delay, commands}` |
 | POST | `/api/matrix/send` | Say it now: `{text, color, mode, speed, dwell}` |
 | POST | `/api/matrix/next` | Skip to the next queued message |
 | POST | `/api/matrix/clear` | Blank the panel (also stops the cycle) |
@@ -1526,7 +1527,8 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | DELETE | `/api/matrix/messages/<id>` | |
 | POST | `/api/matrix/messages/<id>/send` | Put that one up now |
 | POST | `/api/matrix/messages/order` | `{ids: [...]}` — the list order is the play order |
-| GET | `/api/matrix/preview?text=` | The bitmap the panel will get, and whether it fits |
+| GET | `/api/matrix/preview?text=` | The bitmap the panel will get, whether it fits, and its pages if it does not |
+| GET/POST | `/api/settings` | Server-wide settings, e.g. `{apply_on_boot}` |
 | GET/POST | `/api/time` | `{iso: "2026-08-28T19:30:00"}` or `{epoch: ...}` |
 | GET/PUT | `/api/config` | Whole config |
 | GET | `/api/log?n=200` | Log tail |
@@ -1734,6 +1736,49 @@ Protocol details from the community's reverse engineering of iPixel Color:
 Corroborated against this panel: the power and brightness bytes above are what
 it acknowledged with status `01`.
 
+### Long messages: pages, not scrolling
+
+A message wider than 96 pixels is shown a page at a time, not scrolled. That
+is a measurement, not a preference:
+
+* Shifting a message one column moves nearly every lit pixel, so a scroll frame
+  costs about as many packets as the message has pixels. Batched at MTU 247
+  that is ~29 acknowledged writes a frame, ~20ms each: **1.7 frames a second**.
+* Scrolling never stops. The panel and the twelve controllers share one
+  antenna, so a permanently scrolling panel means the lights cannot be driven
+  at all -- the same contention that made the panel unreachable while the
+  access point was on 2.4 GHz.
+
+Paging costs one draw per page and then nothing, and it uses the same
+erase-diff as any other message change, so a page turn writes only the pixels
+that differ between the two pages.
+
+Pages are cut at word boundaries. **A message that fits is never paged**,
+however small it had to be set to fit: shrinking "BAR IS OPEN" onto one screen
+reads better than flipping it across two. When it will not fit at any size the
+scale is chosen for the message as a whole -- fewest pages first, ties to the
+larger text -- and every page is drawn at that one size, so the panel does not
+jump between heights mid-sentence. A word too wide even at 1x is broken
+mid-word rather than run off the edge.
+
+The composer says so before the message goes up (`4 pages, one at a time`), and
+both UIs show `page 2/4` while it cycles. Pages do not turn while the radio is
+busy with a scene sweep, and the timer restarts when it frees up -- a page
+nobody saw is not a page. `paging: false` sends the whole message in one draw
+instead.
+
+### Stopping something mid-flight
+
+A twelve-device sweep to controllers that are out of range takes about seven
+minutes to time out, and until this there was no way to interrupt it: clearing
+the queue dropped what had not started but left the current job running.
+
+**Stop everything** on the *Control* tab (`POST /api/stop`) drops the queue and
+cancels the BLE write in flight, so a sweep ends in the time it takes to abort
+one connection rather than in minutes. Use it when a scene is in the way of
+troubleshooting -- and note that a scene that keeps coming back is rotation:
+turn that off on the *Timing* tab, or the next tick will start it again.
+
 ### Pairing it
 
 These panels are sold under a dozen brands with no common protocol, so the
@@ -1806,9 +1851,11 @@ laptop with no radio and no bleak.
   "address": "AA:BB:CC:DD:EE:FF",
   "family": "auto",          // auto | idotmatrix | raw
   "char_uuid": "",           // forced; never guessed at, unlike the controllers
-  "width": 32, "height": 16,
+  "width": 96, "height": 16, // THIS PANEL'S REAL PIXEL COUNT, not a preference
   "playlist": false,         // cycle the saved messages
   "default_dwell": 20.0,
+  "paging": true,            // show a too-wide message a page at a time
+  "page_seconds": 5.0,       // how long each page stays up (floor: the 5s tick)
   "chunk": 20,               // payload bytes per write at the default 23-byte MTU
   "commands": {}             // hex, for family "raw"
 },
