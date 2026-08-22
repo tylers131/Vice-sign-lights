@@ -616,6 +616,43 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
+            # Same reasoning as the address below, and it has now cost real
+            # time at the sign: a bitmap_order the running code did not know
+            # was quietly replaced with the default, the API answered 200, and
+            # the setting that had just been worked out from the panel was
+            # thrown away without a word. The store normalising a value it
+            # reads from disk is right; doing it to something a person just
+            # typed is not.
+            choices = {
+                "text_mode": ("pixels", "png", "native"),
+                "pixel_layout": matrix.PIXEL_LAYOUTS,
+                "bitmap_order": matrix.BITMAP_ORDERS,
+                "text_font": tuple(sorted(matrix.TEXT_FONTS)),
+                "bold": ("auto", "true", "false"),
+            }
+            for key, allowed in choices.items():
+                if key not in changes:
+                    continue
+                value = str(changes[key]).strip().lower()
+                if value not in allowed:
+                    return _json_error(
+                        "%s must be one of: %s (not %r)"
+                        % (key, ", ".join(allowed), changes[key]))
+                changes[key] = value
+            if "family" in changes:
+                family = str(changes["family"]).strip().lower()
+                if family != "auto" and family not in matrix.FAMILIES:
+                    return _json_error(
+                        "family must be auto or one of: %s (not %r)"
+                        % (", ".join(sorted(matrix.FAMILIES)), changes["family"]))
+                changes["family"] = family
+            if "scale" in changes:
+                scale = str(changes["scale"]).strip().lower()
+                if scale != "auto" and not (scale.isdigit() and 1 <= int(scale) <= 8):
+                    return _json_error("scale must be auto or 1-8 (not %r)"
+                                       % changes["scale"])
+                changes["scale"] = scale
+
             # The store drops an unparseable address and carries on, which is
             # right when it is loading a config file it did not write -- but
             # here it would answer 200 to "pair this panel" and leave the panel

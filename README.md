@@ -1985,6 +1985,19 @@ sudo ./matrix_probe.py scan               # what is advertising; flags candidate
 sudo ./matrix_probe.py info AA:BB:CC:DD:EE:FF   # GATT tree + fingerprint
 ```
 
+**A panel setting the server does not recognise is refused, not replaced.**
+`_matrix()` normalises anything unusable back to a default, which is right for
+a config file read off disk and wrong for a value someone just worked out from
+the panel: an early `bitmap_order` that the running code predated was silently
+swapped for the default, the API answered 200, and the setting was gone
+without a word -- so the same wrong picture came back and the evidence pointed
+at the wrong thing. `POST /api/matrix` now checks the enumerated fields and
+says what the choices are:
+
+```
+{"ok": false, "error": "bitmap_order must be one of: msb, lsb-swap, ... (not 'lsb-twist')"}
+```
+
 `info` prints the family it matched and the exact `curl` to pair it. Then test
 before trusting it:
 
