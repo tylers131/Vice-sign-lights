@@ -997,14 +997,18 @@
     "name": "",
     "family": "auto",
     "char_uuid": "",
-    "width": 32,
+    "width": 96,
     "height": 16,
     "brightness": 100,
     "playlist": false,
     "default_dwell": 20.0,
     "chunk": 20,
     "frame_delay": 0.02,
-    "commands": {}
+    "commands": {},
+    "text_mode": "pixels",
+    "fill_background": false,
+    "png_opt": 0,
+    "png_buffer": 0
   },
   "messages": []
 }
