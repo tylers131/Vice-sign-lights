@@ -1686,10 +1686,24 @@ panel its own test harness.
 | Power on / off | `05 00 07 01 01` / `05 00 07 01 00` |
 | Brightness (1-100) | `05 00 04 80 <level>` |
 | DIY mode on / off | `05 00 04 01 01` / `05 00 04 01 00` |
-| Set one pixel | `0A 00 05 01 <r> <g> <b> FF <x> <y>` |
+| Set one pixel | `0A 00 05 01 FF <g> <r> <b> <x> <y>` — see below |
 | Select screen buffer | `05 00 07 80 <1-9>` |
 | PNG image | type `02 00`, extended header, CRC32 |
 | GIF | type `03 00`, same shape |
+
+**The set-pixel byte order is not what the protocol writeups say.** They give
+`[R][G][B][A]`. Measured on this panel, one byte at a time:
+
+| byte 4 alone | byte 5 alone | byte 6 alone | byte 7 alone |
+| --- | --- | --- | --- |
+| nothing | green | red | blue |
+
+So it is `[A][G][R][B]` — `pixel_layout: "agrb"`, which is the default. The
+giveaway was that blue lit for *every* colour sent: the only byte that was 255
+every time was the alpha, so blue was coming from there. No reordering of the
+first three bytes can produce that, which is why this is a layout setting and
+not a channel-order one. `./matrix_probe.py colortest <address>` derives it by
+setting one byte at a time and asking which channel lit.
 
 Text has two routes, and the config picks between them with `text_mode`:
 

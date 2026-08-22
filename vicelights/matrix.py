@@ -35,21 +35,27 @@ log = logging.getLogger("vicelights.matrix")
 # What the panel should do with a message once it has it.  Not every panel
 # supports every mode; a driver maps these onto whatever its firmware has and
 # falls back to "scroll" rather than refusing.
-CHANNEL_ORDERS = ("rgb", "rbg", "grb", "gbr", "brg", "bgr")
+# Where the four colour bytes of a set-pixel command actually go. Four
+# characters, one per byte: r, g, b, and a for one that does nothing visible.
+#
+# The published protocol says [R][G][B][A]. This sign's panel does not agree,
+# and the evidence is unambiguous: sent pure red, green and blue it showed
+# blue, cyan and magenta -- blue lit every time, and the only byte set to 255
+# every time was the alpha. So blue comes from the fourth byte, green from the
+# second, red from the third, and the first does nothing. That is AGRB.
+#
+# This is a layout, not a channel order, and the difference matters: no
+# permutation of the first three bytes can move a value into the fourth.
+PIXEL_LAYOUTS = ("rgba", "agrb", "argb", "abgr", "grba", "bgra", "rgab", "gbra")
+DEFAULT_PIXEL_LAYOUT = "agrb"
 
 
-def apply_channel_order(rgb, order: str = "rgb"):
-    """Reorder a colour's bytes for a panel that wires them differently.
-
-    Same idea, and the same six orders, as the ELK controllers use -- but its
-    own copy, because the two device classes share no other code and importing
-    protocol.py here to borrow one function would tie them together for no
-    reason.
-    """
-    if order == "rgb" or order not in CHANNEL_ORDERS:
-        return tuple(rgb)
-    lookup = dict(zip("rgb", rgb))
-    return tuple(lookup[channel] for channel in order)
+def pixel_bytes(rgb, layout: str = DEFAULT_PIXEL_LAYOUT, alpha: int = 0xFF):
+    """The four colour bytes of a set-pixel command, in this panel's order."""
+    if layout not in PIXEL_LAYOUTS:
+        layout = DEFAULT_PIXEL_LAYOUT
+    source = {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": alpha}
+    return [source[channel] for channel in layout]
 
 
 MODES = ("scroll", "static", "marquee", "flash", "fade")
@@ -468,20 +474,15 @@ class IPixel(MatrixDriver):
     def diy_frames(self, on: bool) -> list:
         return [self.packet(self.CMD_DIY, [0x01 if on else 0x00])]
 
-    def channels(self) -> str:
-        """Which order this panel wants its colour bytes in.
-
-        The documented command carries R, G, B -- and this sign's panel does
-        not agree: sent red, green and blue, it showed blue, magenta and cyan.
-        The controllers on the sign needed the same treatment, so the fix is
-        the one already used there rather than a new idea.
-        """
-        order = str(self.config.get("channels") or "rgb").strip().lower()
-        return order if order in ("rgb", "rbg", "grb", "gbr", "brg", "bgr") else "rgb"
+    def layout(self) -> str:
+        order = str(self.config.get("pixel_layout")
+                    or DEFAULT_PIXEL_LAYOUT).strip().lower()
+        return order if order in PIXEL_LAYOUTS else DEFAULT_PIXEL_LAYOUT
 
     def pixel_frame(self, x: int, y: int, rgb) -> bytes:
-        r, g, b = apply_channel_order(tuple(rgb), self.channels())
-        return self.packet(self.CMD_PIXEL, [r, g, b, 0xFF, x & 0xFF, y & 0xFF])
+        return self.packet(self.CMD_PIXEL,
+                           pixel_bytes(tuple(rgb), self.layout())
+                           + [x & 0xFF, y & 0xFF])
 
     def clear_frames(self) -> list:
         """Paint the whole panel in the background colour.

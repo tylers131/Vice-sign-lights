@@ -563,7 +563,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "playlist", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
-                       "channels")
+                       "pixel_layout")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
