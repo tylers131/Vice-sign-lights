@@ -85,8 +85,14 @@ class MatrixRunner:
             "configured": self.configured(),
             "address": matrix.get("address", ""),
             "name": matrix.get("name", ""),
+            # Two different things: which driver is in use, and what the
+            # config asked for. A panel set to "auto" that fell back to a guess
+            # must not look like a panel someone chose that driver for.
             "family": driver.key,
             "family_label": driver.label,
+            "family_setting": matrix.get("family", "auto"),
+            "scale": matrix.get("scale", "auto"),
+            "stretch": bool(matrix.get("stretch", True)),
             "char_uuid": driver.characteristic() or "",
             "capabilities": driver.capabilities,
             "brightness": matrix.get("brightness", 100),

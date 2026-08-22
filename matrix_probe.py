@@ -30,6 +30,7 @@ import asyncio
 import json
 import os
 import re
+import time
 import struct
 import sys
 
@@ -208,6 +209,36 @@ async def do_scan(args):
 # until the timeout -- the failure looks like a radio problem and is not one.
 # Finding it first also turns "not advertising" into its own answer, which is a
 # different problem with a different fix.
+
+
+async def _stream(client, char, frames, args, label="writing"):
+    """Send many packets as few writes as the MTU allows, and report the rate.
+
+    An acknowledged write costs a round trip whether it carries one ten-byte
+    packet or twenty, so combining them is most of the difference between a
+    message appearing in five seconds and in one. Whole packets only -- the
+    protocol is length-prefixed, so a device can take several from one write,
+    but a packet split across two is garbage.
+    """
+    from vicelights.ble import attribute_mtu, pack_frames
+
+    ack = _ack(args)
+    mtu = attribute_mtu(client)
+    writes = frames if getattr(args, "no_batch", False) else pack_frames(frames, mtu)
+    print("%s: %d packet(s) in %d write(s), MTU %d%s"
+          % (label, len(frames), len(writes), mtu,
+             "" if len(writes) == len(frames)
+             else "  (%.1fx fewer round trips)" % (len(frames) / len(writes))))
+    started = time.monotonic()
+    for index, chunk in enumerate(writes, 1):
+        await client.write_gatt_char(char, chunk, response=ack)
+        if index % 50 == 0:
+            print("  %d/%d" % (index, len(writes)))
+        if args.delay:
+            await asyncio.sleep(args.delay)
+    elapsed = time.monotonic() - started
+    print("  %d write(s) in %.1fs (%.0f/s)"
+          % (len(writes), elapsed, len(writes) / elapsed if elapsed else 0))
 
 
 def _ack(args) -> bool:
@@ -1087,13 +1118,7 @@ async def do_fill(args):
     holder = connected(args.address, args.timeout, args.retries)
     async with holder as client:
         listening = await _listen_all(client, replies)
-        sent = 0
-        for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
-            sent += 1
-            if sent % 250 == 0:
-                print("  %d/%d" % (sent, len(frames)))
-            await asyncio.sleep(args.delay)
+        await _stream(client, IPixel.write_uuid, frames, args, "painting")
         await asyncio.sleep(1.5)
         for characteristic in listening:
             try:
@@ -1166,13 +1191,7 @@ async def do_say(args):
 
     holder = connected(args.address, args.timeout, args.retries)
     async with holder as client:
-        sent = 0
-        for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
-            sent += 1
-            if sent % 200 == 0:
-                print("  %d/%d" % (sent, len(frames)))
-            await asyncio.sleep(args.delay)
+        await _stream(client, IPixel.write_uuid, frames, args, "drawing")
     print("done -- it stays up until something replaces it.")
 
 
@@ -1213,13 +1232,7 @@ async def do_colortest(args):
 
     holder = connected(args.address, args.timeout, args.retries)
     async with holder as client:
-        sent = 0
-        for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
-            sent += 1
-            if sent % 400 == 0:
-                print("  %d/%d" % (sent, len(frames)))
-            await asyncio.sleep(args.delay)
+        await _stream(client, IPixel.write_uuid, frames, args, "painting")
 
     if not args.saw:
         print("""
@@ -1673,8 +1686,11 @@ def build_parser():
                        help="connection attempts before giving up (default 2)")
         p.add_argument("--no-ack", action="store_true",
                        help="unacknowledged writes: faster, and drops packets")
-        p.add_argument("--delay", type=float, default=0.02,
-                       help="seconds between frames (default 0.02)")
+        p.add_argument("--no-batch", action="store_true",
+                       help="one packet per write, for a panel that needs it")
+        p.add_argument("--delay", type=float, default=0.0,
+                       help="extra seconds between writes; acknowledged writes "
+                            "already pace themselves, so 0")
         p.add_argument("-c", "--char", help="characteristic UUID to write to")
         p.add_argument("--family", choices=sorted(M.FAMILIES) + ["auto"], default="auto")
         p.add_argument("--name", default="", help="advertised name, to help auto-detect")

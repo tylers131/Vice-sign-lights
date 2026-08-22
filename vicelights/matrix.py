@@ -439,7 +439,14 @@ class MatrixDriver:
         return self.config.get("char_uuid") or self.write_uuid
 
     # -- encoders; a driver that cannot do one of these returns []
-    def text_frames(self, message: dict) -> list:
+    def text_frames(self, message: dict, previous: dict = None) -> list:
+        """Frames to show ``message``.
+
+        ``previous`` is what the panel is showing now, for drivers that can
+        erase only what changed. Part of the interface rather than one
+        driver's extra: the caller passes it every time, and a driver that
+        ignores it must still accept it.
+        """
         raise NotImplementedError
 
     def power_frames(self, on: bool) -> list:
@@ -732,7 +739,7 @@ class RawDriver(MatrixDriver):
     def clear_frames(self) -> list:
         return self._sequence("clear") or (self.power_frames(False) + self.power_frames(True))
 
-    def text_frames(self, message: dict) -> list:
+    def text_frames(self, message: dict, previous: dict = None) -> list:
         """Prefix and suffix from the capture, our bitmap in the middle.
 
         A capture gives the framing; it cannot give the message the user has
@@ -794,8 +801,17 @@ def driver_for(matrix: dict) -> MatrixDriver:
         family = identify(matrix.get("name"), [matrix.get("char_uuid") or ""]) or ""
     cls = FAMILIES.get(family)
     if cls is None:
-        # Unrecognised, but a captured command set may still be present.
-        cls = RawDriver
+        # Unrecognised. A captured command set may still be present, so the raw
+        # driver is the right fallback -- but only when there is something for
+        # it to replay. With neither a family nor a capture, guessing at the
+        # commonest family beats a driver that can do nothing at all, and the
+        # UI shows which was chosen either way.
+        if matrix.get("commands") or matrix.get("char_uuid"):
+            cls = RawDriver
+        else:
+            log.debug("no family matched %r; assuming %s",
+                      matrix.get("name"), IPixel.label)
+            cls = IPixel
     return cls(matrix)
 
 

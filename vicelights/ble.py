@@ -390,7 +390,8 @@ class BleWorker:
                           frame_delay=matrix.get("frame_delay", 0.02),
                           # Every pixel matters here: one dropped write is one
                           # dark LED in the middle of a letter.
-                          response=matrix.get("write_response", True))
+                          response=matrix.get("write_response", True),
+                          batch=matrix.get("batch_writes", True))
         job = Job("matrix", label, [item],
                   coalesce_key=coalesce_key or "matrix",
                   payload=dict(payload or {}))
@@ -405,7 +406,7 @@ class BleWorker:
         return self._register(job)
 
     def _item(self, address, frames, state=None, name=None, char_uuid=None,
-              frame_delay=None, response=None):
+              frame_delay=None, response=None, batch=False):
         """One device's worth of work.
 
         ``name`` and ``char_uuid`` exist for devices that are not in the
@@ -430,6 +431,8 @@ class BleWorker:
             item["frame_delay"] = float(frame_delay)
         if response is not None:
             item["response"] = bool(response)
+        if batch:
+            item["batch"] = True
         return item
 
     # ---------------------------------------------------------------- status
@@ -528,7 +531,8 @@ class BleWorker:
                 probing=self._is_known_bad(item["address"], settings),
                 char_override=item.get("char_uuid"),
                 frame_delay=item.get("frame_delay"),
-                response=item.get("response"))
+                response=item.get("response"),
+                batch=item.get("batch", False))
             elapsed = time.time() - started
             item["status"] = "ok" if ok else "failed"
             item["detail"] = detail
@@ -562,7 +566,8 @@ class BleWorker:
                     and state.get("consecutive_failures", 0) >= threshold)
 
     async def _write_device(self, address, frames, settings, probing=False,
-                            char_override=None, frame_delay=None, response=None):
+                            char_override=None, frame_delay=None, response=None,
+                            batch=False):
         # A device that just came off cooldown gets one cheap probe rather than
         # the full retry budget: if it is still dead, that is 12s wasted, not 60.
         attempts = 1 if probing else int(settings.get("attempts", 3))
@@ -575,7 +580,7 @@ class BleWorker:
                     self._connect_and_write(address, frames, settings, phases,
                                             char_override=char_override,
                                             frame_delay=frame_delay,
-                                            response=response),
+                                            response=response, batch=batch),
                     timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
                 )
                 phases["attempts"] = attempt
@@ -591,7 +596,7 @@ class BleWorker:
 
     async def _connect_and_write(self, address, frames, settings, phases=None,
                                  char_override=None, frame_delay=None,
-                                 response=None):
+                                 response=None, batch=False):
         """Connect, write, disconnect -- timing each phase into ``phases``.
 
         The split matters: connect and discover are ATT round trips gated by the
@@ -639,6 +644,8 @@ class BleWorker:
             # flow-controlled and cannot do that, so a caller that needs every
             # byte to land asks for one.
             acknowledged = (not without_response) if response is None else bool(response)
+            if batch:
+                frames = pack_frames(frames, attribute_mtu(client))
             mark = time.monotonic()
             for index, frame in enumerate(frames):
                 await asyncio.wait_for(
@@ -720,6 +727,51 @@ class BleWorker:
         job.result = found
         log.info("scan finished: %d device(s), %d look like ELK-BLEDOM",
                  len(found), sum(1 for e in found if e["is_elk"]))
+
+
+def attribute_mtu(client, fallback=23) -> int:
+    """The negotiated ATT MTU, or a safe assumption.
+
+    bleak has exposed this under two names across versions, and on some
+    backends not at all. Guessing high would silently truncate every write, so
+    an unknown MTU means the 23-byte minimum every device must support.
+    """
+    for name in ("mtu_size", "mtu"):
+        value = getattr(client, name, None)
+        if isinstance(value, int) and value >= 23:
+            return value
+    return fallback
+
+
+def pack_frames(frames, mtu: int) -> list:
+    """Combine whole frames into as few writes as the MTU allows.
+
+    Only ever whole frames: this protocol is length-prefixed, so a device
+    reading a stream can take several packets from one write -- but a packet
+    split across two writes would be read as garbage. Three bytes of every MTU
+    go to the ATT header.
+
+    Worth doing because an acknowledged write costs a round trip regardless of
+    how full it is. Drawing text a pixel at a time is hundreds of ten-byte
+    packets, and at the 23-byte minimum that is already two per write; a device
+    that negotiates a larger MTU gets proportionally faster for free.
+    """
+    room = max(20, int(mtu) - 3)
+    packed, current = [], bytearray()
+    for frame in frames:
+        if len(frame) > room:
+            if current:
+                packed.append(bytes(current))
+                current = bytearray()
+            packed.append(bytes(frame))       # too big to combine; send alone
+            continue
+        if len(current) + len(frame) > room:
+            packed.append(bytes(current))
+            current = bytearray()
+        current += frame
+    if current:
+        packed.append(bytes(current))
+    return packed
 
 
 async def get_services(client):

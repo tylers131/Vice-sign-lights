@@ -307,6 +307,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "next_runs": scheduler.next_runs(),
             "rotation": scheduler.rotation.status(),
             "panel": scheduler.panel.status(),
+            "panel_families": matrix.family_names(),
             "time": timekeeper.info(),
             "modes": protocol.mode_catalog(store.mode_names()),
             "queue": {"queued": status["queued"], "busy": status["busy"],

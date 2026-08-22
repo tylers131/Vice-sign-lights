@@ -108,6 +108,13 @@ DEFAULT_MATRIX = {
     # cannot drop; they cost a round trip each, so the panel draws a little
     # slower and completely.
     "write_response": True,
+    # Combine whole packets into one BLE write when they fit. An acknowledged
+    # write costs a round trip whether it carries ten bytes or two hundred, and
+    # drawing text a pixel at a time is hundreds of ten-byte packets -- so this
+    # is most of the difference between a message appearing in five seconds and
+    # in one. Turn it off if a panel will not read more than one packet per
+    # write.
+    "batch_writes": True,
     # With acknowledged writes the radio already paces itself, so this can be
     # 0. It is the gap BETWEEN packets, on top of the acknowledgement.
     "frame_delay": 0.0,
@@ -260,6 +267,7 @@ def _matrix(raw) -> dict:
     value["pixel_layout"] = layout
     value["fill_background"] = bool(value.get("fill_background"))
     value["write_response"] = bool(value.get("write_response", True))
+    value["batch_writes"] = bool(value.get("batch_writes", True))
     value["stretch"] = bool(value.get("stretch", True))
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
                                     ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),

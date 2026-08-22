@@ -368,6 +368,20 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div class="card">
       <h2>Panel</h2>
       <div id="panelInfo" class="muted"></div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Panel type</label>
+          <select id="panelFamily" onchange="setPanelFamily()"></select>
+        </div>
+        <div>
+          <label>Text size</label>
+          <select id="panelScale" onchange="setPanelScale()">
+            <option value="auto">As big as fits</option>
+            <option value="1">Always small (1×)</option>
+            <option value="2">Always large (2×)</option>
+          </select>
+        </div>
+      </div>
       <div id="panelBrightRow">
         <label>Brightness <b id="panelBrightVal">100%</b></label>
         <input type="range" id="panelBright" min="5" max="100" step="5" value="100"
@@ -462,6 +476,7 @@ var LIVE_TIMER = null;
 var PANEL = null;           /* last /api/state panel block */
 var PREVIEW_TIMER = null;
 var SCAN_JOB = null;        /* the scan we are waiting on, if any */
+var PANEL_FAMILIES = [];    /* panel drivers this Pi has */
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,
@@ -785,6 +800,7 @@ function loadState(){
     renderTargets(); renderModes(); renderScenes(); renderDevices();
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
     renderRotation(j.rotation);
+    if(j.panel_families) PANEL_FAMILIES = j.panel_families;
     renderPanel(j.panel);
     var locked = !!(j.settings && j.settings.force_full_brightness);
     $("brightRow").style.display = locked ? "none" : "";
@@ -1054,6 +1070,22 @@ function renderPanel(p){
   }
   if(p.last_error){ bits.push('<span class="pill bad">'+esc(p.last_error)+'</span>'); }
   $("panelInfo").innerHTML = bits.join(" &middot; ");
+  var fam = $("panelFamily");
+  if(fam && !fam.dataset.filled){
+    /* The list comes from the server so the phone never offers a driver the
+       Pi does not have. "Detect" is first because it is right most of the
+       time -- but a panel whose name matches nothing lands on a guess, and
+       then being able to say which one it is matters. */
+    var opts = ['<option value="auto">Detect automatically</option>'];
+    (PANEL_FAMILIES || []).forEach(function(f){
+      opts.push('<option value="'+esc(f.key)+'">'+esc(f.label)+'</option>');
+    });
+    fam.innerHTML = opts.join("");
+    fam.dataset.filled = "1";
+  }
+  if(fam && document.activeElement !== fam) fam.value = p.family_setting || "auto";
+  var sc = $("panelScale");
+  if(sc && document.activeElement !== sc) sc.value = String(p.scale || "auto");
   $("panelBrightRow").style.display = caps.brightness ? "" : "none";
   if(document.activeElement !== $("panelBright")){
     $("panelBright").value = p.brightness;
@@ -1180,6 +1212,16 @@ function clearPanel(){
   if(PANEL && PANEL.playlist &&
      !confirm("Blank the panel? This also stops it cycling the queue.")) return;
   post("/api/matrix/clear").then(function(j){ if(j.ok){ toast("Panel blanked"); loadState(); } });
+}
+function setPanelFamily(){
+  post("/api/matrix", {family:$("panelFamily").value}).then(function(j){
+    if(j.ok){ toast("Panel type set"); loadState(); }
+  });
+}
+function setPanelScale(){
+  post("/api/matrix", {scale:$("panelScale").value}).then(function(j){
+    if(j.ok){ toast("Text size set"); loadState(); }
+  });
 }
 function setPanelBrightness(){
   post("/api/matrix/brightness", {percent:parseInt($("panelBright").value,10)});
