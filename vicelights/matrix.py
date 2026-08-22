@@ -1153,7 +1153,14 @@ class IPixel(MatrixDriver):
         header += (binascii.crc32(bytes(payload)) & 0xFFFFFFFF).to_bytes(4, "little")
         header.append(0x00)                       # unknown, always zero
         header.append(max(0, min(100, int(slot))))
-        return [self.packet(CMD_TEXT, bytes(header) + bytes(payload))]
+        packet = self.packet(CMD_TEXT, bytes(header) + bytes(payload))
+        # Split, like the PNG path above and for the same reason: this is one
+        # length-prefixed packet and it is far bigger than an ATT write. The
+        # panel reads a stream and takes its length off the front, so the
+        # pieces reassemble there; handed over whole it is a write the adapter
+        # cannot make. Twenty characters is 749 bytes against an MTU of 247,
+        # which is why short test words appeared and real messages did not.
+        return self._chunked(packet, self.chunk)
 
     def program_frames(self, slots) -> list:
         """Tell the panel which stored slots to cycle, and in what order.

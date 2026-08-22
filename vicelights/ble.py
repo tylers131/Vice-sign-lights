@@ -821,7 +821,14 @@ def pack_frames(frames, mtu: int) -> list:
             if current:
                 packed.append(bytes(current))
                 current = bytearray()
-            packed.append(bytes(frame))       # too big to combine; send alone
+            # Cut it up rather than handing the adapter a write it cannot
+            # make. A packet does not have to arrive in one write -- it has to
+            # arrive in order, and the length on the front is how the device
+            # knows where it ends. Driver code should have chunked this
+            # already; a 749-byte text packet that reached here silently did
+            # not get sent at all, so this is the backstop for that.
+            packed += [bytes(frame[at:at + room])
+                       for at in range(0, len(frame), room)]
             continue
         if len(current) + len(frame) > room:
             packed.append(bytes(current))

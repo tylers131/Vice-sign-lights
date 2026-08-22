@@ -1836,6 +1836,16 @@ compose screen used to offer and could not deliver are 1, 5 and 6.
         then one block per character: [flag][r][g][b][bitmap]
 ```
 
+**The packet is bigger than a write.** Twenty characters at 16x16 is 749
+bytes against an MTU of 247, so it goes out in `chunk`-sized pieces like the
+PNG transfer above: the panel reads a stream and takes the length off the
+front, so the pieces reassemble there. Missing this cost an evening and looked
+like an encoding fault -- every short test word appeared (`F` is 65 bytes,
+`FL` is 101, the corner test 101) and every real message did not, because
+short ones fitted a single write and were the only thing being tested.
+`pack_frames` now splits an oversized frame as a backstop rather than handing
+the adapter a write it cannot make.
+
 `flag` 0 is an 8x16 cell (16 bytes, one per row); flag 1 is 16x16 (32 bytes,
 two per row) and fills a sixteen-row panel to the edges. A 16-wide row is two
 bytes, so there are three independent ways to lay it out wrong -- which end of
