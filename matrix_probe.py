@@ -840,6 +840,148 @@ async def do_png_sweep(args):
               "cover, and it is an optimisation rather than a requirement --\n"
               "text_mode=pixels is fully documented and already works.")
 
+
+async def _listen_all(client, replies):
+    """Subscribe to every notify characteristic; return the uuids taken."""
+    services = getattr(client, "services", None)
+    if services is None:
+        services = await client.get_services()
+    listening = []
+    for service in services:
+        for characteristic in service.characteristics:
+            if "notify" not in (characteristic.properties or ()):
+                continue
+            uuid = characteristic.uuid
+
+            def on_notify(_sender, data, _uuid=uuid):
+                replies.append((_uuid, bytes(data)))
+
+            try:
+                await client.start_notify(uuid, on_notify)
+                listening.append(uuid)
+            except Exception:
+                pass
+    return listening
+
+
+async def do_hello(args):
+    """Ask the panel about itself, rather than assuming.
+
+    Everything drawn on this display depends on how many pixels it has, and so
+    far that has been a guess in a config file. The documented device-info
+    query is the time-set command; the panel answers with a packet that is
+    reported to carry the screen dimensions. Rather than claim to know which
+    bytes those are, this prints the reply in full with every plausible
+    reading, so the right one can be recognised on sight.
+    """
+    from vicelights.matrix import IPixel
+    import datetime
+
+    now = datetime.datetime.now()
+    probes = [
+        ("device info / set time",
+         IPixel.packet((0x01, 0x80), [now.hour, now.minute, now.second, 0])),
+    ]
+    if args.extra:
+        for spec in args.extra.split(","):
+            cleaned = re.sub(r"[^0-9a-fA-F]", "", spec)
+            if len(cleaned) % 2 == 0 and cleaned:
+                probes.append(("custom %s" % cleaned, bytes.fromhex(cleaned)))
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        print("listening on %s\n" % ", ".join(listening))
+        for label, packet in probes:
+            replies.clear()
+            print("%-24s -> %s" % (label, packet.hex(" ")))
+            await client.write_gatt_char(IPixel.write_uuid, packet, response=False)
+            await asyncio.sleep(args.gap)
+            if not replies:
+                print("    (no reply)\n")
+                continue
+            for uuid, reply in replies:
+                print("    <- %s  %s" % (_short_uuid(uuid), reply.hex(" ")))
+                _guess_dimensions(reply)
+            print()
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+
+
+def _guess_dimensions(reply: bytes):
+    """Point at bytes in a reply that could be a screen size.
+
+    Deliberately shows every candidate rather than picking one: the field
+    offset is not documented, and a confident wrong answer here would send the
+    whole drawing path off the edge of the display.
+    """
+    if len(reply) < 6:
+        return
+    plausible = (8, 16, 32, 64, 96, 128)
+    found = []
+    for index in range(4, len(reply) - 1):
+        a, b = reply[index], reply[index + 1]
+        if a in plausible and b in plausible:
+            found.append("bytes %d,%d = %dx%d" % (index, index + 1, a, b))
+    if found:
+        print("       possible size: %s" % ";  ".join(found))
+    else:
+        singles = ["byte %d = %d" % (i, v) for i, v in enumerate(reply)
+                   if v in plausible and i >= 4]
+        if singles:
+            print("       panel-sized values in it: %s" % ", ".join(singles))
+
+
+async def do_fill(args):
+    """Paint the whole panel one colour. A test you cannot misread.
+
+    Every other check so far has asked someone to judge whether a small thing
+    changed. This one either turns the display a solid colour or it does not.
+    """
+    from vicelights.matrix import IPixel
+
+    driver = IPixel({"width": args.width, "height": args.height})
+    colour = M.parse_color(args.color, (255, 0, 0))
+    frames = driver.diy_frames(True)
+    for y in range(args.height):
+        for x in range(args.width):
+            frames.append(driver.pixel_frame(x, y, colour))
+    print("filling %dx%d with #%02x%02x%02x -- %d packets, about %.0fs"
+          % (args.width, args.height, colour[0], colour[1], colour[2],
+             len(frames), len(frames) * args.delay))
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        sent = 0
+        for frame in frames:
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            sent += 1
+            if sent % 100 == 0:
+                print("  %d/%d" % (sent, len(frames)))
+            await asyncio.sleep(args.delay)
+        await asyncio.sleep(1.0)
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+    rejected = [r for _u, r in replies if len(r) == 5 and r[4] != 0x01]
+    if rejected:
+        print("\n%d packet(s) were rejected: %s"
+              % (len(rejected), rejected[0].hex(" ")))
+    print("""
+The panel is either solid %s now or it is not. If it is:
+  the pixel path works, and any text problem is only about size or position.
+If it is not, and nothing above was rejected:
+  the panel is ignoring DIY drawing, and the size below is the next suspect --
+      ./matrix_probe.py hello %s""" % (args.color, args.address))
+
 # -------------------------------------------------------------------- sending
 
 async def write_frames(address, char_uuid, frames, timeout, delay, response=False,
@@ -1257,6 +1399,22 @@ def build_parser():
                    help="seconds to wait for a verdict after each attempt")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_png_sweep(a)))
+
+    p = sub.add_parser("hello", help="ask the panel what it is, including its size")
+    ble_args(p)
+    p.add_argument("--gap", type=float, default=2.0)
+    p.add_argument("--extra", default="",
+                   help="comma-separated extra hex packets to try")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_hello(a)))
+
+    p = sub.add_parser("fill", help="paint the whole panel one colour")
+    ble_args(p)
+    p.add_argument("--color", default="#ff0000")
+    p.add_argument("--width", type=int, default=32)
+    p.add_argument("--height", type=int, default=16)
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_fill(a)))
 
     p = sub.add_parser("control", help="on | off | clear | a brightness percentage")
     ble_args(p)
