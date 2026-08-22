@@ -199,21 +199,34 @@ def render_columns(text: str, spacing: int = 1) -> list:
 
 
 def render_bitmap(text: str, height: int = FONT_HEIGHT, spacing: int = 1,
-                  scale: int = 1) -> list:
+                  scale: int = 1, stretch: bool = False) -> list:
     """Render to rows of 0/1, top row first, vertically centred in ``height``.
 
     ``scale`` repeats each pixel, so a 5x7 glyph at scale 2 is 10x14. Whole
-    numbers only: a fractional scale would have to interpolate, and on a panel
-    where one pixel is one LED that turns a crisp letter into a smear.
+    numbers, because one font pixel is one LED and a fractional scale would
+    have to interpolate, turning a crisp letter into a smear.
+
+    Which is why 2x on a 16-row panel leaves two rows dark: 7 does not divide
+    16. ``stretch`` fills them by mapping the seven source rows across the full
+    height instead, so some rows are drawn three times and some twice. The
+    letters reach the edges; the cost is that a horizontal stroke can be three
+    LEDs thick at the top of a glyph and two in the middle. Worth it on a
+    sixteen-row panel, and a matter of taste, so it is a setting.
     """
     scale = max(1, int(scale))
     columns = render_columns(text, spacing)
     rows = [[(column >> y) & 1 for column in columns] for y in range(FONT_HEIGHT)]
     if scale > 1:
         rows = [[bit for bit in row for _ in range(scale)] for row in rows]
-        rows = [row for row in rows for _ in range(scale)]
-    glyph_height = FONT_HEIGHT * scale
     blank = [0] * (len(rows[0]) if rows else 0)
+
+    if stretch and height >= FONT_HEIGHT:
+        # Nearest source row for each output row: fills the height exactly.
+        return [list(rows[min(FONT_HEIGHT - 1, y * FONT_HEIGHT // height)])
+                for y in range(height)]
+
+    rows = [row for row in rows for _ in range(scale)]
+    glyph_height = FONT_HEIGHT * scale
     top = max(0, (height - glyph_height) // 2)
     out = []
     for y in range(height):
@@ -284,14 +297,14 @@ def preview(text: str, on: str = "#", off: str = ".") -> str:
 
 
 def text_pixels(text: str, width: int, height: int, colour, background,
-                scale: int = 1):
+                scale: int = 1, stretch: bool = False):
     """The message as rows of RGB tuples, sized to the panel.
 
     Left-aligned and vertically centred, clipped rather than scaled: a panel
     pixel is a panel pixel, and squeezing a wide message into a narrow display
     turns readable letters into mush.
     """
-    rows = render_bitmap(text, height=height, scale=scale)
+    rows = render_bitmap(text, height=height, scale=scale, stretch=stretch)
     out = []
     for y in range(height):
         row = rows[y] if y < len(rows) else []
@@ -580,11 +593,15 @@ class IPixel(MatrixDriver):
         """How many LEDs per font pixel, for this message on this panel."""
         return scale_for(self.config, (message or {}).get("text") or "")
 
+    def stretch(self) -> bool:
+        return bool(self.config.get("stretch", True))
+
     def lit_pixels(self, message: dict) -> set:
         """Which pixels a message turns on."""
         width, height = self.size()
         rows = render_bitmap((message or {}).get("text") or "", height=height,
-                             scale=self.scale_for(message))
+                             scale=self.scale_for(message),
+                             stretch=self.stretch())
         on = set()
         for y in range(height):
             row = rows[y] if y < len(rows) else []
@@ -643,7 +660,8 @@ class IPixel(MatrixDriver):
         background = parse_color(message.get("background"), (0, 0, 0))
         blob = png_bytes(text_pixels(message.get("text") or "", width, height,
                                      colour, background,
-                                     scale=self.scale_for(message)),
+                                     scale=self.scale_for(message),
+                                     stretch=self.stretch()),
                          width, height)
         opt = int(self.config.get("png_opt", 0)) & 0xFF
         buffer = int(self.config.get("png_buffer", 0)) & 0xFF

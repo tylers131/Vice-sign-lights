@@ -387,7 +387,10 @@ class BleWorker:
         item = self._item(address, frames,
                           name=matrix.get("name") or "panel",
                           char_uuid=char_uuid,
-                          frame_delay=matrix.get("frame_delay", 0.02))
+                          frame_delay=matrix.get("frame_delay", 0.02),
+                          # Every pixel matters here: one dropped write is one
+                          # dark LED in the middle of a letter.
+                          response=matrix.get("write_response", True))
         job = Job("matrix", label, [item],
                   coalesce_key=coalesce_key or "matrix",
                   payload=dict(payload or {}))
@@ -402,7 +405,7 @@ class BleWorker:
         return self._register(job)
 
     def _item(self, address, frames, state=None, name=None, char_uuid=None,
-              frame_delay=None):
+              frame_delay=None, response=None):
         """One device's worth of work.
 
         ``name`` and ``char_uuid`` exist for devices that are not in the
@@ -425,6 +428,8 @@ class BleWorker:
             item["char_uuid"] = char_uuid
         if frame_delay is not None:
             item["frame_delay"] = float(frame_delay)
+        if response is not None:
+            item["response"] = bool(response)
         return item
 
     # ---------------------------------------------------------------- status
@@ -522,7 +527,8 @@ class BleWorker:
                 item["address"], frames, settings,
                 probing=self._is_known_bad(item["address"], settings),
                 char_override=item.get("char_uuid"),
-                frame_delay=item.get("frame_delay"))
+                frame_delay=item.get("frame_delay"),
+                response=item.get("response"))
             elapsed = time.time() - started
             item["status"] = "ok" if ok else "failed"
             item["detail"] = detail
@@ -556,7 +562,7 @@ class BleWorker:
                     and state.get("consecutive_failures", 0) >= threshold)
 
     async def _write_device(self, address, frames, settings, probing=False,
-                            char_override=None, frame_delay=None):
+                            char_override=None, frame_delay=None, response=None):
         # A device that just came off cooldown gets one cheap probe rather than
         # the full retry budget: if it is still dead, that is 12s wasted, not 60.
         attempts = 1 if probing else int(settings.get("attempts", 3))
@@ -568,7 +574,8 @@ class BleWorker:
                 char_uuid = await asyncio.wait_for(
                     self._connect_and_write(address, frames, settings, phases,
                                             char_override=char_override,
-                                            frame_delay=frame_delay),
+                                            frame_delay=frame_delay,
+                                            response=response),
                     timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
                 )
                 phases["attempts"] = attempt
@@ -583,7 +590,8 @@ class BleWorker:
         return False, last_error, None, {}
 
     async def _connect_and_write(self, address, frames, settings, phases=None,
-                                 char_override=None, frame_delay=None):
+                                 char_override=None, frame_delay=None,
+                                 response=None):
         """Connect, write, disconnect -- timing each phase into ``phases``.
 
         The split matters: connect and discover are ATT round trips gated by the
@@ -624,10 +632,17 @@ class BleWorker:
                 raise RuntimeError("no writable characteristic on %s" % address)
             if not char_override and char_uuid != cached:
                 self.store.remember_characteristic(address, char_uuid)
+            # Unacknowledged writes are fire and forget: when the sender
+            # outruns the device, packets are dropped with no error anywhere.
+            # On the text panel that showed up as a few LEDs missing from each
+            # message, different ones every time. An acknowledged write is
+            # flow-controlled and cannot do that, so a caller that needs every
+            # byte to land asks for one.
+            acknowledged = (not without_response) if response is None else bool(response)
             mark = time.monotonic()
             for index, frame in enumerate(frames):
                 await asyncio.wait_for(
-                    client.write_gatt_char(char_uuid, frame, response=not without_response),
+                    client.write_gatt_char(char_uuid, frame, response=acknowledged),
                     timeout=write_timeout,
                 )
                 if index + 1 < len(frames):

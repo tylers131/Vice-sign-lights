@@ -563,7 +563,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "playlist", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
-                       "pixel_layout", "scale")
+                       "pixel_layout", "scale", "write_response", "stretch")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -683,15 +683,18 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         # glyph for something that goes up 2x is a picture of a different thing.
         scale = matrix.scale_for(panel, text)
         drawn = matrix.text_width(text, scale=scale)
+        stretch = bool(panel.get("stretch", True))
+        tall = height if stretch else min(height, matrix.FONT_HEIGHT * scale)
         return jsonify({
             "ok": True,
             "text": text,
             "width": drawn,
-            "height": matrix.FONT_HEIGHT * scale,
+            "height": tall,
             "scale": scale,
+            "stretch": stretch,
             "fits": drawn <= width,
-            "rows": matrix.render_bitmap(text, height=matrix.FONT_HEIGHT * scale,
-                                         scale=scale),
+            "rows": matrix.render_bitmap(text, height=tall, scale=scale,
+                                         stretch=stretch),
             "ascii": matrix.preview(text),
             "panel": {"width": width, "height": height},
         })

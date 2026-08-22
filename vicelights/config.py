@@ -102,7 +102,15 @@ DEFAULT_MATRIX = {
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
-    "frame_delay": 0.02,
+    # Acknowledged writes. Without this the panel silently drops packets when
+    # it cannot keep up, which shows as a few LEDs missing from each message,
+    # different ones every time. Acknowledged writes are flow-controlled and
+    # cannot drop; they cost a round trip each, so the panel draws a little
+    # slower and completely.
+    "write_response": True,
+    # With acknowledged writes the radio already paces itself, so this can be
+    # 0. It is the gap BETWEEN packets, on top of the acknowledgement.
+    "frame_delay": 0.0,
     # How an iPixel panel is given text. "pixels" sets one pixel at a time and
     # every byte of it is documented; "png" sends the whole image in one
     # transfer but has two header bytes nobody has written down. See
@@ -113,6 +121,12 @@ DEFAULT_MATRIX = {
     # on this panel go up to 2x and fill its height, eleven letters stay at 1x
     # because 2x would run off the end.
     "scale": "auto",
+    # Fill the panel's full height rather than leaving a margin. 7 does not
+    # divide 16, so a doubled 5x7 glyph is 14 tall and two rows stay dark;
+    # stretching maps the seven rows across all sixteen instead. Strokes end up
+    # slightly uneven -- three LEDs thick in places, two in others -- in
+    # exchange for letters that reach the edges.
+    "stretch": True,
     # Where the four colour bytes of a set-pixel command go. The published
     # protocol says rgba; this sign's panel is agrb. matrix_probe.py colortest
     # works it out from what the panel shows.
@@ -245,6 +259,8 @@ def _matrix(raw) -> dict:
         layout = DEFAULT_PIXEL_LAYOUT
     value["pixel_layout"] = layout
     value["fill_background"] = bool(value.get("fill_background"))
+    value["write_response"] = bool(value.get("write_response", True))
+    value["stretch"] = bool(value.get("stretch", True))
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
                                     ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),
                                     ("png_opt", 0, 255, 0), ("png_buffer", 0, 255, 0)):

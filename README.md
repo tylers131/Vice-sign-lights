@@ -1691,6 +1691,13 @@ panel its own test harness.
 | PNG image | type `02 00`, extended header, CRC32 |
 | GIF | type `03 00`, same shape |
 
+**Writes must be acknowledged.** `0000fa02` advertises both write and
+write-without-response, and without-response is faster — but it has no flow
+control, so outrunning the panel drops packets with no error at either end.
+That showed as a few LEDs missing from every message, different ones each time,
+which looks like a rendering bug and is not one. `write_response` defaults to
+true; `frame_delay` can then be 0, because the acknowledgement paces the radio.
+
 **The set-pixel byte order is not what the protocol writeups say.** They give
 `[R][G][B][A]`. Measured on this panel, one byte at a time:
 

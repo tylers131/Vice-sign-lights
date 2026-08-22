@@ -210,6 +210,19 @@ async def do_scan(args):
 # different problem with a different fix.
 
 
+def _ack(args) -> bool:
+    """Should writes be acknowledged?
+
+    Yes, by default, and it is not a small preference. A write without a
+    response has no flow control: outrun the device and packets vanish with no
+    error at either end. On this panel that appeared as a few LEDs missing from
+    each message, different ones every time -- which looks like a rendering bug
+    and is not one. --no-ack restores the fast, lossy behaviour for cases where
+    losing a packet does not matter.
+    """
+    return not getattr(args, "no_ack", False)
+
+
 async def find_device(address, seconds=8.0):
     """The advertising device at this address, or None."""
     try:
@@ -385,6 +398,7 @@ async def do_confirm(args):
     against the step that provoked it. A device that answers a good command and
     stays silent on a bad one tells us more than watching the screen does.
     """
+    ack = _ack(args)
     driver = driver_from_args(args)
     char = driver.characteristic()
     print("panel   %s" % args.address)
@@ -455,7 +469,7 @@ async def do_confirm(args):
             print("      %d frame(s), %d bytes" % (len(frames), sum(len(f) for f in frames)))
             try:
                 for position, frame in enumerate(frames):
-                    await client.write_gatt_char(char, frame, response=False)
+                    await client.write_gatt_char(char, frame, response=ack)
                     if position + 1 < len(frames):
                         await asyncio.sleep(args.delay)
             except Exception as exc:
@@ -576,13 +590,14 @@ async def _trace_one(client, char, chunks, replies, args) -> int:
     cleared before each chunk so a reply is attributed to the write that
     provoked it rather than to whatever came before.
     """
+    ack = _ack(args)
     answered = 0
     encrypted_looking = False
     silent_since = None
     for index, chunk in enumerate(chunks, 1):
         replies.clear()
         try:
-            await client.write_gatt_char(char, chunk, response=False)
+            await client.write_gatt_char(char, chunk, response=ack)
         except Exception as exc:
             print("%3d/%d  WRITE FAILED: %s: %s"
                   % (index, len(chunks), type(exc).__name__, exc))
@@ -635,6 +650,7 @@ async def do_trace(args):
     means something different about how it reassembles a long write, and none
     of them is visible from the screen.
     """
+    ack = _ack(args)
     driver = driver_from_args(args)
     char = driver.characteristic()
 
@@ -770,6 +786,7 @@ async def do_png_sweep(args):
     Small on purpose. If nothing in the default set answers 01, the answer is
     not one byte further along and the pixel path is already working.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel
 
     opts = [int(v, 0) for v in args.opts.split(",")] if args.opts else [0, 1, 2, 3]
@@ -826,7 +843,7 @@ async def do_png_sweep(args):
                     replies.clear()
                     for position, frame in enumerate(frames):
                         await client.write_gatt_char(driver.characteristic(), frame,
-                                                     response=False)
+                                                     response=ack)
                         if position + 1 < len(frames):
                             await asyncio.sleep(args.delay)
                     await asyncio.sleep(args.gap)
@@ -912,6 +929,7 @@ async def do_hello(args):
     bytes those are, this prints the reply in full with every plausible
     reading, so the right one can be recognised on sight.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel
 
     # The info query is also the set-time command, so its reply mixes the clock
@@ -939,7 +957,7 @@ async def do_hello(args):
         for label, packet, stamp in probes:
             replies.clear()
             print("%-28s -> %s" % (label, packet.hex(" ")))
-            await client.write_gatt_char(IPixel.write_uuid, packet, response=False)
+            await client.write_gatt_char(IPixel.write_uuid, packet, response=ack)
             await asyncio.sleep(args.gap)
             if not replies:
                 print("    (no reply)\n")
@@ -1042,6 +1060,7 @@ async def do_fill(args):
     wider than we think; if the bands are stacked rather than side by side, the
     axes are swapped. A single flat colour tells you far less.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel
 
     driver = IPixel({"width": args.width, "height": args.height})
@@ -1070,7 +1089,7 @@ async def do_fill(args):
         listening = await _listen_all(client, replies)
         sent = 0
         for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
             sent += 1
             if sent % 250 == 0:
                 print("  %d/%d" % (sent, len(frames)))
@@ -1105,6 +1124,7 @@ async def do_say(args):
     The command this whole exercise was for. Everything else here is
     diagnosis; this is the thing you actually want at the sign.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel, scale_for, text_width
 
     config = {"width": args.width, "height": args.height}
@@ -1115,8 +1135,11 @@ async def do_say(args):
     scale = scale_for(config, message["text"])
     drawn = text_width(message["text"], scale=scale)
 
-    print("%r at %dx -- %d x %d on a %d x %d panel"
-          % (message["text"], scale, drawn, 7 * scale, args.width, args.height))
+    tall = args.height if driver.stretch() else min(args.height, 7 * scale)
+    print("%r at %dx -- %d x %d on a %d x %d panel%s"
+          % (message["text"], scale, drawn, tall, args.width, args.height,
+             " (stretched to fill the height)" if driver.stretch()
+             and tall != 7 * scale else ""))
     if drawn > args.width:
         print("  too long: %d columns of %d. It will be cut off."
               % (drawn, args.width))
@@ -1145,7 +1168,7 @@ async def do_say(args):
     async with holder as client:
         sent = 0
         for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
             sent += 1
             if sent % 200 == 0:
                 print("  %d/%d" % (sent, len(frames)))
@@ -1163,6 +1186,7 @@ async def do_colortest(args):
     layout -- which of the four bytes drives which channel -- and treats the
     documented rgba as one possibility rather than the truth.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel
 
     driver = IPixel({"width": args.width, "height": args.height})
@@ -1191,7 +1215,7 @@ async def do_colortest(args):
     async with holder as client:
         sent = 0
         for frame in frames:
-            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=ack)
             sent += 1
             if sent % 400 == 0:
                 print("  %d/%d" % (sent, len(frames)))
@@ -1271,6 +1295,7 @@ async def do_screens(args):
     look identical: pixels not arriving, versus pixels arriving into a buffer
     the panel is not currently showing.
     """
+    ack = _ack(args)
     from vicelights.matrix import IPixel
 
     replies = []
@@ -1282,7 +1307,7 @@ async def do_screens(args):
             replies.clear()
             packet = driver_screen_packet(IPixel, number)
             print("  screen %d   -> %s" % (number, packet.hex(" ")))
-            await client.write_gatt_char(IPixel.write_uuid, packet, response=False)
+            await client.write_gatt_char(IPixel.write_uuid, packet, response=ack)
             await asyncio.sleep(args.hold)
             for _uuid, reply in replies:
                 print("             <- %s   %s" % (reply.hex(" "), _decode_reply(reply)))
@@ -1303,7 +1328,7 @@ def driver_screen_packet(cls, number):
 
 # -------------------------------------------------------------------- sending
 
-async def write_frames(address, char_uuid, frames, timeout, delay, response=False,
+async def write_frames(address, char_uuid, frames, timeout, delay, response=True,
                        retries=1):
     need_bleak()
     total = sum(len(f) for f in frames)
@@ -1365,7 +1390,7 @@ async def do_raw(args):
     payload = bytes.fromhex(cleaned)
     frames = [payload[at:at + args.chunk] for at in range(0, len(payload), args.chunk)]
     await write_frames(args.address, args.char, frames, args.timeout, args.delay,
-                       response=args.response, retries=args.retries)
+                       response=_ack(args), retries=args.retries)
 
 
 def do_render(args):
@@ -1646,6 +1671,8 @@ def build_parser():
         p.add_argument("--timeout", type=float, default=15.0)
         p.add_argument("--retries", type=int, default=2,
                        help="connection attempts before giving up (default 2)")
+        p.add_argument("--no-ack", action="store_true",
+                       help="unacknowledged writes: faster, and drops packets")
         p.add_argument("--delay", type=float, default=0.02,
                        help="seconds between frames (default 0.02)")
         p.add_argument("-c", "--char", help="characteristic UUID to write to")
@@ -1784,7 +1811,7 @@ def build_parser():
     p = sub.add_parser("raw", help="write arbitrary bytes to a characteristic")
     ble_args(p)
     p.add_argument("-x", "--hex", nargs="+", required=True)
-    p.add_argument("--response", action="store_true", help="use write-with-response")
+
     p.set_defaults(run=lambda a: asyncio.run(do_raw(a)))
 
     p = sub.add_parser("render", help="show what our font makes of a message")
