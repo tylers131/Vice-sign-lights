@@ -68,7 +68,13 @@ FAINT    = over(INK, 0.40)
 DIM      = over(INK, 0.30)
 CHIP_BG  = over(INK, 0.06)
 TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("lights", "Lights"),
-        ("status", "Status"))
+        ("panel", "Panel"), ("status", "Status"))
+
+# The on-screen keyboard. Upper case only, and that is a decision rather than a
+# shortcut: sign messages are shouty anyway, the panel's own font has one case,
+# and dropping the shift key buys a whole row of width on an 800-pixel screen.
+KEY_ROWS = ("1234567890", "QWERTYUIOP", "ASDFGHJKL\u232b", "ZXCVBNM!?.")
+MAX_COMPOSE = 60          # what fits the field; the API allows far more
 
 # The twelve circles from 2b, in the board's order.
 SWATCHES = (
@@ -131,6 +137,10 @@ class Sign:
         self.total = 0
         self.online = False
         self.diagnostics = []
+        # The text panel: its settings and queue from /api/matrix on the slow
+        # beat, its "showing right now" merged from /api/status on every poll.
+        self.panel = {}
+        self.messages = []
         # Not "down": Sign.down is already the count of finished items in the
         # running job, and shadowing it silently broke the progress strip.
         self.unreachable = []
@@ -159,6 +169,16 @@ class Sign:
         with self.lock:
             self.pending = None
 
+    def refresh_panel(self):
+        """Re-read the panel on the next poll rather than on the slow beat.
+
+        The queue is polled every ten seconds because it only changes when
+        someone edits it -- but having just edited it yourself, ten seconds of
+        stale chips reads as the tap not working.
+        """
+        with self.lock:
+            self._diag_at = 0.0
+
     def snapshot(self):
         with self.lock:
             return {
@@ -172,6 +192,7 @@ class Sign:
                 "patterns": list(self.patterns),
                 "diagnostics": list(self.diagnostics),
                 "unreachable": list(self.unreachable),
+                "panel": dict(self.panel), "messages": list(self.messages),
                 "toast": self.toast if time.monotonic() < self.toast_until else "",
             }
 
@@ -266,6 +287,29 @@ class Sign:
             if self.pending and (self.playing == self.pending
                                  or time.monotonic() - self.pending_since > 45):
                 self.pending = None
+            live = status.get("panel")
+            if live and self.panel:
+                self.panel.update(live)
+            elif live:
+                self.panel = dict(live)
+
+    def _poll_panel(self):
+        """The text panel's settings and queue.
+
+        On the slow beat with diagnostics: the queue only changes when someone
+        edits it, and what changes second to second -- which message is up, how
+        long is left -- rides along on /api/status instead.
+        """
+        try:
+            data = _get("/api/matrix", timeout=6.0)
+        except Exception:
+            return
+        if not data.get("ok"):
+            return
+        panel = data.get("matrix") or {}
+        with self.lock:
+            self.messages = panel.pop("queue", [])
+            self.panel = panel
 
     def _poll_diagnostics(self):
         try:
@@ -291,6 +335,7 @@ class Sign:
                 if time.monotonic() - self._diag_at > 10:
                     self._diag_at = time.monotonic()
                     self._poll_diagnostics()
+                    self._poll_panel()
                 with self.lock:
                     quick = self.busy or self.queued
             except (urllib.error.URLError, OSError, ValueError, TimeoutError):
@@ -628,6 +673,8 @@ class Panel:
         self.last_point = (0, 0)
         self.content_h = 0
         self.tab = "scenes"
+        # None, or the message being typed on the on-screen keyboard.
+        self.compose = None
         # What the colour and pattern buttons act on. Scenes carry their own
         # targets, so this is ignored there.
         self.target = "all"
@@ -1011,6 +1058,9 @@ class Panel:
             hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
                     "colour": "tap the sign above to pick zones",
                     "lights": "tap one to colour just it",
+                    "panel": ("tap a message to put it up"
+                              if (state["panel"] or {}).get("configured")
+                              else "no text panel paired yet"),
                     "status": "alerts \u00b7 diagnostics \u00b7 power"}[self.tab]
             image = self.f_tiny.render(hint, True, over(INK, 0.35))
             self.screen.blit(image, (right - image.get_width(),
@@ -1391,6 +1441,208 @@ class Panel:
                   center=shut.center)
         self.buttons.append(Button(shut, "SHUT DOWN PI", "ask-shutdown"))
 
+    def draw_panel(self, state):
+        """The text panel: what it is saying, and what else it could say.
+
+        The phone composes; this exists so the sign can be talked to with the
+        phone in someone's pocket. Tapping a saved message puts it up now, and
+        WRITE opens a keyboard for something that is not saved yet.
+        """
+        s = self.k
+        panel = state["panel"] or {}
+        if not panel.get("configured"):
+            box = pygame.Rect(self.middle.x, self.middle.y,
+                              self.middle.w, int(120 * s))
+            self.rounded(self.screen, box, CARD, LINE, radius=int(14 * s))
+            self.text(self.screen, self.f_head2, "No text panel paired", INK,
+                      topleft=(box.x + int(18 * s), box.y + int(16 * s)))
+            for index, line in enumerate((
+                    "Power the panel on, then pair it from the phone UI's",
+                    "Message tab -- it needs a Bluetooth scan and a name,",
+                    "and both are easier with a keyboard in your hand.")):
+                self.text(self.screen, self.f_small, line, MUTED,
+                          topleft=(box.x + int(18 * s),
+                                   box.y + int(48 * s) + index * int(20 * s)))
+            return
+
+        # -- who it is, and whether we trust the encoding
+        bits = [panel.get("name") or panel.get("address", ""),
+                panel.get("family_label") or panel.get("family") or "unknown type"]
+        size = panel.get("size") or {}
+        if size:
+            bits.append("%sx%s" % (size.get("width"), size.get("height")))
+        self.text(self.screen, self.f_tiny, "  \u00b7  ".join(str(b) for b in bits),
+                  MUTED, topleft=(self.middle.x, self.middle.y))
+        caps = panel.get("capabilities") or {}
+        if not caps.get("confirmed"):
+            note = "encoding unconfirmed"
+            image = self.f_tiny.render(note, True, ORANGE)
+            self.screen.blit(image, (self.middle.right - image.get_width(),
+                                     self.middle.y))
+        y = self.middle.y + int(22 * s)
+
+        # -- what is on the panel right now
+        current = panel.get("current") or {}
+        card = pygame.Rect(self.middle.x, y, self.middle.w, int(54 * s))
+        colour = self._lit(current.get("color"), (90, 84, 78))
+        self.rounded(self.screen, card, over(colour, 0.10), over(colour, 0.45),
+                     radius=int(14 * s))
+        if current.get("text"):
+            # Glowing, like the sign preview above it: the panel is part of the
+            # sign, and reading it here should feel like reading it out there.
+            label = current["text"]
+            while label and self.f_head2.size(label)[0] > card.w - int(150 * s):
+                label = label[:-1]
+            spot = self.f_head2.render(label, True, colour).get_rect(
+                topleft=(card.x + int(16 * s),
+                         card.centery - self.f_head2.get_height() // 2))
+            self.glow_text(self.f_head2, label, colour, spot)
+        else:
+            self.text(self.screen, self.f_head2, "Panel is blank", DIM,
+                      topleft=(card.x + int(16 * s),
+                               card.centery - self.f_head2.get_height() // 2))
+        right = []
+        if panel.get("playlist"):
+            right.append("cycling")
+            if panel.get("next_in") is not None:
+                right.append("next in %ds" % panel["next_in"])
+        elif current.get("text"):
+            right.append("holding")
+        if panel.get("last_error"):
+            right = [panel["last_error"][:40]]
+        if right:
+            image = self.f_tiny.render("  \u00b7  ".join(right), True,
+                                       PINK_SOFT if panel.get("last_error") else MUTED)
+            self.screen.blit(image, (card.right - int(16 * s) - image.get_width(),
+                                     card.centery - image.get_height() // 2))
+        y = card.bottom + int(10 * s)
+
+        # -- the queue, as chips you can put up with one tap
+        messages = state["messages"]
+        chip_h = int(38 * s)
+        gap = int(8 * s)
+        per_row = 4
+        chip_w = (self.middle.w - gap * (per_row - 1)) // per_row
+        showing = current.get("id")
+        if not messages:
+            self.text(self.screen, self.f_small,
+                      "Nothing queued yet -- tap WRITE, or add some from the phone.",
+                      MUTED, topleft=(self.middle.x, y + int(6 * s)))
+        for index, message in enumerate(messages[:per_row * 2]):
+            col, row = index % per_row, index // per_row
+            chip = pygame.Rect(self.middle.x + col * (chip_w + gap),
+                               y + row * (chip_h + gap), chip_w, chip_h)
+            live = message["id"] == showing
+            tint = self._lit(message.get("color"), INK)
+            self.rounded(self.screen, chip,
+                         over(tint, 0.22 if live else 0.08),
+                         over(tint, 0.8 if live else 0.28),
+                         radius=int(10 * s))
+            label = message.get("text", "")
+            while label and self.f_small.size(label)[0] > chip.w - int(20 * s):
+                label = label[:-1]
+            self.text(self.screen, self.f_small, label,
+                      INK if message.get("enabled", True) else DIM,
+                      center=chip.center)
+            self.buttons.append(Button(chip, message.get("text", ""),
+                                       "msg-show", message["id"]))
+        y += (chip_h + gap) * min(2, max(1, (len(messages) + per_row - 1) // per_row))
+
+        # -- the controls
+        height = int(40 * s)
+        y = max(y, self.middle.bottom - height)
+        wide = int(140 * s)
+        write = pygame.Rect(self.middle.x, y, wide, height)
+        self.rounded(self.screen, write, over(CYAN, 0.14), CYAN, radius=height // 2)
+        self.text(self.screen, self.f_small, "WRITE", CYAN, center=write.center)
+        self.buttons.append(Button(write, "WRITE", "compose"))
+
+        cycling = panel.get("playlist")
+        cycle = pygame.Rect(write.right + gap, y, wide, height)
+        self.rounded(self.screen, cycle,
+                     over(OLIVE, 0.16) if cycling else CARD,
+                     OLIVE if cycling else LINE, radius=height // 2)
+        self.text(self.screen, self.f_small, "STOP CYCLE" if cycling else "CYCLE",
+                  OLIVE if cycling else INK, center=cycle.center)
+        self.buttons.append(Button(cycle, "CYCLE", "panel-cycle"))
+
+        nxt = pygame.Rect(cycle.right + gap, y, wide, height)
+        self.rounded(self.screen, nxt, CARD, LINE, radius=height // 2)
+        self.text(self.screen, self.f_small, "NEXT", INK, center=nxt.center)
+        self.buttons.append(Button(nxt, "NEXT", "panel-next"))
+
+        blank = pygame.Rect(nxt.right + gap, y, wide, height)
+        self.rounded(self.screen, blank, CARD, over(PINK, 0.4), radius=height // 2)
+        self.text(self.screen, self.f_small, "BLANK", PINK_SOFT, center=blank.center)
+        self.buttons.append(Button(blank, "BLANK", "panel-blank"))
+
+    def draw_compose(self):
+        """Type a message on the panel itself.
+
+        Covers the tab body and the bottom bar, because a keyboard needs the
+        room and because nothing else should be tappable while one is up. Upper
+        case only -- see KEY_ROWS.
+        """
+        s = self.k
+        gap = int(5 * s)
+        box = pygame.Rect(self.middle.x, self.middle.y, self.middle.w,
+                          self.h - int(14 * s) - self.middle.y)
+        self.rounded(self.screen, box, CARD_ALT, over(CYAN, 0.3), radius=int(16 * s))
+
+        text = self.compose["text"]
+        field = pygame.Rect(box.x + int(12 * s), box.y + int(12 * s),
+                            box.w - int(24 * s), int(42 * s))
+        self.rounded(self.screen, field, BG, LINE, radius=int(10 * s))
+        shown = text or "type a message"
+        self.text(self.screen, self.f_head2, shown[-34:],
+                  INK if text else DIM,
+                  topleft=(field.x + int(12 * s),
+                           field.centery - self.f_head2.get_height() // 2))
+        count = self.f_tiny.render("%d/%d" % (len(text), MAX_COMPOSE), True, MUTED)
+        self.screen.blit(count, (field.right - int(12 * s) - count.get_width(),
+                                 field.centery - count.get_height() // 2))
+
+        key_h = int(38 * s)
+        top = field.bottom + int(10 * s)
+        columns = max(len(row) for row in KEY_ROWS)
+        key_w = (box.w - int(24 * s) - gap * (columns - 1)) // columns
+        for r, row in enumerate(KEY_ROWS):
+            y = top + r * (key_h + gap)
+            for c, char in enumerate(row):
+                key = pygame.Rect(box.x + int(12 * s) + c * (key_w + gap), y,
+                                  key_w, key_h)
+                back = char == "\u232b"
+                self.rounded(self.screen, key, CARD,
+                             over(PINK, 0.35) if back else LINE_SOFT,
+                             radius=int(8 * s))
+                self.text(self.screen, self.f_small, char,
+                          PINK_SOFT if back else INK, center=key.center)
+                self.buttons.append(
+                    Button(key, char, "key-back" if back else "key", char))
+
+        y = top + len(KEY_ROWS) * (key_h + gap)
+        action_h = min(int(42 * s), box.bottom - int(10 * s) - y)
+        space = pygame.Rect(box.x + int(12 * s), y, int(250 * s), action_h)
+        self.rounded(self.screen, space, CARD, LINE_SOFT, radius=int(10 * s))
+        self.text(self.screen, self.f_small, "SPACE", MUTED, center=space.center)
+        self.buttons.append(Button(space, " ", "key", " "))
+
+        wide = (box.right - int(12 * s) - space.right - gap * 3) // 3
+        cancel = pygame.Rect(space.right + gap, y, wide, action_h)
+        self.rounded(self.screen, cancel, CARD, LINE, radius=action_h // 2)
+        self.text(self.screen, self.f_small, "CANCEL", MUTED, center=cancel.center)
+        self.buttons.append(Button(cancel, "CANCEL", "compose-cancel"))
+
+        queue = pygame.Rect(cancel.right + gap, y, wide, action_h)
+        self.rounded(self.screen, queue, CARD, LINE_SOFT, radius=action_h // 2)
+        self.text(self.screen, self.f_small, "QUEUE", INK, center=queue.center)
+        self.buttons.append(Button(queue, "QUEUE", "compose-queue"))
+
+        send = pygame.Rect(queue.right + gap, y, wide, action_h)
+        self.rounded(self.screen, send, over(CYAN, 0.18), CYAN, radius=action_h // 2)
+        self.text(self.screen, self.f_small, "SEND", CYAN, center=send.center)
+        self.buttons.append(Button(send, "SEND", "compose-send"))
+
     def draw_confirm(self):
         """A full-width prompt over the middle third.
 
@@ -1516,6 +1768,29 @@ class Panel:
                     if button.kind == "confirm-yes":
                         self.system(ask["action"])
             return
+        if self.compose is not None:
+            # Same reasoning as the confirm prompt above: while the keyboard is
+            # up it is the only thing that answers, so a stray finger on the
+            # tab row cannot navigate away mid-word.
+            for button in self.buttons:
+                if not button.rect.collidepoint(position):
+                    continue
+                if button.kind == "key":
+                    if len(self.compose["text"]) < MAX_COMPOSE:
+                        self.compose["text"] += button.payload
+                elif button.kind == "key-back":
+                    self.compose["text"] = self.compose["text"][:-1]
+                elif button.kind == "compose-cancel":
+                    self.compose = None
+                elif button.kind in ("compose-send", "compose-queue"):
+                    text = self.compose["text"].strip()
+                    if not text:
+                        self.sign.say("Type something first")
+                    else:
+                        self.compose = None
+                        self.send_message(text, queue=button.kind == "compose-queue")
+                return
+            return
         for button in self.tabs:
             if button.rect.collidepoint(position):
                 self.tab = button.payload
@@ -1541,6 +1816,12 @@ class Panel:
             elif kind == "target":
                 self.zones = []
                 self.target, self.target_name = button.payload
+            elif kind == "compose":
+                self.compose = {"text": ""}
+            elif kind == "msg-show":
+                self.show_message(button.payload, button.label)
+            elif kind in ("panel-cycle", "panel-next", "panel-blank"):
+                self.act(kind)
             elif kind == "device":
                 device = button.payload
                 self.zones = []
@@ -1695,6 +1976,39 @@ class Panel:
             self.sign.clear_pending()
             self.sign.say("no answer from the sign")
 
+    def send_message(self, text, queue=False):
+        """Put a typed message up now, or save it to the queue."""
+        threading.Thread(target=self._send_message, args=(text, queue),
+                         daemon=True).start()
+
+    def _send_message(self, text, queue):
+        body = {"text": text, "color": "#ff2f6e", "mode": "scroll"}
+        try:
+            if queue:
+                result = _post("/api/matrix/messages", body)
+                self.sign.say(("Queued \u201c%s\u201d" % text) if result.get("ok")
+                              else (result.get("error") or "could not queue it"))
+            else:
+                result = _post("/api/matrix/send", body)
+                self.sign.say(("Panel: " + text) if result.get("ok")
+                              else (result.get("error") or "the panel did not take it"))
+            self.sign.refresh_panel()
+        except Exception:
+            self.sign.say("no answer from the sign")
+
+    def show_message(self, message_id, label):
+        threading.Thread(target=self._show_message, args=(message_id, label),
+                         daemon=True).start()
+
+    def _show_message(self, message_id, label):
+        try:
+            result = _post("/api/matrix/messages/%s/send" % message_id, {})
+            self.sign.say(("Panel: " + label) if result.get("ok")
+                          else (result.get("error") or "the panel did not take it"))
+            self.sign.refresh_panel()
+        except Exception:
+            self.sign.say("no answer from the sign")
+
     def act(self, kind):
         threading.Thread(target=self._act, args=(kind,), daemon=True).start()
 
@@ -1713,6 +2027,28 @@ class Panel:
                     self.sign.say("Back to " + playing)
                 else:
                     self.sign.say("Nothing to go back to")
+            elif kind == "panel-cycle":
+                with self.sign.lock:
+                    cycling = bool((self.sign.panel or {}).get("playlist"))
+                _post("/api/matrix", {"playlist": not cycling})
+                if cycling:
+                    self.sign.say("Panel stopped cycling")
+                else:
+                    _post("/api/matrix/next", {})
+                    self.sign.say("Panel cycling the queue")
+                self.sign.refresh_panel()
+            elif kind == "panel-next":
+                result = _post("/api/matrix/next", {})
+                self.sign.say(("Panel: " + result["message"]["text"])
+                              if result.get("ok")
+                              else (result.get("error") or "nothing queued"))
+            elif kind == "panel-blank":
+                result = _post("/api/matrix/clear", {})
+                # Blanking also stops the cycle server-side, or the next tick
+                # would refill the panel a few seconds later.
+                self.sign.say("Panel blanked" if result.get("ok")
+                              else (result.get("error") or "could not blank it"))
+                self.sign.refresh_panel()
             elif kind == "next":
                 result = _post("/api/rotation/next", {})
                 self.sign.say(("Now playing " + result["scene"]) if result.get("ok")
@@ -1800,15 +2136,22 @@ class Panel:
                 self.draw_tabs(state)
                 if self.confirm:
                     self.draw_confirm()
+                elif self.compose is not None:
+                    self.draw_compose()
                 elif self.tab == "scenes":
                     self.draw_scenes(state)
                 elif self.tab == "colour":
                     self.draw_colour(state)
                 elif self.tab == "lights":
                     self.draw_lights(state)
+                elif self.tab == "panel":
+                    self.draw_panel(state)
                 else:
                     self.draw_status(state)
-                self.draw_bottom(state)
+                # The keyboard covers the bottom bar; drawing it underneath
+                # would put live buttons behind an overlay.
+                if self.compose is None:
+                    self.draw_bottom(state)
             else:
                 self.text(self.screen, self.f_head2,
                           "Waiting for the sign\u2026" if state["online"]
