@@ -230,6 +230,11 @@ class MatrixRunner:
         matrix = self.store.matrix()
         if not matrix.get("paging", True):
             return [], None
+        # A panel that pages itself does not need this done for it -- and doing
+        # it anyway would cut the message into pieces the panel would then
+        # scroll one piece at a time.
+        if matrix_module.driver_for(matrix).animates:
+            return [], None
         plan = matrix_module.paginate(matrix, message.get("text") or "")
         pages = plan.get("pages") or []
         if len(pages) < 2:

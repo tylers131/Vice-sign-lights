@@ -1195,6 +1195,87 @@ async def do_say(args):
     print("done -- it stays up until something replaces it.")
 
 
+async def do_text(args):
+    """Send the panel's OWN text command, the one it animates by itself.
+
+    Everything else in this tool draws pixels: we compute every lit LED and
+    send one packet each, and if the message is to move we have to send it all
+    again for every frame. This is the other thing entirely -- one packet
+    carrying the message, an animation number and a speed, after which the
+    panel scrolls it on its own with no further radio at all. It can also store
+    it in one of a hundred slots and cycle those by itself.
+
+    Unverified when written. The packet layout comes from the community's work
+    on the iPixel Color app, and the panel answers 01 or 02 so whether it takes
+    the packet is knowable -- but whether the glyphs come out the right way up
+    is not, because the bit order of the app's own font is not documented. So
+    --order picks one of four, and --sweep sends the same letter in all four
+    with a pause between. Watch the panel and say which one was right; that is
+    the same way the colour order got settled, and for the same reason.
+    """
+    ack = _ack(args)
+    from vicelights.matrix import IPixel, BITMAP_ORDERS, TEXT_ANIMATIONS
+
+    config = {"width": args.width, "height": args.height,
+              "text_mode": "native", "text_font": args.font,
+              "pixel_layout": args.layout}
+    driver = IPixel(config)
+    message = M.normalize_message({"text": args.text, "color": args.color,
+                                   "mode": args.mode, "speed": args.speed})
+    animation = TEXT_ANIMATIONS.get(args.mode, 0)
+    orders = list(BITMAP_ORDERS) if args.sweep else [args.order]
+
+    print("%r as the panel's own text command" % message["text"])
+    print("  animation %d (%s), speed %d, font %s, slot %d"
+          % (animation, args.mode, args.speed, args.font, args.slot))
+    frames = driver.native_text_frames(message, slot=args.slot,
+                                       order=orders[0], animation=animation)
+    if not frames:
+        print("nothing to send")
+        return 2
+    print("  one packet, %d bytes -- against %d packets to draw it a pixel at "
+          "a time" % (len(frames[0]),
+                      len(driver.pixel_frames(message))))
+    print()
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        if listening:
+            print("listening on %s" % ", ".join(_short_uuid(u) for u in listening))
+        for order in orders:
+            frames = driver.native_text_frames(message, slot=args.slot,
+                                               order=order, animation=animation)
+            print("-- bit order %s" % order)
+            replies.clear()
+            await _stream(client, IPixel.write_uuid, frames, args,
+                          "text (%s)" % order)
+            await asyncio.sleep(args.gap)
+            if not replies:
+                print("   no reply -- the panel did not answer this one")
+            for uuid, reply in replies:
+                decoded = _decode_reply(reply)
+                print("   <- %s  %s%s" % (_short_uuid(uuid), reply.hex(" "),
+                                          ("   %s" % decoded) if decoded else ""))
+            if len(orders) > 1:
+                print("   watch the panel for %.0fs" % args.hold)
+                await asyncio.sleep(args.hold)
+    print()
+    if args.sweep:
+        print("Which one was right? Set it and it stays set:")
+        print("  curl -X POST http://localhost/api/matrix \\")
+        print("    -H 'content-type: application/json' \\")
+        print("    -d '{\"text_mode\":\"native\",\"bitmap_order\":\"msb\"}'")
+        print("(swap msb for whichever of %s looked right)"
+              % ", ".join(BITMAP_ORDERS))
+    else:
+        print("If that looked wrong, try --sweep to see all four bit orders.")
+        print("If the panel said 02, it rejected the packet -- the layout is")
+        print("wrong rather than the bit order, and the pixel path still works.")
+    return 0
+
+
 async def do_colortest(args):
     """Show pure red, green and blue, and work out where the colour bytes go.
 
@@ -1799,6 +1880,30 @@ def build_parser():
                    help="repaint the whole panel first (slow, but certain)")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_say(a)))
+
+    p = sub.add_parser("text",
+                       help="send the panel's OWN text command -- it animates itself")
+    ble_args(p)
+    p.add_argument("-t", "--text", default="F",
+                   help="an asymmetric letter reads wrong-way-up at a glance")
+    p.add_argument("--color", default="#ff2f6e")
+    p.add_argument("--mode", choices=sorted(M.TEXT_ANIMATIONS), default="scroll",
+                   help="what the PANEL does with it, not what we do")
+    p.add_argument("--speed", type=int, default=50)
+    p.add_argument("--font", choices=sorted(M.TEXT_FONTS), default="wide")
+    p.add_argument("--order", choices=M.BITMAP_ORDERS, default="msb")
+    p.add_argument("--sweep", action="store_true",
+                   help="send all four bit orders in turn so you can pick one")
+    p.add_argument("--slot", type=int, default=0,
+                   help="0 shows it; 1-100 also stores it on the panel")
+    p.add_argument("--layout", default="argb", help="colour byte order")
+    p.add_argument("--width", type=int, default=96)
+    p.add_argument("--height", type=int, default=16)
+    p.add_argument("--gap", type=float, default=0.6)
+    p.add_argument("--hold", type=float, default=8.0,
+                   help="seconds to watch each one during --sweep")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_text(a)))
 
     p = sub.add_parser("colortest",
                        help="find the panel's colour byte order from what it shows")

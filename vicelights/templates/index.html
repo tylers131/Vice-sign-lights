@@ -1312,8 +1312,10 @@ function clearPanel(){
    at a time: three bands at once and the answer depends on which end the
    reader started from, which is exactly how this was got wrong the first
    time. */
-var MODE_LABELS = {scroll:"Scroll", static:"Hold still", marquee:"Marquee",
-                   flash:"Flash", fade:"Fade"};
+var MODE_LABELS = {scroll:"Scroll \u2190", static:"Hold still",
+                   marquee:"Scroll \u2192", scroll_up:"Scroll up",
+                   scroll_down:"Scroll down", flash:"Flash", fade:"Fade",
+                   pages:"A page at a time"};
 function shownMode(mode){
   var modes = (PANEL && PANEL.modes) || ["static"];
   var use = modes.indexOf(mode) >= 0 ? mode : modes[0];

@@ -645,6 +645,113 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
     }
 
 
+# ---------------------------------------------- the panel's own text command
+#
+# The panel stores a message and animates it itself. That is not a small
+# detail: drawing a scroll from here costs ~29 acknowledged writes a frame and
+# never stops, while this is one transfer and then no radio at all. Everything
+# the compose screen used to offer -- scroll, flash, fade -- is a byte in this
+# packet, and so is the paging this code implements in software.
+#
+# Layout, from the community's reverse engineering of the iPixel Color app
+# (DonKracho/ESPHome-component-iPixel-ble, yyewolf/go-ipxl):
+#
+#   [0:2]   packet length, little endian, counting itself
+#   [2:4]   00 01
+#   [4]     00, or 02 if another chunk follows
+#   [5:9]   payload length
+#   [9:13]  crc32 of the payload, little endian
+#   [13]    unknown, 00
+#   [14]    save slot -- 0 for "just show it", 1-100 to store it
+#   -- payload starts here --
+#   [15:17] character count
+#   [17]    horizontal alignment
+#   [18]    vertical alignment
+#   [19]    animation
+#   [20]    speed 0-100
+#   [21]    text colour mode
+#   [22:25] text colour
+#   [25]    background colour mode
+#   [26:29] background colour
+#   then one block per character: [flag][r][g][b][bitmap]
+#
+# NOT VERIFIED ON HARDWARE. The panel answers 01 or 02, so whether it accepts
+# the packet is knowable; whether the glyphs come out the right way up is not,
+# because the bit order the app's font is stored in is not documented. So the
+# bitmap goes out in one of four orders, and `matrix_probe.py text` sends an
+# asymmetric letter and asks which one looked right -- the same way the colour
+# order was settled.
+CMD_TEXT = (0x00, 0x01)
+
+TEXT_ANIMATIONS = {
+    "pages": 0,          # a screenful at a time -- what paginate() does by hand
+    "scroll": 1,         # right to left
+    "marquee": 2,        # left to right
+    "scroll_up": 3,
+    "scroll_down": 4,
+    "flash": 5,
+    "fade": 6,
+    "static": 0,         # one page, held: pages with nothing to page to
+}
+
+# 8x16 is one byte per row; 16x16 is two, and fills a sixteen-row panel to the
+# edges. Wide costs characters across the panel -- six instead of twelve -- but
+# a scrolling message is not limited by the panel's width any more.
+TEXT_FONTS = {"narrow": 0, "wide": 1}
+TEXT_CELLS = {0: (8, 16), 1: (16, 16)}
+
+# Four ways the same glyph can be laid out. Which one this panel wants is a
+# question for the panel.
+BITMAP_ORDERS = ("msb", "lsb", "msb-flip", "lsb-flip")
+
+
+def glyph_cell(char: str, font_flag: int = 0, order: str = "msb",
+               stretch: bool = True) -> bytes:
+    """One character as the panel wants it: 16 or 32 bytes, top row first.
+
+    The 5x7 font is placed into the cell rather than replaced: it is the font
+    the preview draws and the one the pixel path is tested against, so a
+    message looks the same whichever route it takes to the panel.
+    """
+    width, height = TEXT_CELLS.get(font_flag, TEXT_CELLS[0])
+    columns = glyph(char)
+    # Rows of the 5x7 glyph, top first.
+    rows = [[(column >> y) & 1 for column in columns] for y in range(FONT_HEIGHT)]
+    scale = max(1, width // (FONT_WIDTH + 1))
+    if scale > 1:
+        rows = [[bit for bit in row for _ in range(scale)] for row in rows]
+    drawn = len(rows[0]) if rows else 0
+    left = max(0, (width - drawn) // 2)
+
+    out = []
+    for y in range(height):
+        if stretch:
+            source = rows[min(FONT_HEIGHT - 1, y * FONT_HEIGHT // height)]
+        else:
+            top = (height - FONT_HEIGHT) // 2
+            source = rows[y - top] if 0 <= y - top < FONT_HEIGHT else []
+        bits = [0] * width
+        for index, bit in enumerate(source):
+            if left + index < width:
+                bits[left + index] = bit
+        out.append(bits)
+
+    if order.endswith("flip"):
+        out.reverse()
+    data = bytearray()
+    for bits in out:
+        for byte_index in range(width // 8):
+            chunk = bits[byte_index * 8:(byte_index + 1) * 8]
+            value = 0
+            for position, bit in enumerate(chunk):
+                if not bit:
+                    continue
+                value |= (0x80 >> position) if order.startswith("msb") \
+                    else (1 << position)
+            data.append(value)
+    return bytes(data)
+
+
 def describe_message(message: dict, mode: str = None) -> str:
     """One message, for a log line or a job label.
 
@@ -735,6 +842,10 @@ class MatrixDriver:
         """One block of solid colour, for the colour check. [] if unsupported."""
         return []
 
+    # Does the panel move and page a message by itself? If not, this code has
+    # to, which is what paginate() is for.
+    animates = False
+
     # -- helper shared by every length-prefixed family
     @staticmethod
     def _chunked(payload: bytes, size: int) -> list:
@@ -813,7 +924,26 @@ class IPixel(MatrixDriver):
     @property
     def text_mode(self) -> str:
         mode = str(self.config.get("text_mode") or "pixels").strip().lower()
-        return mode if mode in ("pixels", "png") else "pixels"
+        return mode if mode in ("pixels", "png", "native") else "pixels"
+
+    @property
+    def animates(self) -> bool:
+        """Does the panel handle movement and paging on its own?"""
+        return self.text_mode == "native"
+
+    @property
+    def modes(self):
+        """What the panel can be asked to do with a message.
+
+        Only in native text mode. Drawing the pixels ourselves gives one
+        behaviour -- still text -- and offering more than that is how the
+        compose screen came to have a menu of five that all did the same
+        thing.
+        """
+        if self.text_mode != "native":
+            return STATIC_ONLY
+        return ("static", "scroll", "marquee", "scroll_up", "scroll_down",
+                "flash", "fade", "pages")
 
     # -- control
 
@@ -894,9 +1024,87 @@ class IPixel(MatrixDriver):
     # -- text
 
     def text_frames(self, message: dict, previous: dict = None) -> list:
+        if self.text_mode == "native":
+            return self.native_text_frames(message)
         if self.text_mode == "png":
             return self.png_frames(message)
         return self.pixel_frames(message, previous=previous)
+
+    # -- the panel's own text command
+
+    def text_font(self) -> int:
+        want = str(self.config.get("text_font") or "wide").strip().lower()
+        return TEXT_FONTS.get(want, TEXT_FONTS["wide"])
+
+    def bitmap_order(self) -> str:
+        order = str(self.config.get("bitmap_order") or "msb").strip().lower()
+        return order if order in BITMAP_ORDERS else "msb"
+
+    def animation_for(self, message: dict) -> int:
+        mode = str((message or {}).get("mode") or DEFAULT_MODE).strip().lower()
+        return TEXT_ANIMATIONS.get(mode, TEXT_ANIMATIONS["static"])
+
+    def native_text_frames(self, message: dict, slot: int = 0,
+                           order: str = None, font_flag: int = None,
+                           animation: int = None) -> list:
+        """One packet: the message, and how the panel should animate it.
+
+        After this the panel is on its own -- it scrolls, flashes or pages
+        without another byte from us, which is the whole point. A slot of 1-100
+        stores it as well, for the panel's own program list.
+        """
+        import binascii
+
+        text = str((message or {}).get("text") or "")[:MAX_TEXT]
+        if not text:
+            return []
+        order = order or self.bitmap_order()
+        font_flag = self.text_font() if font_flag is None else int(font_flag)
+        colour = parse_color((message or {}).get("color"))
+        background = parse_color((message or {}).get("background"), (0, 0, 0))
+        if animation is None:
+            animation = self.animation_for(message)
+        try:
+            speed = max(0, min(100, int((message or {}).get("speed", 50))))
+        except (TypeError, ValueError):
+            speed = 50
+
+        payload = bytearray()
+        payload += len(text).to_bytes(2, "little")
+        payload.append(0x01)                      # horizontal alignment
+        payload.append(0x01)                      # vertical alignment
+        payload.append(int(animation) & 0xFF)
+        payload.append(speed)
+        payload.append(0x00)                      # text colour mode: plain
+        payload += bytes(colour)
+        payload.append(0x00)                      # background colour mode
+        payload += bytes(background)
+        for char in text:
+            payload.append(font_flag & 0xFF)
+            payload += bytes(colour)
+            payload += glyph_cell(char, font_flag, order, self.stretch())
+
+        header = bytearray()
+        header.append(0x00)                       # no further chunk
+        header += len(payload).to_bytes(4, "little")
+        header += (binascii.crc32(bytes(payload)) & 0xFFFFFFFF).to_bytes(4, "little")
+        header.append(0x00)                       # unknown, always zero
+        header.append(max(0, min(100, int(slot))))
+        return [self.packet(CMD_TEXT, bytes(header) + bytes(payload))]
+
+    def program_frames(self, slots) -> list:
+        """Tell the panel which stored slots to cycle, and in what order.
+
+        This is the sign running its own playlist: once the slots are filled
+        the Pi is not involved at all, which on a shared antenna is worth more
+        than any of it.
+        """
+        numbers = [max(1, min(100, int(n))) for n in (slots or [])][:100]
+        if not numbers:
+            return []
+        body = bytearray(len(numbers).to_bytes(2, "little"))
+        body += bytes(numbers)
+        return [self.packet((0x08, 0x80), bytes(body))]
 
     def scale_for(self, message: dict) -> int:
         """How many LEDs per font pixel, for this message on this panel."""

@@ -105,6 +105,12 @@ DEFAULT_MATRIX = {
     # shares its radio with the twelve sign controllers.
     "paging": True,
     "page_seconds": 5.0,
+    # "pixels" draws every LED from here; "native" hands the message to the
+    # panel's own text command and lets it animate on its own. Native is not
+    # the default because the glyph bit order it wants is undocumented -- run
+    # matrix_probe.py text --sweep at the sign and set what looked right.
+    "text_font": "wide",        # wide fills a 16-row panel; narrow fits more
+    "bitmap_order": "msb",
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
@@ -262,7 +268,12 @@ def _matrix(raw) -> dict:
     value["family"] = family
     value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
     mode = str(value.get("text_mode") or "pixels").strip().lower()
-    value["text_mode"] = mode if mode in ("pixels", "png") else "pixels"
+    value["text_mode"] = mode if mode in ("pixels", "png", "native") else "pixels"
+    from .matrix import TEXT_FONTS, BITMAP_ORDERS
+    font = str(value.get("text_font") or "wide").strip().lower()
+    value["text_font"] = font if font in TEXT_FONTS else "wide"
+    order = str(value.get("bitmap_order") or "msb").strip().lower()
+    value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     scale = str(value.get("scale") or "auto").strip().lower()
     if scale != "auto":
         try:

@@ -1789,20 +1789,110 @@ things that *might* still be lit and gets erased against as well. The list
 clears on the next successful write and is capped at three, so a bad patch of
 radio cannot grow the erase into a full-panel repaint.
 
+### The panel can animate a message itself
+
+There are two ways to get text onto this panel and they are not variations of
+each other.
+
+**Drawing it (`text_mode: "pixels"`, the default and the verified one.)** We
+work out every lit LED and send one packet each. Certain, because every byte
+is documented -- and static, because making it move means sending the whole
+thing again for every frame.
+
+**Handing it over (`text_mode: "native"`.)** One packet carrying the message,
+an animation number and a speed. The panel scrolls, flashes or fades it on its
+own, with no further radio at all, and can store it in one of a hundred slots
+and cycle those by itself.
+
+The difference for "WELCOME TO CAMP VICE AND THE BAR IS OPEN":
+
+| | packets | bytes | after that |
+| --- | --- | --- | --- |
+| `pixels` | 524, in 4 software pages | 5235 | nothing moves |
+| `native` | **1** | 1469 | the panel scrolls it, forever, on its own |
+
+The animations are the panel's, numbered 0-6: pages, scroll left, scroll
+right, scroll up, scroll down, flash, brightness fade. Which is to say the
+paging this code implements by hand is animation 0, and the effects the
+compose screen used to offer and could not deliver are 1, 5 and 6.
+
+```
+[0:2]   packet length, little endian, counting itself
+[2:4]   00 01
+[4]     00, or 02 if another chunk follows
+[5:9]   payload length
+[9:13]  crc32 of the payload, little endian
+[13]    unknown, 00
+[14]    save slot -- 0 for "just show it", 1-100 to store it
+[15:17] character count          <- payload starts here
+[17]    horizontal alignment
+[18]    vertical alignment
+[19]    animation 0-6
+[20]    speed 0-100
+[21]    text colour mode
+[22:25] text colour
+[25]    background colour mode
+[26:29] background colour
+        then one block per character: [flag][r][g][b][bitmap]
+```
+
+`flag` 0 is an 8x16 cell (16 bytes, one per row); flag 1 is 16x16 (32 bytes,
+two per row) and fills a sixteen-row panel to the edges. Six characters fit
+across 96 pixels at 16x16 -- which stops mattering once the panel is scrolling
+rather than holding still.
+
+**This is not verified on hardware.** The layout is from the community's work
+on the iPixel Color app; the panel answers `01` or `02`, so whether it accepts
+the packet is knowable, but the bit order the app stores its own font in is
+not documented, so whether the glyphs come out the right way up is a question
+for the panel:
+
+```bash
+sudo ./matrix_probe.py text AA:BB:CC:DD:EE:FF --sweep
+```
+
+That sends one asymmetric letter four times, in each bit order, pausing
+between. Whichever looked right goes in `bitmap_order`, and `text_mode` goes
+to `native`:
+
+```bash
+curl -X POST http://localhost/api/matrix -H 'content-type: application/json' \
+  -d '{"text_mode":"native","bitmap_order":"msb"}'
+```
+
+The compose screen then offers the panel's animations, because the menu is
+built from what the driver says it can deliver. If the panel answers `02` the
+packet layout is wrong rather than the bit order, and the pixel path is
+untouched and still works.
+
+Protocol details from
+[DonKracho/ESPHome-component-iPixel-ble](https://github.com/DonKracho/ESPHome-component-iPixel-ble)
+(`docs/IPIXEL_COMMANDS_DEMYSTIFIED.md`) and
+[yyewolf/go-ipxl](https://github.com/yyewolf/go-ipxl).
+
 ### The text holds still, and the menu says so
 
-A message carries a `mode` -- `scroll`, `static`, `marquee`, `flash`, `fade` --
-and the compose screen used to offer all five. Nothing in any driver read it.
-Five choices, one behaviour, and no way to tell from the screen which one you
-were getting: the menu was decoration.
+This applies to the `pixels` path above -- the one that is verified, and the
+one running until the native path is confirmed at the sign.
 
-Movement is not a matter of writing the code. Measured on this sign, a connect
-costs 1.5s and a disconnect 0.2s, and every write is its own connection. Even
-the cheapest possible animation -- a flash using the panel's own one-packet
+A message carries a `mode` -- `scroll`, `static`, `marquee`, `flash`, `fade` --
+and the compose screen used to offer all five. Nothing in the pixel path read
+it. Five choices, one behaviour, and no way to tell from the screen which one
+you were getting: the menu was decoration.
+
+Movement *we* drive is not affordable. Measured on this sign, a connect costs
+1.5s and a disconnect 0.2s, and every write is its own connection. Even the
+cheapest animation we could drive -- a flash using the panel's one-packet
 power command -- is about 1.8s of radio per step, so a two-second flash holds
 the antenna nine tenths of the time. That antenna is shared with the twelve
 controllers. Scrolling is worse again, at ~29 writes a frame and 1.7 frames a
 second, forever.
+
+None of which applies to movement the *panel* drives, which costs one packet
+and then nothing -- and is why the section above exists. The mistake worth not
+repeating: "we cannot afford to animate this" was measured carefully and
+answered the wrong question, because it never asked whether the animating had
+to be ours.
 
 So a driver now declares the modes it can actually deliver (`modes`, in its
 capabilities), the compose screen offers those and hides the control when there
