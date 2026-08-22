@@ -875,27 +875,32 @@ async def do_hello(args):
     reading, so the right one can be recognised on sight.
     """
     from vicelights.matrix import IPixel
-    import datetime
 
-    now = datetime.datetime.now()
-    probes = [
-        ("device info / set time",
-         IPixel.packet((0x01, 0x80), [now.hour, now.minute, now.second, 0])),
-    ]
+    # The info query is also the set-time command, so its reply mixes the clock
+    # in with whatever else it reports. Send it several times with deliberately
+    # different times: the bytes that follow what we sent are the clock, and
+    # the bytes that stay put whatever we send are the device describing
+    # itself. That separates them without guessing at an offset.
+    stamps = [(1, 2, 3), (11, 22, 33), (20, 44, 55)][:max(1, args.repeat)]
+    probes = [("device info, clock %02d:%02d:%02d" % stamp,
+               IPixel.packet((0x01, 0x80), [stamp[0], stamp[1], stamp[2], 0]),
+               stamp)
+              for stamp in stamps]
     if args.extra:
         for spec in args.extra.split(","):
             cleaned = re.sub(r"[^0-9a-fA-F]", "", spec)
             if len(cleaned) % 2 == 0 and cleaned:
-                probes.append(("custom %s" % cleaned, bytes.fromhex(cleaned)))
+                probes.append(("custom %s" % cleaned, bytes.fromhex(cleaned), None))
 
     replies = []
     holder = connected(args.address, args.timeout, args.retries)
     async with holder as client:
         listening = await _listen_all(client, replies)
         print("listening on %s\n" % ", ".join(listening))
-        for label, packet in probes:
+        collected = []
+        for label, packet, stamp in probes:
             replies.clear()
-            print("%-24s -> %s" % (label, packet.hex(" ")))
+            print("%-28s -> %s" % (label, packet.hex(" ")))
             await client.write_gatt_char(IPixel.write_uuid, packet, response=False)
             await asyncio.sleep(args.gap)
             if not replies:
@@ -903,13 +908,68 @@ async def do_hello(args):
                 continue
             for uuid, reply in replies:
                 print("    <- %s  %s" % (_short_uuid(uuid), reply.hex(" ")))
-                _guess_dimensions(reply)
+                collected.append((reply, stamp, packet))
             print()
+        _report_static(collected)
         for characteristic in listening:
             try:
                 await client.stop_notify(characteristic)
             except Exception:
                 pass
+
+
+def _report_static(collected):
+    """Split a reply into the part that tracked what we sent and the part that did not."""
+    replies = [reply for reply, _stamp, _sent in collected if reply]
+    if len(replies) < 2:
+        if replies:
+            _guess_dimensions(replies[0])
+        return
+    shortest = min(len(reply) for reply in replies)
+    if any(len(reply) != shortest for reply in replies):
+        print("replies differ in length; not comparing them byte by byte")
+        return
+
+    echoed, static, varying = [], [], []
+    for index in range(shortest):
+        values = {reply[index] for reply in replies}
+        sent = {packet[index] if index < len(packet) else None
+                for _r, _s, packet in collected}
+        if len(values) == 1:
+            static.append(index)
+        elif values == sent:
+            echoed.append(index)
+        else:
+            varying.append(index)
+
+    def show(name, indexes):
+        if not indexes:
+            return
+        print("  %-28s %s" % (name, ", ".join(
+            "byte %d = %s" % (i, " / ".join("%02x" % reply[i] for reply in replies))
+            for i in indexes)))
+
+    print("comparing %d replies:" % len(replies))
+    show("same whatever we send", static)
+    show("echoes what we sent", echoed)
+    show("changes, but not an echo", varying)
+    # Bytes 0-3 are the length and the echoed command; they are framing, not
+    # device information, and listing them as candidates only adds noise.
+    payload_static = [index for index in static if index >= 4]
+    if payload_static:
+        print("\n  The bytes that never move are the panel describing itself.")
+        print("  A size would be among them. Candidates, as decimal:")
+        for index in payload_static:
+            value = replies[0][index]
+            notes = []
+            if value in (8, 16, 32, 64, 96, 128):
+                notes.append("a common panel dimension")
+            if value + 1 in (8, 16, 32, 64, 128):
+                notes.append("= %d - 1, so possibly a maximum coordinate" % (value + 1))
+            print("      byte %-2d = %3d%s"
+                  % (index, value, ("   (" + "; ".join(notes) + ")") if notes else ""))
+        print("\n  Counting the LEDs on the panel settles it in five seconds,")
+        print("  and beats any amount of staring at these bytes.")
 
 
 def _guess_dimensions(reply: bytes):
@@ -1403,6 +1463,8 @@ def build_parser():
     p = sub.add_parser("hello", help="ask the panel what it is, including its size")
     ble_args(p)
     p.add_argument("--gap", type=float, default=2.0)
+    p.add_argument("--repeat", type=int, default=3,
+                   help="how many times to ask, with different clocks (default 3)")
     p.add_argument("--extra", default="",
                    help="comma-separated extra hex packets to try")
     p.add_argument("--commands")
