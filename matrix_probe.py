@@ -2071,7 +2071,7 @@ def build_parser():
     p.add_argument("--mode", choices=sorted(M.TEXT_ANIMATIONS), default="scroll",
                    help="what the PANEL does with it, not what we do")
     p.add_argument("--speed", type=int, default=50)
-    p.add_argument("--font", choices=sorted(M.TEXT_FONTS), default="wide")
+    p.add_argument("--font", choices=sorted(M.TEXT_FONTS), default="narrow")
     p.add_argument("--order", choices=M.BITMAP_ORDERS, default="msb")
     p.add_argument("--sweep", action="store_true",
                    help="send every bit order in turn so you can pick one")

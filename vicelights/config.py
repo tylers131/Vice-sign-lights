@@ -109,7 +109,7 @@ DEFAULT_MATRIX = {
     # panel's own text command and lets it animate on its own. Native is not
     # the default because the glyph bit order it wants is undocumented -- run
     # matrix_probe.py text --sweep at the sign and set what looked right.
-    "text_font": "wide",        # wide fills a 16-row panel; narrow fits more
+    "text_font": "narrow",      # 8x16 cells: the one this panel is proven on
     "bitmap_order": "msb",
     "text_reversed": False,     # for a panel that lays characters right to left
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
@@ -271,8 +271,8 @@ def _matrix(raw) -> dict:
     mode = str(value.get("text_mode") or "pixels").strip().lower()
     value["text_mode"] = mode if mode in ("pixels", "png", "native") else "pixels"
     from .matrix import TEXT_FONTS, BITMAP_ORDERS
-    font = str(value.get("text_font") or "wide").strip().lower()
-    value["text_font"] = font if font in TEXT_FONTS else "wide"
+    font = str(value.get("text_font") or "narrow").strip().lower()
+    value["text_font"] = font if font in TEXT_FONTS else "narrow"
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     value["text_reversed"] = bool(value.get("text_reversed"))

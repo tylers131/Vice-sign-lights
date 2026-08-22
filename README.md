@@ -1809,7 +1809,7 @@ The difference for "WELCOME TO CAMP VICE AND THE BAR IS OPEN":
 | | packets | bytes | after that |
 | --- | --- | --- | --- |
 | `pixels` | 524, in 4 software pages | 5235 | nothing moves |
-| `native` | **1** | 1469 | the panel scrolls it, forever, on its own |
+| `native` | **1** (split across 4 writes) | 1037 | the panel scrolls it, forever, on its own |
 
 The animations are the panel's, numbered 0-6: pages, scroll left, scroll
 right, scroll up, scroll down, flash, brightness fade. Which is to say the
@@ -1846,14 +1846,24 @@ short ones fitted a single write and were the only thing being tested.
 `pack_frames` now splits an oversized frame as a backstop rather than handing
 the adapter a write it cannot make.
 
-`flag` 0 is an 8x16 cell (16 bytes, one per row); flag 1 is 16x16 (32 bytes,
-two per row) and fills a sixteen-row panel to the edges. A 16-wide row is two
-bytes, so there are three independent ways to lay it out wrong -- which end of
-a byte is the left of the picture, which byte comes first, and whether rows run
-top-down -- and mirroring a row means reversing the bits *and* swapping the
-bytes. The first version of this offered only bit order and row order, so all
-four of its choices came out backwards on the sign: none of them could produce
-a mirror. `lsb-swap` is the mirror of `msb`. Six characters fit
+**A cell is 8 wide and 16 tall -- sixteen bytes, one per row -- for both
+flags.** The reference implementation describes flag 1 as "width doubled" and
+that reads as a 32-byte 16x16 cell; it is not. Sending 32-byte cells put the
+first character up correctly and turned everything after it into rubbish,
+which is the signature of a block-size mismatch: the panel took sixteen bytes,
+started reading the next character's flag halfway through the first one's
+bitmap, and never recovered. The doubling is the panel's own, and the flag is
+how it is asked for. Flag 0 is what this sign runs; flag 1 sends the same
+sixteen bytes and is unconfirmed.
+
+That also collapses the bit-order question. A row is one byte, so swapping the
+bytes of a row does nothing, and the eight orders give four distinct pictures:
+`lsb` and `lsb-swap` are the same bytes at this width. The eight exist because
+a 16-wide cell has three independent axes -- which end of a byte is the left of
+the picture, which byte comes first, whether rows run top-down -- and mirroring
+a 16-wide row means reversing the bits *and* swapping the bytes. The first
+version offered only bit order and row order, so every one of its four choices
+came out backwards on the sign: none of them could produce a mirror. Six characters fit
 across 96 pixels at 16x16 -- which stops mattering once the panel is scrolling
 rather than holding still.
 

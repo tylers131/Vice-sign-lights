@@ -694,11 +694,19 @@ TEXT_ANIMATIONS = {
     "static": 0,         # one page, held: pages with nothing to page to
 }
 
-# 8x16 is one byte per row; 16x16 is two, and fills a sixteen-row panel to the
-# edges. Wide costs characters across the panel -- six instead of twelve -- but
-# a scrolling message is not limited by the panel's width any more.
+# A cell is 8 wide and 16 tall, one byte per row, sixteen bytes -- for BOTH
+# flags. That is measured, not assumed: sending flag 1 with a 32-byte 16x16
+# cell put the first character up correctly and turned everything after it
+# into rubbish, which is what a block-size mismatch looks like from the front.
+# The reference implementation's "width doubled" is the panel's own doing, and
+# the flag is how it is asked for -- so flag 1 sends the same sixteen bytes
+# and lets the panel stretch them.
+#
+# Flag 1 is UNCONFIRMED. Flag 0 is what this sign runs and what it is drawn
+# with here; if "wide" turns out to be wrong too, it is wrong the same way and
+# "narrow" is one word away.
 TEXT_FONTS = {"narrow": 0, "wide": 1}
-TEXT_CELLS = {0: (8, 16), 1: (16, 16)}
+TEXT_CELLS = {0: (8, 16), 1: (8, 16)}
 
 # A row of a 16-wide glyph is two bytes, and there are three independent ways
 # to get it wrong: which end of a byte is the left of the picture, which of the
@@ -1087,8 +1095,8 @@ class IPixel(MatrixDriver):
     # -- the panel's own text command
 
     def text_font(self) -> int:
-        want = str(self.config.get("text_font") or "wide").strip().lower()
-        return TEXT_FONTS.get(want, TEXT_FONTS["wide"])
+        want = str(self.config.get("text_font") or "narrow").strip().lower()
+        return TEXT_FONTS.get(want, TEXT_FONTS["narrow"])
 
     def bitmap_order(self) -> str:
         order = str(self.config.get("bitmap_order") or "msb").strip().lower()
