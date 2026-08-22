@@ -43,6 +43,10 @@ class MatrixRunner:
         self._page = 0
         self._page_at = None          # monotonic; when to turn the page
         self._source = None           # the whole message the pages came from
+        self._job = None              # the write we are waiting on
+        self._job_page = None         # what that write was meant to put up
+        self._landed = None           # the last write that actually completed
+        self._unsure = []             # writes that failed and may be half up
         self._warned_unconfigured = False
 
     # ------------------------------------------------------------------ state
@@ -102,6 +106,8 @@ class MatrixRunner:
             "family_setting": matrix.get("family", "auto"),
             "scale": matrix.get("scale", "auto"),
             "stretch": bool(matrix.get("stretch", True)),
+            "pixel_layout": matrix.get("pixel_layout",
+                                       matrix_module.DEFAULT_PIXEL_LAYOUT),
             "char_uuid": driver.characteristic() or "",
             "capabilities": driver.capabilities,
             "brightness": matrix.get("brightness", 100),
@@ -122,7 +128,7 @@ class MatrixRunner:
 
     # ------------------------------------------------------------------ sends
 
-    def _paint(self, page: dict, label: str) -> bool:
+    def _paint(self, page: dict, label: str, manual: bool = False) -> bool:
         """Put one page on the panel and record it as what is showing.
 
         Recorded on submission rather than on completion, deliberately: the
@@ -135,17 +141,25 @@ class MatrixRunner:
         # What is on the panel now, so the new page can erase exactly what the
         # old one lit rather than repainting every pixel or leaving the two
         # superimposed.
+        self._reconcile()
         with self._lock:
-            previous = dict(self._current) if self._current else None
+            # What might be on the glass: what we know landed, plus anything
+            # whose write died partway. Erasing against only the first leaves
+            # half a message underneath the next one.
+            # Not _current: that is set when a write is *queued*, so after a
+            # failure it names a message the panel never got, and erasing
+            # against it would leave the real one lit underneath.
+            previous = [dict(entry) for entry in
+                        ([self._landed] if self._landed else []) + self._unsure]
         try:
-            frames = driver.text_frames(page, previous=previous)
+            frames = driver.text_frames(page, previous=previous or None)
         except Exception as exc:
             with self._lock:
                 self._last_error = "%s: %s" % (type(exc).__name__, exc)
             log.exception("could not encode %s", matrix_module.describe_message(page))
             return False
         job = self.worker.submit_matrix(
-            frames, label, coalesce_key="matrix:text",
+            frames, label, coalesce_key="matrix:text", manual=manual,
             payload={"message_id": page.get("id"), "text": page.get("text")})
         if job is None:
             with self._lock:
@@ -155,7 +169,38 @@ class MatrixRunner:
             self._current = dict(page)
             self._current_at = time.time()
             self._last_error = ""
+            self._job = job
+            self._job_page = dict(page)
         return True
+
+    def _reconcile(self):
+        """Find out whether the last write actually landed.
+
+        A message is recorded as showing the moment it is queued, so the dwell
+        counts reading time rather than radio time. That is right for timing
+        and wrong for erasing: a write that timed out did not put anything up,
+        or put half of it up, and the next message erasing against it leaves
+        the real one underneath. So the job is checked once it finishes, and a
+        write that did not succeed joins the list of things that might still
+        be lit.
+        """
+        with self._lock:
+            job, page = self._job, self._job_page
+        if job is None or getattr(job, "state", "") in ("queued", "running"):
+            return
+        landed = getattr(job, "state", "") == "done" and getattr(job, "ok", 0)
+        with self._lock:
+            if self._job is not job:
+                return
+            self._job = None
+            self._job_page = None
+            if landed:
+                self._landed = page
+                self._unsure = []
+            elif page:
+                # Three is enough to cover a bad patch of radio without
+                # growing the erase into a full-panel repaint.
+                self._unsure = ([page] + self._unsure)[:3]
 
     def _page_seconds(self) -> float:
         """How long one page of a long message stays up.
@@ -192,13 +237,14 @@ class MatrixRunner:
                  "spacing": plan["spacing"]}
         return [dict(message, text=page, plan=style) for page in pages], style
 
-    def _send(self, message: dict, label: str, hold: float) -> bool:
+    def _send(self, message: dict, label: str, hold: float,
+              manual: bool = False) -> bool:
         """Show a message, in pages if it is too wide to fit at once."""
         pages, _style = self._split(message)
         first = pages[0] if pages else dict(message)
         if pages:
             label = "%s (1/%d)" % (label, len(pages))
-        if not self._paint(first, label):
+        if not self._paint(first, label, manual=manual):
             return False
         seconds = self._page_seconds()
         now = time.monotonic()
@@ -222,6 +268,9 @@ class MatrixRunner:
         self._page = 0
         self._page_at = None
         self._source = None
+        self._job = None
+        self._job_page = None
+        self._landed = None
 
     def _turn_page(self) -> bool:
         """Show the next page of the current message, wrapping at the end.
@@ -238,6 +287,7 @@ class MatrixRunner:
             with self._lock:
                 self._reset_pages()
             return False
+        # A page turn is the timer's work, not a person's.
         ok = self._paint(pages[index],
                          "panel: page %d/%d" % (index + 1, len(pages)))
         with self._lock:
@@ -269,7 +319,11 @@ class MatrixRunner:
             raise ValueError("a message needs some text")
         if hold is None:
             hold = message["dwell"] or self._forever()
-        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message), hold)
+        # Typed by a person, so it is tried even if the panel has been
+        # failing: an error on the screen beats a message that quietly never
+        # went anywhere.
+        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message),
+                        hold, manual=True)
         with self._lock:
             error = self._last_error
         return {"sent": ok, "message": message, "error": error}
@@ -292,7 +346,8 @@ class MatrixRunner:
                     break
         message = queue[start % len(queue)]
         dwell = message["dwell"] or matrix.get("default_dwell", 20.0)
-        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message), dwell)
+        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message),
+                        dwell, manual=force)
         if ok:
             log.info("panel -> %s (holding %.0fs, %d in queue)",
                      matrix_module.describe_message(message), dwell, len(queue))
@@ -331,6 +386,8 @@ class MatrixRunner:
             self._current = None
             self._current_at = None
             self._next_at = None
+            self._unsure = []
+            self._landed = None
             self._reset_pages()
         return ok
 
@@ -362,7 +419,7 @@ class MatrixRunner:
             with self._lock:
                 self._last_error = "this panel has no command for that"
             return False
-        job = self.worker.submit_matrix(frames, label,
+        job = self.worker.submit_matrix(frames, label, manual=True,
                                         coalesce_key="matrix:" + kind)
         if job is None:
             with self._lock:
@@ -385,6 +442,7 @@ class MatrixRunner:
         matrix = self.store.matrix()
         if not (matrix.get("enabled") and matrix.get("address")):
             return
+        self._reconcile()
         # Pages turn whether or not the playlist is running: a message sent by
         # hand is still too long to fit, and its later pages are as much of the
         # message as the first one.  But the playlist wins when the dwell is

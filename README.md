@@ -1269,6 +1269,23 @@ skipped 1 device(s) still in cooldown: B_E
 
 Set `cooldown_after` to 0 to disable the mechanism and always retry everything.
 
+**A cooldown never swallows something a person just asked for.** Skipping is
+what keeps a twelve-device sweep fast; a job with one device in it has nothing
+to keep fast, so if someone typed the message or pressed the button it goes out
+and comes back with an error rather than vanishing. It still gets the single
+probe attempt, so a dead panel costs one connect and not the full budget. A
+*timer's* single-device work — the message playlist, a page turn — stays
+skipped: a dead panel asked for a message every twenty seconds would hold the
+radio the twelve controllers need.
+
+This was worth fixing because of how it read from the phone. One panel timeout
+put the panel in cooldown, and every message after it came back as
+`failed (0 ok / 0 failed in 0.0s)` — a failure with nothing failed in it, for
+three minutes, with no reason shown anywhere. The queue card now prints the
+job's reason, and tells `no answer from` (a device that did not respond) apart
+from `skipped` (one the sign chose not to try), which were previously both
+printed as "skipped".
+
 **Investigate a device that keeps cooling down** rather than living with it —
 check the Devices tab for its last error and signal, and see the range note in
 the troubleshooting table.
@@ -1528,6 +1545,8 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/matrix/messages/<id>/send` | Put that one up now |
 | POST | `/api/matrix/messages/order` | `{ids: [...]}` — the list order is the play order |
 | GET | `/api/matrix/preview?text=` | The bitmap the panel will get, whether it fits, and its pages if it does not |
+| POST | `/api/matrix/colortest` | `{step}` — put one known colour on the panel |
+| POST | `/api/matrix/colorfix` | `{seen: [...], layout}` — solve the byte order from what was seen |
 | GET/POST | `/api/settings` | Server-wide settings, e.g. `{apply_on_boot}` |
 | GET/POST | `/api/time` | `{iso: "2026-08-28T19:30:00"}` or `{epoch: ...}` |
 | GET/PUT | `/api/config` | Whole config |
@@ -1700,19 +1719,37 @@ That showed as a few LEDs missing from every message, different ones each time,
 which looks like a rendering bug and is not one. `write_response` defaults to
 true; `frame_delay` can then be 0, because the acknowledgement paces the radio.
 
-**The set-pixel byte order is not what the protocol writeups say.** They give
-`[R][G][B][A]`. Measured on this panel, one byte at a time:
+**The set-pixel byte order is not what the protocol writeups say**, and it is
+not reliably guessable either. They give `[R][G][B][A]`. Sending that, this
+panel showed blue, cyan and magenta for red, green and blue, which solves to
+`[A][G][R][B]` — and `agrb` was wrong too: with it in place the panel showed
+green for red. Two readings of the same panel, one of them wrong, and no way
+to tell which from a description after the fact.
 
-| byte 4 alone | byte 5 alone | byte 6 alone | byte 7 alone |
-| --- | --- | --- | --- |
-| nothing | green | red | blue |
+So the layout is not derived from a remembered photo any more. **Message tab →
+Panel → Colour check** puts one block on the panel, asks what colour it is,
+three times, and solves for the wiring:
 
-So it is `[A][G][R][B]` — `pixel_layout: "agrb"`, which is the default. The
-giveaway was that blue lit for *every* colour sent: the only byte that was 255
-every time was the alpha, so blue was coming from there. No reordering of the
-first three bytes can produce that, which is why this is a layout setting and
-not a channel-order one. `./matrix_probe.py colortest <address>` derives it by
-setting one byte at a time and asking which channel lit.
+```
+POST /api/matrix/colortest  {"step": 0}   -> {"sent": "red", "layout": "agrb"}
+POST /api/matrix/colorfix   {"seen": ["green", "red", "blue"], "layout": "agrb"}
+                                          -> {"saved": "argb"}
+```
+
+One block at a time on purpose. Three bands at once and the answer depends on
+which end the reader started from — which is how this was got wrong the first
+time. The check costs 81 packets, about three seconds.
+
+`solve_layout` searches all 24 permutations of `r`,`g`,`b`,`a` and returns
+every one that explains all three answers. The alpha byte is part of the
+search, not an aside: send with the wrong layout and a hard-coded 255 alpha
+lands in a colour channel, which is exactly why blue lit for *every* colour on
+the first attempt. That also means no reordering of the first three bytes can
+express the fix, which is why this is a layout and not a channel order.
+
+Answers that fit nothing are refused rather than saved, and the two-answer
+ambiguity is real: "red looks green" alone leaves four candidates (`argb`,
+`abgr`, `grab`, `gbar`). The green block is what separates them.
 
 Text has two routes, and the config picks between them with `text_mode`:
 
@@ -1735,6 +1772,22 @@ Protocol details from the community's reverse engineering of iPixel Color:
 [DonKracho/ESPHome-component-iPixel-ble](https://github.com/DonKracho/ESPHome-component-iPixel-ble).
 Corroborated against this panel: the power and brightness bytes above are what
 it acknowledged with status `01`.
+
+### What the panel is showing, and what it might be showing
+
+Drawing costs one packet per pixel, so a message is drawn by erasing exactly
+the pixels the last one lit and this one does not — 182 packets instead of
+1537 for a full repaint.
+
+That needs an honest answer to "what is on the glass". A message is recorded as
+showing the moment it is *queued*, so its dwell counts reading time rather than
+radio time — right for timing, wrong for erasing: a write that timed out put up
+nothing, or half of something, and erasing against it leaves the real message
+lit underneath the next one. So the runner watches the job it queued: what
+completed is what it erases against, and what failed joins a short list of
+things that *might* still be lit and gets erased against as well. The list
+clears on the next successful write and is capped at three, so a bad patch of
+radio cannot grow the erase into a full-panel repaint.
 
 ### Long messages: pages, not scrolling
 

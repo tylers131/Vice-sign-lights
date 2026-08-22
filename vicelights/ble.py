@@ -44,10 +44,10 @@ class Job:
 
     __slots__ = ("id", "kind", "label", "coalesce_key", "created", "started",
                  "finished", "state", "items", "result", "error", "payload",
-                 "stagger")
+                 "stagger", "manual")
 
     def __init__(self, kind, label, items=None, coalesce_key=None, payload=None,
-                 stagger=0.0):
+                 stagger=0.0, manual=False):
         self.id = new_id()
         self.kind = kind                  # apply | scan | test
         self.label = label
@@ -65,6 +65,10 @@ class Job:
         # at a time already rolls across the sign; this makes the roll a chosen
         # length rather than however long a connect happened to take.
         self.stagger = max(0.0, float(stagger or 0.0))
+        # Did a person ask for this, or did a timer? Only used for cooldown:
+        # someone standing at the sign watching for their message deserves an
+        # attempt and an error, where a playlist tick deserves to be quiet.
+        self.manual = bool(manual)
 
     @property
     def total(self):
@@ -361,7 +365,7 @@ class BleWorker:
         return self._register(job)
 
     def submit_matrix(self, frames, label: str, coalesce_key: str = None,
-                      payload: dict = None) -> Job:
+                      payload: dict = None, manual: bool = False) -> Job:
         """Write already-encoded frames to the text panel.
 
         The panel is not an ELK-BLEDOM controller and nothing above knows how
@@ -398,7 +402,7 @@ class BleWorker:
                           batch=matrix.get("batch_writes", True))
         job = Job("matrix", label, [item],
                   coalesce_key=coalesce_key or "matrix",
-                  payload=dict(payload or {}))
+                  payload=dict(payload or {}), manual=manual)
         log.info("queued %s: %d frame(s), %d bytes to %s via %s",
                  label, len(frames), sum(len(f) for f in frames), address, char_uuid)
         return self._register(job)
@@ -545,7 +549,17 @@ class BleWorker:
                 item["status"] = "skipped"
                 continue
             remaining = self._cooldown_remaining(item["address"], settings)
-            if remaining > 0:
+            # Cooling off is for sweeps: skipping one dead controller is what
+            # keeps the other eleven fast. A job with one device in it has
+            # nothing to keep fast, so if a person asked for it, it goes out
+            # and comes back with an error -- otherwise a message someone just
+            # typed vanishes with no reason given, for three minutes, on one
+            # timeout. _is_known_bad still cuts it to a single attempt, so a
+            # dead panel costs one connect rather than the full retry budget.
+            # A timer's own retries stay skipped: a dead panel asked for a
+            # message every twenty seconds would hold the radio the twelve
+            # controllers need.
+            if remaining > 0 and not (job.manual and len(job.items) == 1):
                 fails = self.device_state[item["address"]]["consecutive_failures"]
                 item["status"] = "skipped"
                 item["detail"] = ("unreachable %dx, skipping for another %ds"
@@ -586,6 +600,11 @@ class BleWorker:
         if skipped:
             log.info("skipped %d device(s) still in cooldown: %s",
                      len(skipped), ", ".join(item["name"] for item in skipped))
+            # A job where everything was skipped ends as "failed" with nothing
+            # failed in it, which reads as the sign ignoring you for no reason.
+            # Give the job the reason so the UI can show it.
+            if not job.error and len(skipped) == len(job.items):
+                job.error = skipped[0]["detail"] or "every device is in cooldown"
 
     def _is_known_bad(self, address, settings) -> bool:
         state = self.device_state.get(address)

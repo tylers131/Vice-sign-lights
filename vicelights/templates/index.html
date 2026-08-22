@@ -393,6 +393,25 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
         <button class="btn sm" onclick="post('/api/matrix/power',{on:false})">Screen off</button>
         <button class="btn sm bad" onclick="unpairPanel()">Unpair</button>
       </div>
+
+      <div style="margin-top:14px;border-top:1px solid #26262e;padding-top:12px">
+        <label>Colour check</label>
+        <p class="muted" style="margin:4px 0 8px">These panels disagree with
+          their own documentation about which byte is which colour, so this
+          reads it off the hardware: a block goes up, you say what colour it
+          actually is, three times.</p>
+        <div id="ctestIdle">
+          <button class="btn sm" onclick="colourCheck(0)">Start colour check</button>
+        </div>
+        <div id="ctestAsk" style="display:none">
+          <p id="ctestPrompt" style="margin:0 0 8px"></p>
+          <select id="ctestSeen"></select>
+          <div class="row" style="margin-top:8px">
+            <button class="btn sm primary" onclick="colourAnswer()">That is what I see</button>
+            <button class="btn sm" onclick="colourCancel()">Stop</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -884,13 +903,27 @@ function renderJobs(jobs){
     var pct = j.total ? Math.round(100*j.done/j.total) : (j.state==="done"?100:0);
     var dot = j.state==="running" ? "busy" : (j.state==="done" ? "ok"
             : (j.state==="failed" ? "bad" : ""));
-    var failed = j.items ? j.items.filter(function(i){ return i.status==="failed"; }) : [];
+    /* Failed and skipped are different things and were being printed under one
+       word: a controller that timed out was reported as "skipped", which reads
+       as a choice the sign made rather than a unit that did not answer. */
+    var items = j.items || [];
+    function named(status){
+      return items.filter(function(i){ return i.status===status; })
+                  .map(function(i){ return esc(i.name); });
+    }
+    var failed = named("failed"), skipped = named("skipped");
+    var why = j.error || (items.length===1 ? (items[0].detail||"") : "");
     return '<div class="item"><span class="dot '+dot+'"></span><div class="grow">'
       + '<div class="name">'+esc(j.label)+'</div>'
       + '<div class="meta">'+esc(j.state)+' &middot; '+j.done+'/'+j.total
       + (j.failed?(' &middot; '+j.failed+' failed'):'')+'</div>'
-      + (failed.length ? '<div class="meta">skipped: '
-          + failed.map(function(i){ return esc(i.name); }).join(", ")+'</div>' : '')
+      + (failed.length ? '<div class="meta">no answer from: '
+          + failed.join(", ")+'</div>' : '')
+      + (skipped.length ? '<div class="meta">skipped: '
+          + skipped.join(", ")+'</div>' : '')
+      /* Without this a job can read "failed 1/1" with nothing failed in it,
+         which is what a cooldown skip looked like from the phone. */
+      + (j.state==="failed" && why ? '<div class="meta">'+esc(why)+'</div>' : '')
       + '<div class="bar"><i style="width:'+pct+'%"></i></div>'
       + '</div></div>';
   }).join("");
@@ -1089,6 +1122,7 @@ function renderPanel(p){
   if(!caps.confirmed){
     bits.push('<span class="pill warn">encoding unconfirmed</span>');
   }
+  if(p.pixel_layout) bits.push("colour order " + esc(p.pixel_layout));
   if(p.last_error){ bits.push('<span class="pill bad">'+esc(p.last_error)+'</span>'); }
   $("panelInfo").innerHTML = bits.join(" &middot; ");
   var fam = $("panelFamily");
@@ -1251,6 +1285,44 @@ function clearPanel(){
   if(PANEL && PANEL.playlist &&
      !confirm("Blank the panel? This also stops it cycling the queue.")) return;
   post("/api/matrix/clear").then(function(j){ if(j.ok){ toast("Panel blanked"); loadState(); } });
+}
+/* The panel's byte layout, read off the panel rather than assumed. One block
+   at a time: three bands at once and the answer depends on which end the
+   reader started from, which is exactly how this was got wrong the first
+   time. */
+var CTEST = null;
+function colourCheck(step){
+  post("/api/matrix/colortest", {step:step}).then(function(j){
+    if(!j.ok){ toast(j.error || "the panel did not take it"); return; }
+    CTEST = CTEST || {seen:[]};
+    CTEST.step = j.step; CTEST.steps = j.steps; CTEST.layout = j.layout;
+    var sel = $("ctestSeen");
+    sel.innerHTML = (j.choices||[]).map(function(c){
+      return '<option value="'+c+'">'+c+'</option>'; }).join("");
+    sel.value = j.sent;
+    $("ctestPrompt").innerHTML = "Block " + (j.step+1) + " of " + j.steps
+      + " — give it a second to appear, then say what colour it is."
+      + " <span class='muted'>(we sent " + esc(j.sent) + ")</span>";
+    $("ctestIdle").style.display = "none";
+    $("ctestAsk").style.display = "";
+  });
+}
+function colourAnswer(){
+  if(!CTEST) return;
+  CTEST.seen.push($("ctestSeen").value);
+  if(CTEST.step + 1 < CTEST.steps){ colourCheck(CTEST.step + 1); return; }
+  var seen = CTEST.seen, layout = CTEST.layout;
+  post("/api/matrix/colorfix", {seen:seen, layout:layout}).then(function(j){
+    colourCancel();
+    if(!j.ok){ toast(j.error || "could not work that out"); return; }
+    if(j.saved){ toast("Colour order set to " + j.saved); loadState(); previewMessage(); }
+    else toast("Still ambiguous: " + (j.candidates||[]).join(" or "));
+  });
+}
+function colourCancel(){
+  CTEST = null;
+  $("ctestAsk").style.display = "none";
+  $("ctestIdle").style.display = "";
 }
 function setPanelFamily(){
   post("/api/matrix", {family:$("panelFamily").value}).then(function(j){

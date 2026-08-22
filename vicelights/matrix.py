@@ -38,16 +38,37 @@ log = logging.getLogger("vicelights.matrix")
 # Where the four colour bytes of a set-pixel command actually go. Four
 # characters, one per byte: r, g, b, and a for one that does nothing visible.
 #
-# The published protocol says [R][G][B][A]. This sign's panel does not agree,
-# and the evidence is unambiguous: sent pure red, green and blue it showed
-# blue, cyan and magenta -- blue lit every time, and the only byte set to 255
-# every time was the alpha. So blue comes from the fourth byte, green from the
-# second, red from the third, and the first does nothing. That is AGRB.
+# The published protocol says [R][G][B][A]. This sign's panel does not agree.
+# Sent pure red, green and blue while still using [R][G][B][A] it showed blue,
+# cyan and magenta, which solves to AGRB -- and AGRB was wrong too: with it in
+# place the panel shows green for red. Both readings cannot be right, and the
+# one to trust is the sign in front of you, so the layout is no longer derived
+# from a remembered description of a photo. ``/api/matrix/colortest`` puts one
+# block on the panel at a time and asks what colour it is; ``solve_layout``
+# turns those three answers into the wiring. One block at a time on purpose:
+# three bands at once and the answer depends on which end the reader started.
 #
 # This is a layout, not a channel order, and the difference matters: no
 # permutation of the first three bytes can move a value into the fourth.
-PIXEL_LAYOUTS = ("rgba", "agrb", "argb", "abgr", "grba", "bgra", "rgab", "gbra")
+PIXEL_LAYOUTS = tuple("".join(order) for order in
+                      __import__("itertools").permutations("rgba"))
 DEFAULT_PIXEL_LAYOUT = "agrb"
+
+# The colours the check sends, in order. Primaries only: a panel with two
+# channels crossed still shows a primary, so the answer is a name someone can
+# pick off a list rather than a judgement about a shade.
+TEST_COLOURS = ("red", "green", "blue")
+
+COLOUR_NAMES = {
+    "off": (0, 0, 0),
+    "red": (255, 0, 0),
+    "green": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+    "cyan": (0, 255, 255),
+    "magenta": (255, 0, 255),
+    "white": (255, 255, 255),
+}
 
 
 def pixel_bytes(rgb, layout: str = DEFAULT_PIXEL_LAYOUT, alpha: int = 0xFF):
@@ -56,6 +77,56 @@ def pixel_bytes(rgb, layout: str = DEFAULT_PIXEL_LAYOUT, alpha: int = 0xFF):
         layout = DEFAULT_PIXEL_LAYOUT
     source = {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": alpha}
     return [source[channel] for channel in layout]
+
+
+def perceived(rgb, sending_layout: str, panel_layout: str, alpha: int = 0xFF):
+    """What a panel wired ``panel_layout`` lights up when we send ``rgb``.
+
+    The alpha byte is part of this, not an aside: send with the wrong layout
+    and a hard-coded 255 alpha lands in a colour channel, which is why the
+    first attempt at this panel lit blue for every colour sent.
+    """
+    values = pixel_bytes(rgb, sending_layout, alpha)
+    shown = {"r": 0, "g": 0, "b": 0, "a": 0}
+    for index, channel in enumerate(panel_layout):
+        shown[channel] = values[index]
+    return (shown["r"], shown["g"], shown["b"])
+
+
+def colour_name(rgb) -> str:
+    """The nearest of the eight names a person can pick off a list."""
+    best, distance = "off", None
+    for name, value in COLOUR_NAMES.items():
+        gap = sum((a - b) ** 2 for a, b in zip(rgb, value))
+        if distance is None or gap < distance:
+            best, distance = name, gap
+    return best
+
+
+def solve_layout(seen, sending_layout: str = None) -> list:
+    """Which wirings would show ``seen`` for TEST_COLOURS, sent as we send now.
+
+    Returns every layout that explains all three answers -- usually one. More
+    than one means the answers do not pin it down; none means they contradict
+    each other, which is worth saying rather than saving a guess.
+    """
+    sending_layout = sending_layout if sending_layout in PIXEL_LAYOUTS \
+        else DEFAULT_PIXEL_LAYOUT
+    answers = [str(name or "").strip().lower() for name in seen]
+    if len(answers) != len(TEST_COLOURS):
+        raise ValueError("expected %d answers, got %d"
+                         % (len(TEST_COLOURS), len(answers)))
+    for name in answers:
+        if name not in COLOUR_NAMES:
+            raise ValueError("%r is not one of: %s"
+                             % (name, ", ".join(sorted(COLOUR_NAMES))))
+    matches = []
+    for candidate in PIXEL_LAYOUTS:
+        if all(colour_name(perceived(COLOUR_NAMES[sent], sending_layout,
+                                     candidate)) == answer
+               for sent, answer in zip(TEST_COLOURS, answers)):
+            matches.append(candidate)
+    return matches
 
 
 MODES = ("scroll", "static", "marquee", "flash", "fade")
@@ -623,6 +694,10 @@ class MatrixDriver:
     def clear_frames(self) -> list:
         return []
 
+    def block_frames(self, rgb) -> list:
+        """One block of solid colour, for the colour check. [] if unsupported."""
+        return []
+
     # -- helper shared by every length-prefixed family
     @staticmethod
     def _chunked(payload: bytes, size: int) -> list:
@@ -714,6 +789,31 @@ class IPixel(MatrixDriver):
     def diy_frames(self, on: bool) -> list:
         return [self.packet(self.CMD_DIY, [0x01 if on else 0x00])]
 
+    # Ten by eight, centred. Big enough to name the colour of across a camp,
+    # small enough that the whole check is three writes of eighty pixels
+    # instead of three full-panel repaints at half a minute each.
+    TEST_BLOCK = (10, 8)
+
+    def block_rect(self):
+        width, height = self.size()
+        block_w = max(1, min(width, self.TEST_BLOCK[0]))
+        block_h = max(1, min(height, self.TEST_BLOCK[1]))
+        return ((width - block_w) // 2, (height - block_h) // 2,
+                block_w, block_h)
+
+    def block_frames(self, rgb) -> list:
+        """Fill the test block with one colour.
+
+        Every step paints the same pixels, so there is nothing to erase
+        between them and no way to lose track of which block is which.
+        """
+        left, top, block_w, block_h = self.block_rect()
+        frames = self.diy_frames(True)
+        for y in range(top, top + block_h):
+            for x in range(left, left + block_w):
+                frames.append(self.pixel_frame(x, y, tuple(rgb)))
+        return frames
+
     def layout(self) -> str:
         order = str(self.config.get("pixel_layout")
                     or DEFAULT_PIXEL_LAYOUT).strip().lower()
@@ -798,8 +898,19 @@ class IPixel(MatrixDriver):
     def stretch(self) -> bool:
         return bool(self.config.get("stretch", True))
 
-    def lit_pixels(self, message: dict) -> set:
-        """Which pixels a message turns on."""
+    def lit_pixels(self, message) -> set:
+        """Which pixels a message turns on.
+
+        Takes a list as well as one message, for the case where more than one
+        thing might be on the glass: a write that timed out may have got some
+        of itself up before it died, so the next message has to erase against
+        what we know landed *and* against what might have.
+        """
+        if isinstance(message, (list, tuple)):
+            found = set()
+            for entry in message:
+                found |= self.lit_pixels(entry)
+            return found
         width, height = self.size()
         plan = self.plan(message)
         rows = render_bitmap((message or {}).get("text") or "", height=height,

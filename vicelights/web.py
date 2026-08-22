@@ -715,6 +715,69 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         return jsonify({"ok": True, "ids": store.reorder_messages(ids),
                         "messages": store.messages()})
 
+    @app.route("/api/matrix/colortest", methods=["POST"])
+    def api_matrix_colortest():
+        """Put one block of a known colour on the panel.
+
+        These panels do not agree with the published byte order, and they do
+        not agree with each other either, so the wiring has to be read off the
+        hardware. One colour per call, never three at once: three bands and
+        the answer depends on which end the reader started from, which is how
+        this was got wrong the first time.
+        """
+        body = _body()
+        try:
+            step = int(body.get("step", 0))
+        except (TypeError, ValueError):
+            return _json_error("step must be a number")
+        if not 0 <= step < len(matrix.TEST_COLOURS):
+            return _json_error("step must be 0-%d" % (len(matrix.TEST_COLOURS) - 1))
+        panel = store.matrix()
+        driver = matrix.driver_for(panel)
+        name = matrix.TEST_COLOURS[step]
+        frames = driver.block_frames(matrix.COLOUR_NAMES[name])
+        if not frames:
+            return _json_error("this panel type cannot draw the colour check", 400)
+        if worker.submit_matrix(frames, "panel: colour check (%s)" % name,
+                                coalesce_key="matrix:colortest",
+                                manual=True) is None:
+            return _json_error(scheduler.panel.unusable()
+                               or "the panel did not take it", 503)
+        # The block is on top of whatever message was up, so the runner must
+        # stop erasing against a message that is no longer there.
+        scheduler.panel.forget_current()
+        worker.note_manual()
+        return jsonify({"ok": True, "step": step, "sent": name,
+                        "steps": len(matrix.TEST_COLOURS),
+                        # The layout these blocks were drawn with. The answers
+                        # only mean anything against it, so it comes back here
+                        # and goes to /colorfix rather than being read again
+                        # later, by when it could have been changed.
+                        "layout": driver.layout(),
+                        "choices": sorted(matrix.COLOUR_NAMES)})
+
+    @app.route("/api/matrix/colorfix", methods=["POST"])
+    def api_matrix_colorfix():
+        """Turn "what did you actually see" into the panel's byte layout."""
+        body = _body()
+        sending = str(body.get("layout") or "").strip().lower()
+        if sending not in matrix.PIXEL_LAYOUTS:
+            sending = store.matrix().get("pixel_layout")
+        try:
+            matches = matrix.solve_layout(body.get("seen") or [], sending)
+        except ValueError as exc:
+            return _json_error(exc)
+        if not matches:
+            return _json_error(
+                "no wiring shows all three of those. Run the check again and "
+                "answer for the block that is up at the time -- or if a block "
+                "never appeared, the panel did not take the write.", 400)
+        if len(matches) > 1:
+            return jsonify({"ok": True, "saved": None, "candidates": matches})
+        store.update_matrix({"pixel_layout": matches[0]})
+        log.info("panel colour layout set to %s from the colour check", matches[0])
+        return jsonify({"ok": True, "saved": matches[0], "candidates": matches})
+
     @app.route("/api/matrix/preview")
     def api_matrix_preview():
         """What a message will look like, as pixels, without the panel.
