@@ -767,10 +767,22 @@ async def do_png_sweep(args):
     opts = [int(v, 0) for v in args.opts.split(",")] if args.opts else [0, 1, 2, 3]
     buffers = ([int(v, 0) for v in args.buffers.split(",")]
                if args.buffers else [0, 1, 2])
+    if args.sizes:
+        sizes = []
+        for spec in args.sizes.split(","):
+            width, _, height = spec.lower().partition("x")
+            sizes.append((int(width), int(height)))
+    else:
+        sizes = [(args.width, args.height)]
     message = M.normalize_message({"text": args.text, "color": args.color})
-    print("trying %d combination(s) of opt x buffer on %r"
-          % (len(opts) * len(buffers), message["text"]))
-    print("a status of 01 is the answer; 02 means it did not like the packet\n")
+    print("trying %d combination(s) on %r"
+          % (len(sizes) * len(opts) * len(buffers), message["text"]))
+    print("a status of 01 is the answer; 02 means it did not like the packet")
+    if len(sizes) > 1:
+        # A panel that validates an image against its own geometry turns this
+        # into a way of asking how big it is, which is otherwise a guess.
+        print("sweeping sizes too: if only one is accepted, that is the panel's")
+    print()
 
     replies = []
 
@@ -796,27 +808,29 @@ async def do_png_sweep(args):
                     pass
 
         winners = []
-        for opt in opts:
-            for buffer in buffers:
-                driver = IPixel({"width": args.width, "height": args.height,
-                                 "chunk": args.chunk, "text_mode": "png",
-                                 "png_opt": opt, "png_buffer": buffer})
-                frames = driver.png_frames(message)
-                replies.clear()
-                for position, frame in enumerate(frames):
-                    await client.write_gatt_char(driver.characteristic(), frame,
-                                                 response=False)
-                    if position + 1 < len(frames):
-                        await asyncio.sleep(args.delay)
-                await asyncio.sleep(args.gap)
-                verdict = "no reply"
-                for _uuid, reply in replies:
-                    if len(reply) == 5 and reply[0] == 0x05:
-                        verdict = "status %02x" % reply[4]
-                        if reply[4] == 0x01:
-                            winners.append((opt, buffer))
-                        break
-                print("  opt %3d  buffer %3d  ->  %s" % (opt, buffer, verdict))
+        for width, height in sizes:
+            for opt in opts:
+                for buffer in buffers:
+                    driver = IPixel({"width": width, "height": height,
+                                     "chunk": args.chunk, "text_mode": "png",
+                                     "png_opt": opt, "png_buffer": buffer})
+                    frames = driver.png_frames(message)
+                    replies.clear()
+                    for position, frame in enumerate(frames):
+                        await client.write_gatt_char(driver.characteristic(), frame,
+                                                     response=False)
+                        if position + 1 < len(frames):
+                            await asyncio.sleep(args.delay)
+                    await asyncio.sleep(args.gap)
+                    verdict = "no reply"
+                    for _uuid, reply in replies:
+                        if len(reply) == 5 and reply[0] == 0x05:
+                            verdict = "status %02x" % reply[4]
+                            if reply[4] == 0x01:
+                                winners.append((width, height, opt, buffer))
+                            break
+                    print("  %-7s opt %3d  buffer %3d  ->  %s"
+                          % ("%dx%d" % (width, height), opt, buffer, verdict))
 
         for characteristic in listening:
             try:
@@ -826,19 +840,27 @@ async def do_png_sweep(args):
 
     print()
     if winners:
-        opt, buffer = winners[0]
-        print("Accepted with opt=%d buffer=%d. Put it in the config:" % (opt, buffer))
+        width, height, opt, buffer = winners[0]
+        accepted_sizes = sorted({(w, h) for w, h, _o, _b in winners})
+        print("Accepted with %dx%d, opt=%d, buffer=%d. Put it in the config:"
+              % (width, height, opt, buffer))
         print('  curl -s -X POST http://127.0.0.1/api/matrix '
               '-H "Content-Type: application/json" \\')
-        print('    -d \'{"text_mode":"png","png_opt":%d,"png_buffer":%d}\''
-              % (opt, buffer))
-        if len(winners) > 1:
-            print("\n(%d combinations were accepted; the panel may ignore these "
-                  "bytes entirely.)" % len(winners))
+        print('    -d \'{"text_mode":"png","width":%d,"height":%d,'
+              '"png_opt":%d,"png_buffer":%d}\''
+              % (width, height, opt, buffer))
+        if len(accepted_sizes) == 1 and len(sizes) > 1:
+            print("\nOnly %dx%d was accepted, so that is very likely the panel's"
+                  " real size." % (width, height))
+        elif len(accepted_sizes) > 1:
+            print("\n%d sizes were accepted (%s), so the panel is not checking"
+                  "\ngeometry -- this says nothing about how big it is."
+                  % (len(accepted_sizes),
+                     ", ".join("%dx%d" % s for s in accepted_sizes)))
     else:
         print("Nothing was accepted. The PNG route needs something this does not\n"
               "cover, and it is an optimisation rather than a requirement --\n"
-              "text_mode=pixels is fully documented and already works.")
+              "text_mode=pixels is fully documented and does not need it.")
 
 
 async def _listen_all(client, replies):
@@ -1455,6 +1477,8 @@ def build_parser():
     p.add_argument("--height", type=int, default=16)
     p.add_argument("--opts", default="", help="comma-separated, default 0,1,2,3")
     p.add_argument("--buffers", default="", help="comma-separated, default 0,1,2")
+    p.add_argument("--sizes", default="",
+                   help="also sweep sizes, e.g. 16x16,32x8,32x16,64x32")
     p.add_argument("--gap", type=float, default=1.5,
                    help="seconds to wait for a verdict after each attempt")
     p.add_argument("--commands")
