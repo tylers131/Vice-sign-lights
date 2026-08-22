@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Vice Sign Lights</title>
+<!-- Inline, because the sign is its own access point with no uplink: a
+     linked icon file would be one more request nothing can serve, and
+     browsers probe /favicon.ico whether or not a page asks them to. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%230b0d12%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2244%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2234%22%20font-weight%3D%22700%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ff2d78%22%3EV%3C%2Ftext%3E%3C%2Fsvg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%230b0d12%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2244%22%20font-family%3D%22system-ui%2Csans-serif%22%20font-size%3D%2234%22%20font-weight%3D%22700%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ff2d78%22%3EV%3C%2Ftext%3E%3C%2Fsvg%3E">
 <style>
 /* Everything inline on purpose: the AP has no uplink, so no CDN, no webfont. */
 :root{
@@ -93,6 +98,26 @@ pre.log{background:#0a0c11;border:1px solid var(--line);border-radius:10px;paddi
   font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw}
 .toast.on{opacity:1}
 hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+/* The panel preview draws the same 5x7 font the Pi renders, so what you see
+   here is what the panel gets -- not an approximation in a browser font. */
+.pixels{background:#05070b;border:1px solid var(--line);border-radius:10px;
+  padding:10px;overflow-x:auto;line-height:0}
+.pixels .prow{white-space:nowrap}
+.pixels i{display:inline-block;width:4px;height:4px;margin:1px;border-radius:1px;
+  background:#161c26}
+.pixels i.on{background:var(--accent)}
+.msg{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line)}
+.msg:first-of-type{border-top:0}
+.msg.now{background:#161a2380;border-radius:8px;padding-left:8px;padding-right:8px}
+.msg .grow{flex:1 1 auto;min-width:0}
+.msg .text{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg .meta{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.msg .btn.sm{padding:8px}
+.msg .ord{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.msg .ord button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+  border-radius:6px;width:30px;height:20px;font-size:11px;line-height:1;padding:0}
+.swatchdot{width:14px;height:14px;border-radius:4px;border:1px solid #0006;flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -108,6 +133,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button data-tab="control" class="on">Control</button>
     <button data-tab="scenes">Scenes</button>
     <button data-tab="timing">Timing</button>
+    <button data-tab="message">Message</button>
     <button data-tab="devices">Devices</button>
     <button data-tab="system">System</button>
   </nav>
@@ -267,6 +293,95 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
 </section>
 
+<!-- ------------------------------------------------------------ message -->
+<section id="tab-message">
+  <div id="panelUnpaired" class="card" style="display:none">
+    <h2>No panel paired</h2>
+    <p class="muted">The text panel is a separate Bluetooth device from the twelve
+      light controllers. Power it on, scan, and pick it out of the list.</p>
+    <button class="btn" style="margin-top:10px" onclick="startScan()">Scan for it</button>
+    <div id="panelCandidates" style="margin-top:10px"></div>
+    <hr>
+    <label>Or pair it by address</label>
+    <div class="row">
+      <input id="panelAddr" placeholder="AA:BB:CC:DD:EE:FF">
+      <input id="panelName" placeholder="Name it saw in the scan">
+    </div>
+    <button class="btn sm" style="margin-top:10px" onclick="pairPanel()">Pair panel</button>
+    <p class="muted" style="margin-top:10px">If nothing here recognises it, run
+      <code>./matrix_probe.py scan</code> on the Pi -- it says what it found and
+      what to do next.</p>
+  </div>
+
+  <div id="panelBody" style="display:none">
+    <div class="card">
+      <h2>Say something</h2>
+      <input id="msgText" placeholder="BAR IS OPEN" maxlength="240"
+             oninput="previewMessage()">
+      <div id="msgPreview" class="pixels" style="margin-top:10px"></div>
+      <div id="msgFit" class="muted" style="margin-top:6px"></div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>Colour</label>
+          <input type="color" id="msgColor" value="#ff2f6e" oninput="previewMessage()">
+        </div>
+        <div>
+          <label>How it moves</label>
+          <select id="msgMode">
+            <option value="scroll">Scroll</option>
+            <option value="static">Hold still</option>
+            <option value="marquee">Marquee</option>
+            <option value="flash">Flash</option>
+            <option value="fade">Fade</option>
+          </select>
+        </div>
+      </div>
+      <label>Stay up for <b id="msgDwellVal">20s</b></label>
+      <input type="range" id="msgDwell" min="0" max="120" step="5" value="20"
+             oninput="$('msgDwellVal').textContent = this.value==='0' ? 'until replaced'
+                      : this.value+'s'">
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" onclick="sendMessage()">Send now</button>
+        <button class="btn" onclick="queueMessage()">Add to queue</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Queue</h2>
+      <div class="item" style="border-top:0">
+        <div class="grow">
+          <div class="name">Cycle the queue</div>
+          <div class="meta" id="panelCycleMeta">off</div>
+        </div>
+        <button class="btn sm" id="panelCycleBtn" onclick="togglePlaylist()">Start</button>
+      </div>
+      <hr>
+      <div id="msgList"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" onclick="post('/api/matrix/next').then(refreshStatus)">
+          Skip to next</button>
+        <button class="btn sm" onclick="clearPanel()">Blank the panel</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Panel</h2>
+      <div id="panelInfo" class="muted"></div>
+      <div id="panelBrightRow">
+        <label>Brightness <b id="panelBrightVal">100%</b></label>
+        <input type="range" id="panelBright" min="5" max="100" step="5" value="100"
+               oninput="$('panelBrightVal').textContent=this.value+'%'"
+               onchange="setPanelBrightness()">
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" onclick="post('/api/matrix/power',{on:true})">Screen on</button>
+        <button class="btn sm" onclick="post('/api/matrix/power',{on:false})">Screen off</button>
+        <button class="btn sm bad" onclick="unpairPanel()">Unpair</button>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ------------------------------------------------------------ devices -->
 <section id="tab-devices">
   <div class="card">
@@ -341,6 +456,8 @@ var PRESETS = ["#ff0000","#ff5a00","#ffaa00","#ffff00","#00ff40","#00ffd0",
                "#0080ff","#3000ff","#8000ff","#ff00d0","#ff6080","#ffffff",
                "#ffd0a0","#a0ffd0","#404040","#000000"];
 var LIVE_TIMER = null;
+var PANEL = null;           /* last /api/state panel block */
+var PREVIEW_TIMER = null;
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,
@@ -368,6 +485,7 @@ Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b)
     b.classList.add("on");
     $("tab-"+b.dataset.tab).classList.add("on");
     if(b.dataset.tab==="system"){ loadLog(); loadConfig(); }
+    if(b.dataset.tab==="message"){ loadState(); previewMessage(); loadScan(); }
   };
 });
 
@@ -663,6 +781,7 @@ function loadState(){
     renderTargets(); renderModes(); renderScenes(); renderDevices();
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
     renderRotation(j.rotation);
+    renderPanel(j.panel);
     var locked = !!(j.settings && j.settings.force_full_brightness);
     $("brightRow").style.display = locked ? "none" : "";
     $("brightLocked").style.display = locked ? "" : "none";
@@ -680,6 +799,26 @@ function refreshStatus(){
     q.className = "pill" + (j.busy ? " warn" : "");
     renderTimers(j.timers);
     if(j.rotation) renderRotation(j.rotation);
+    /* /api/status carries the panel without its queue -- forty messages every
+       two seconds to keep one line of "now showing" current would be forty
+       times the bytes for none of the information. Merge the live fields into
+       what loadState already gave us. */
+    if(j.panel && PANEL){
+      var changed = (PANEL.playlist !== j.panel.playlist)
+                 || (PANEL.queued !== j.panel.queued)
+                 || ((PANEL.current||{}).id !== (j.panel.current||{}).id);
+      ["playlist","queued","current","next_in","last_error","brightness"]
+        .forEach(function(k){ PANEL[k] = j.panel[k]; });
+      if(changed) renderPanel(PANEL);
+      else if($("panelCycleMeta") && PANEL.configured){
+        $("panelCycleMeta").textContent = PANEL.playlist
+          ? ((PANEL.current ? 'showing "'+PANEL.current.text+'"' : "starting...")
+             + (PANEL.next_in!=null ? " \u00b7 next in "+PANEL.next_in+"s" : ""))
+          : (PANEL.queued ? PANEL.queued+" message"+(PANEL.queued===1?"":"s")
+                            +" saved, not cycling"
+                          : "nothing queued yet");
+      }
+    } else if(j.panel && !PANEL){ renderPanel(j.panel); }
     /* merge live reachability into the device cards without a full reload */
     var changed=false;
     STATE.devices.forEach(function(d){
@@ -814,11 +953,181 @@ function loadScan(){
            +esc(d.name||d.address)+'\')">Add</button>')
         + '</div>';
     }).join("") : '<p class="muted">Nothing found yet.</p>';
+
+    /* The same scan feeds the panel pairing list. A panel candidate is
+       anything that is not an ELK controller and looks like a display; the
+       server decides, so the phone and the touchscreen agree. */
+    var box = $("panelCandidates");
+    if(box){
+      var cands = found.filter(function(d){ return d.is_panel; });
+      box.innerHTML = cands.length ? cands.map(function(d){
+        return '<div class="item"><span class="dot"></span>'
+          + '<div class="grow"><div class="name">'+esc(d.name||"(no name)")+'</div>'
+          + '<div class="meta">'+d.address+' &middot; rssi '+(d.rssi==null?"?":d.rssi)
+          + (d.family?(' &middot; looks like '+esc(d.family)):' &middot; unknown type')
+          + '</div></div>'
+          + '<button class="btn sm" onclick="pairFound(\''+d.address+'\',\''
+             +esc(d.name||"")+'\')">Pair</button></div>';
+      }).join("") : '<p class="muted">No panel-looking device in the last scan.</p>';
+    }
   });
 }
 function addFound(addr,name){
   post("/api/devices",{address:addr,name:name}).then(function(){
     toast("Added "+addr); loadState(); loadScan();
+  });
+}
+
+/* ------------------------------------------------------------- message */
+/* The text panel. Everything here talks to /api/matrix, which queues onto the
+   same serialized radio as the lights -- so a message sent mid-sweep waits its
+   turn rather than fighting twelve controllers for the adapter. */
+
+function renderPanel(p){
+  PANEL = p || null;
+  var paired = !!(p && p.configured);
+  $("panelUnpaired").style.display = paired ? "none" : "";
+  $("panelBody").style.display = paired ? "" : "none";
+  if(!paired) return;
+
+  var caps = p.capabilities || {};
+  var bits = [esc(p.name || p.address), esc(p.family_label || p.family || "unknown type"),
+              p.size.width + "x" + p.size.height];
+  if(!caps.confirmed){
+    bits.push('<span class="pill warn">encoding unconfirmed</span>');
+  }
+  if(p.last_error){ bits.push('<span class="pill bad">'+esc(p.last_error)+'</span>'); }
+  $("panelInfo").innerHTML = bits.join(" &middot; ");
+  $("panelBrightRow").style.display = caps.brightness ? "" : "none";
+  if(document.activeElement !== $("panelBright")){
+    $("panelBright").value = p.brightness;
+    $("panelBrightVal").textContent = p.brightness + "%";
+  }
+
+  $("panelCycleBtn").textContent = p.playlist ? "Stop" : "Start";
+  $("panelCycleMeta").textContent = p.playlist
+    ? ((p.current ? 'showing "'+p.current.text+'"' : "starting...")
+       + (p.next_in!=null ? " · next in "+p.next_in+"s" : ""))
+    : (p.queued ? p.queued+" message"+(p.queued===1?"":"s")+" saved, not cycling"
+                : "nothing queued yet");
+
+  var current = p.current ? p.current.id : null;
+  var queue = p.queue || [];
+  $("msgList").innerHTML = queue.length ? queue.map(function(m,i){
+    return '<div class="msg'+(m.id===current?" now":"")+'">'
+      + '<div class="ord">'
+      + '<button onclick="moveMsg(\''+m.id+'\',-1)"'+(i===0?" disabled":"")+'>&#9650;</button>'
+      + '<button onclick="moveMsg(\''+m.id+'\',1)"'+(i===queue.length-1?" disabled":"")+'>&#9660;</button>'
+      + '</div>'
+      + '<span class="swatchdot" style="background:'+esc(m.color)+'"></span>'
+      + '<div class="grow"><div class="text">'+esc(m.text)+'</div>'
+      + '<div class="meta">'+esc(m.mode)+' &middot; '
+      + (m.dwell ? m.dwell+"s" : "until replaced")
+      + (m.enabled ? "" : " &middot; skipped") + '</div></div>'
+      + '<button class="btn sm" onclick="sendMsg(\''+m.id+'\')">Show</button>'
+      + '<button class="btn sm" onclick="toggleMsg(\''+m.id+'\')">'
+      + (m.enabled ? "Skip" : "Use") + '</button>'
+      + '<button class="btn sm bad" onclick="deleteMsg(\''+m.id+'\')">&times;</button>'
+      + '</div>';
+  }).join("") : '<p class="muted">Nothing queued. Type something above and add it.</p>';
+}
+
+/* Preview comes from the Pi, not from a browser font: the panel renders our
+   own 5x7 bitmap, so only the Pi can say what it will actually look like. */
+function previewMessage(){
+  clearTimeout(PREVIEW_TIMER);
+  PREVIEW_TIMER = setTimeout(function(){
+    var text = $("msgText").value;
+    if(!text){ $("msgPreview").innerHTML=""; $("msgFit").textContent=""; return; }
+    get("/api/matrix/preview?text="+encodeURIComponent(text)).then(function(j){
+      if(!j.ok) return;
+      var colour = $("msgColor").value;
+      $("msgPreview").innerHTML = j.rows.map(function(row){
+        return '<div class="prow">' + row.map(function(bit){
+          return bit ? '<i class="on" style="background:'+esc(colour)+'"></i>' : '<i></i>';
+        }).join("") + '</div>';
+      }).join("");
+      $("msgFit").textContent = j.width + " pixels wide on a "
+        + j.panel.width + "-pixel panel" + (j.fits ? " — fits" : " — will scroll");
+    });
+  }, 200);
+}
+
+function composed(){
+  var dwell = parseInt($("msgDwell").value, 10);
+  return {text:$("msgText").value.trim(), color:$("msgColor").value,
+          mode:$("msgMode").value, dwell:dwell};
+}
+function sendMessage(){
+  var m = composed();
+  if(!m.text){ toast("Type something first"); return; }
+  post("/api/matrix/send", m).then(function(j){
+    if(j.ok){ toast("Sent to the panel"); refreshStatus(); }
+  });
+}
+function queueMessage(){
+  var m = composed();
+  if(!m.text){ toast("Type something first"); return; }
+  post("/api/matrix/messages", m).then(function(j){
+    if(j.ok){ $("msgText").value=""; previewMessage(); toast("Added to the queue");
+              loadState(); }
+  });
+}
+function sendMsg(id){
+  post("/api/matrix/messages/"+id+"/send").then(function(j){
+    if(j.ok){ toast("Showing it now"); loadState(); }
+  });
+}
+function deleteMsg(id){
+  del("/api/matrix/messages/"+id).then(function(j){ if(j.ok) loadState(); });
+}
+function toggleMsg(id){
+  var m = (PANEL && PANEL.queue || []).filter(function(x){ return x.id===id; })[0];
+  if(!m) return;
+  post("/api/matrix/messages", {id:id, text:m.text, color:m.color, mode:m.mode,
+                                speed:m.speed, dwell:m.dwell, enabled:!m.enabled})
+    .then(loadState);
+}
+function moveMsg(id, delta){
+  var ids = (PANEL && PANEL.queue || []).map(function(m){ return m.id; });
+  var at = ids.indexOf(id), to = at + delta;
+  if(at < 0 || to < 0 || to >= ids.length) return;
+  ids.splice(to, 0, ids.splice(at, 1)[0]);
+  post("/api/matrix/messages/order", {ids:ids}).then(loadState);
+}
+function togglePlaylist(){
+  if(!PANEL) return;
+  var on = !PANEL.playlist;
+  post("/api/matrix", {playlist:on}).then(function(j){
+    if(j.ok){ loadState(); if(on) post("/api/matrix/next").then(refreshStatus); }
+  });
+}
+function clearPanel(){
+  /* Blanking also stops the cycle -- otherwise the next tick refills the panel
+     a few seconds later and "blank" would not mean blank. Say so. */
+  if(PANEL && PANEL.playlist &&
+     !confirm("Blank the panel? This also stops it cycling the queue.")) return;
+  post("/api/matrix/clear").then(function(j){ if(j.ok){ toast("Panel blanked"); loadState(); } });
+}
+function setPanelBrightness(){
+  post("/api/matrix/brightness", {percent:parseInt($("panelBright").value,10)});
+}
+function pairPanel(){
+  var addr = $("panelAddr").value.trim();
+  if(!addr){ toast("Address required"); return; }
+  pairFound(addr, $("panelName").value.trim());
+}
+function pairFound(addr, name){
+  post("/api/matrix", {enabled:true, address:addr, name:name||addr}).then(function(j){
+    if(j.ok){ toast("Paired"); $("panelAddr").value=""; $("panelName").value="";
+              loadState(); }
+  });
+}
+function unpairPanel(){
+  if(!confirm("Unpair the panel? Queued messages are kept.")) return;
+  post("/api/matrix", {enabled:false, address:"", name:"", family:"auto",
+                       char_uuid:"", playlist:false}).then(function(j){
+    if(j.ok){ toast("Unpaired"); loadState(); }
   });
 }
 
