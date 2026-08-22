@@ -825,9 +825,14 @@ async def do_png_sweep(args):
                     verdict = "no reply"
                     for _uuid, reply in replies:
                         if len(reply) == 5 and reply[0] == 0x05:
+                            # Control commands acknowledge with 01, but this one
+                            # answers 00 and 03, so 01 is not the only shape a
+                            # success can take. Collect anything that is not an
+                            # outright rejection and say which is which.
                             verdict = "status %02x" % reply[4]
-                            if reply[4] == 0x01:
-                                winners.append((width, height, opt, buffer))
+                            if reply[4] in (0x00, 0x01):
+                                winners.append((width, height, opt, buffer,
+                                                reply[4]))
                             break
                     print("  %-7s opt %3d  buffer %3d  ->  %s"
                           % ("%dx%d" % (width, height), opt, buffer, verdict))
@@ -840,8 +845,11 @@ async def do_png_sweep(args):
 
     print()
     if winners:
-        width, height, opt, buffer = winners[0]
-        accepted_sizes = sorted({(w, h) for w, h, _o, _b in winners})
+        width, height, opt, buffer, status = winners[0]
+        accepted_sizes = sorted({(w, h) for w, h, _o, _b, _s in winners})
+        print("(status %02x -- control commands acknowledge with 01, so treat "
+              "this as\n promising rather than proven until the panel shows "
+              "something.)" % status)
         print("Accepted with %dx%d, opt=%d, buffer=%d. Put it in the config:"
               % (width, height, opt, buffer))
         print('  curl -s -X POST http://127.0.0.1/api/matrix '
@@ -1019,22 +1027,34 @@ def _guess_dimensions(reply: bytes):
 
 
 async def do_fill(args):
-    """Paint the whole panel one colour. A test you cannot misread.
+    """Paint the panel. A test you cannot misread.
 
-    Every other check so far has asked someone to judge whether a small thing
-    changed. This one either turns the display a solid colour or it does not.
+    Three colours by default, one per third of the width, because a partial
+    result is the informative one: if only the left third lights, the panel is
+    wider than we think; if the bands are stacked rather than side by side, the
+    axes are swapped. A single flat colour tells you far less.
     """
     from vicelights.matrix import IPixel
 
     driver = IPixel({"width": args.width, "height": args.height})
-    colour = M.parse_color(args.color, (255, 0, 0))
-    frames = driver.diy_frames(True)
+    if args.color:
+        bands = [M.parse_color(args.color, (255, 0, 0))]
+        plan = "solid %s" % args.color
+    else:
+        bands = [(255, 0, 0), (0, 255, 0), (0, 80, 255)]
+        plan = "red | green | blue, left to right"
+
+    frames = []
+    if args.screen:
+        frames += driver.screen_frames(args.screen)
+    frames += driver.diy_frames(True)
     for y in range(args.height):
         for x in range(args.width):
+            colour = bands[min(len(bands) - 1, x * len(bands) // args.width)]
             frames.append(driver.pixel_frame(x, y, colour))
-    print("filling %dx%d with #%02x%02x%02x -- %d packets, about %.0fs"
-          % (args.width, args.height, colour[0], colour[1], colour[2],
-             len(frames), len(frames) * args.delay))
+    print("painting %dx%d: %s" % (args.width, args.height, plan))
+    print("%d packets at %.0fms, about %.0fs\n"
+          % (len(frames), args.delay * 1000, len(frames) * args.delay))
 
     replies = []
     holder = connected(args.address, args.timeout, args.retries)
@@ -1044,25 +1064,69 @@ async def do_fill(args):
         for frame in frames:
             await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
             sent += 1
-            if sent % 100 == 0:
+            if sent % 250 == 0:
                 print("  %d/%d" % (sent, len(frames)))
             await asyncio.sleep(args.delay)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(1.5)
         for characteristic in listening:
             try:
                 await client.stop_notify(characteristic)
             except Exception:
                 pass
-    rejected = [r for _u, r in replies if len(r) == 5 and r[4] != 0x01]
-    if rejected:
-        print("\n%d packet(s) were rejected: %s"
-              % (len(rejected), rejected[0].hex(" ")))
+
+    statuses = [reply for _u, reply in replies if len(reply) == 5]
+    if statuses:
+        print("\npanel said: %s"
+              % "  ".join(sorted({r.hex(" ") for r in statuses})))
+    else:
+        print("\npanel said nothing (pixel writes are not acknowledged)")
     print("""
-The panel is either solid %s now or it is not. If it is:
-  the pixel path works, and any text problem is only about size or position.
-If it is not, and nothing above was rejected:
-  the panel is ignoring DIY drawing, and the size below is the next suspect --
-      ./matrix_probe.py hello %s""" % (args.color, args.address))
+What is on it now?
+  the whole panel coloured   -> drawing works; size and axes are right
+  only part of it            -> drawing works, the geometry is wrong; say
+                                which part and I can work out the real one
+  bands stacked, not side by side -> width and height are swapped
+  nothing at all             -> the pixels are going somewhere that is not on
+                                screen. Try the buffers:
+                                  ./matrix_probe.py screens %s""" % args.address)
+
+
+async def do_screens(args):
+    """Step through the display buffers, one per pause.
+
+    One packet each, so it costs nothing, and it separates two failures that
+    look identical: pixels not arriving, versus pixels arriving into a buffer
+    the panel is not currently showing.
+    """
+    from vicelights.matrix import IPixel
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        print("watch the panel; %ds on each\n" % args.hold)
+        for number in range(args.first, args.last + 1):
+            replies.clear()
+            packet = driver_screen_packet(IPixel, number)
+            print("  screen %d   -> %s" % (number, packet.hex(" ")))
+            await client.write_gatt_char(IPixel.write_uuid, packet, response=False)
+            await asyncio.sleep(args.hold)
+            for _uuid, reply in replies:
+                print("             <- %s   %s" % (reply.hex(" "), _decode_reply(reply)))
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+    print("""
+Did the display change on any of them, and which? If one of these shows
+something the others do not, that is the buffer the panel is displaying, and
+drawing has to go there.""")
+
+
+def driver_screen_packet(cls, number):
+    return cls.packet(cls.CMD_SCREEN, [max(1, min(9, int(number)))])
+
 
 # -------------------------------------------------------------------- sending
 
@@ -1494,13 +1558,24 @@ def build_parser():
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_hello(a)))
 
-    p = sub.add_parser("fill", help="paint the whole panel one colour")
+    p = sub.add_parser("fill", help="paint the panel; partial results are informative")
     ble_args(p)
-    p.add_argument("--color", default="#ff0000")
-    p.add_argument("--width", type=int, default=32)
+    p.add_argument("--color", default="",
+                   help="one solid colour instead of three bands")
+    p.add_argument("--width", type=int, default=96)
     p.add_argument("--height", type=int, default=16)
+    p.add_argument("--screen", type=int, default=0,
+                   help="select this display buffer first (1-9)")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_fill(a)))
+
+    p = sub.add_parser("screens", help="step through the display buffers")
+    ble_args(p)
+    p.add_argument("--first", type=int, default=1)
+    p.add_argument("--last", type=int, default=9)
+    p.add_argument("--hold", type=float, default=3.0)
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_screens(a)))
 
     p = sub.add_parser("control", help="on | off | clear | a brightness percentage")
     ble_args(p)

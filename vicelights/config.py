@@ -89,7 +89,11 @@ DEFAULT_MATRIX = {
     # to fingerprint a panel that none of them match.
     "family": "auto",
     "char_uuid": "",
-    "width": 32,
+    # THE PANEL'S REAL PIXEL COUNT. Not a preference: everything drawn is
+    # placed against these, so a wrong value puts the message off the edge of
+    # the display -- a failure that looks exactly like a broken protocol. This
+    # sign's panel is 96 wide by 16 tall, from the product listing.
+    "width": 96,
     "height": 16,
     "brightness": 100,
     # Cycle the saved messages, one at a time, each for its own dwell.

@@ -470,11 +470,20 @@ class IPixel(MatrixDriver):
 
     def size(self):
         try:
-            width = max(4, min(256, int(self.config.get("width") or 32)))
+            width = max(4, min(256, int(self.config.get("width") or 96)))
             height = max(4, min(256, int(self.config.get("height") or 16)))
         except (TypeError, ValueError):
-            width, height = 32, 16
+            width, height = 96, 16
         return width, height
+
+    def screen_frames(self, number: int) -> list:
+        """Show buffer 1-9.
+
+        DIY drawing lands in a buffer, and a panel showing a different one will
+        take every pixel without changing what is on the glass -- which reads
+        as "the protocol does not work" when in fact it worked perfectly.
+        """
+        return [self.packet(self.CMD_SCREEN, [max(1, min(9, int(number)))])]
 
     # -- text
 
