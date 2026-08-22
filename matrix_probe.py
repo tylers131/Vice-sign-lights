@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import struct
 import sys
 
@@ -493,6 +494,133 @@ Say which numbers actually happened on the panel. The split matters:
 
   * everything works      -> say so and the driver gets marked confirmed.""")
 
+
+def _decode_reply(data: bytes) -> str:
+    """Read one of this panel's status replies.
+
+    Observed on the sign's own panel: a reply is 05 00 <b2> <b3> <status>,
+    echoing the two bytes that followed the length in the packet it is
+    answering. Control commands that visibly worked came back with status 01;
+    the text command came back 02. So 01 reads as accepted and 02 as
+    something else -- which is an inference from four samples, not a
+    specification, and is labelled as such wherever it is printed.
+    """
+    if len(data) != 5 or data[0] != 0x05:
+        return "unrecognised shape"
+    status = data[4]
+    meaning = {0x01: "accepted?", 0x02: "rejected / not understood?"}.get(
+        status, "status 0x%02x, meaning unknown" % status)
+    return "echoes cmd %02x %02x, %s" % (data[2], data[3], meaning)
+
+
+async def do_trace(args):
+    """Send a payload one chunk at a time, reporting replies per chunk.
+
+    The panel answers, which is worth more than watching it: a payload that
+    fails somewhere can be localised instead of guessed at. Does it answer the
+    first chunk and ignore the rest? Every chunk? Only the last? Each of those
+    means something different about how it reassembles a long write, and none
+    of them is visible from the screen.
+    """
+    driver = driver_from_args(args)
+    char = driver.characteristic()
+
+    if args.hex:
+        cleaned = re.sub(r"[^0-9a-fA-F]", "", "".join(args.hex))
+        if len(cleaned) % 2:
+            sys.exit("odd number of hex digits")
+        payload = bytes.fromhex(cleaned)
+        print("payload from --hex: %d bytes" % len(payload))
+    else:
+        message = M.normalize_message({"text": args.text, "color": args.color,
+                                       "mode": args.mode, "speed": args.speed})
+        frames = driver.text_frames(message)
+        payload = b"".join(frames)
+        print("payload for %r: %d bytes" % (message["text"], len(payload)))
+    if args.cmd is not None and len(payload) >= 3:
+        payload = payload[:2] + bytes([args.cmd]) + payload[3:]
+        print("command byte overridden to 0x%02x" % args.cmd)
+
+    if len(payload) >= 2:
+        declared = payload[0] | (payload[1] << 8)
+        note = "matches" if declared == len(payload) else "DOES NOT MATCH"
+        print("header says %d bytes, payload is %d -- %s"
+              % (declared, len(payload), note))
+
+    chunks = [payload[at:at + args.chunk]
+              for at in range(0, len(payload), args.chunk)]
+    print("%d chunk(s) of up to %d bytes, %.1fs between them\n"
+          % (len(chunks), args.chunk, args.gap))
+
+    replies = []
+
+    def on_notify(_sender, data):
+        replies.append(bytes(data))
+
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        services = getattr(client, "services", None)
+        if services is None:
+            services = await client.get_services()
+        listening = []
+        for service in services:
+            for characteristic in service.characteristics:
+                if "notify" in (characteristic.properties or ()):
+                    try:
+                        await client.start_notify(characteristic.uuid, on_notify)
+                        listening.append(characteristic.uuid)
+                    except Exception:
+                        pass
+
+        silent_since = None
+        for index, chunk in enumerate(chunks, 1):
+            replies.clear()
+            await client.write_gatt_char(char, chunk, response=False)
+            await asyncio.sleep(args.gap)
+            head = "%3d/%d  %-3d bytes  %s" % (index, len(chunks), len(chunk),
+                                               chunk[:12].hex(" "))
+            if replies:
+                if silent_since is not None:
+                    print("        (silent from chunk %d to %d)"
+                          % (silent_since, index - 1))
+                    silent_since = None
+                for reply in replies:
+                    print("%s\n        <- %s   %s"
+                          % (head, reply.hex(" "), _decode_reply(reply)))
+            else:
+                if silent_since is None:
+                    silent_since = index
+                    print("%s   (no reply)" % head)
+        if silent_since is not None and silent_since < len(chunks):
+            print("        (silent from chunk %d to %d)"
+                  % (silent_since, len(chunks)))
+
+        # Some panels only answer once the declared length has arrived.
+        print("\nwaiting %.0fs for anything late ..." % args.settle)
+        replies.clear()
+        await asyncio.sleep(args.settle)
+        if replies:
+            for reply in replies:
+                print("  late <- %s   %s" % (reply.hex(" "), _decode_reply(reply)))
+        else:
+            print("  nothing further")
+
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+
+    print("""
+Reading it:
+  * answers chunk 1, then silent  -> it took the header and lost the rest.
+    The chunks after the first probably need their own framing rather than
+    being raw continuation.
+  * answers every chunk           -> each chunk is a packet in its own right.
+  * silent until the last chunk   -> it reassembles by the declared length,
+    and the final status is the verdict on the whole payload.
+  * no reply at all               -> the command byte is not one it knows.""")
+
 # -------------------------------------------------------------------- sending
 
 async def write_frames(address, char_uuid, frames, timeout, delay, response=False,
@@ -876,6 +1004,24 @@ def build_parser():
                    help="only these step numbers, e.g. 1,2,5")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_confirm(a)))
+
+    p = sub.add_parser("trace",
+                       help="send a payload chunk by chunk, reporting each reply")
+    ble_args(p)
+    p.add_argument("-t", "--text", default="VICE")
+    p.add_argument("--color", default="#ff2f6e")
+    p.add_argument("--mode", choices=M.MODES, default="static")
+    p.add_argument("--speed", type=int, default=50)
+    p.add_argument("-x", "--hex", nargs="+",
+                   help="send these bytes instead of an encoded message")
+    p.add_argument("--cmd", type=lambda v: int(v, 0),
+                   help="override the command byte at offset 2")
+    p.add_argument("--gap", type=float, default=0.35,
+                   help="seconds to wait after each chunk (default 0.35)")
+    p.add_argument("--settle", type=float, default=4.0,
+                   help="seconds to wait for a late reply (default 4)")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_trace(a)))
 
     p = sub.add_parser("control", help="on | off | clear | a brightness percentage")
     ble_args(p)
