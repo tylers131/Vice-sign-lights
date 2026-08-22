@@ -745,17 +745,24 @@ def glyph_cell(char: str, font_flag: int = 0, order: str = "msb",
                 bits[left + index] = bit
         out.append(bits)
 
+    return pack_cell(out, width, order)
+
+
+def pack_cell(rows, width: int, order: str = "msb") -> bytes:
+    """Rows of 0/1, top first, packed the way one of the eight orders wants."""
     parts = str(order or "msb").split("-")
     high_first = parts[0] != "lsb"          # is bit 7 the left of the picture?
     swap = "swap" in parts                  # does the right-hand byte go first?
+    rows = list(rows)
     if "flip" in parts:
-        out.reverse()
+        rows.reverse()
 
     data = bytearray()
-    for bits in out:
+    for bits in rows:
         row = []
         for byte_index in range(width // 8):
-            chunk = bits[byte_index * 8:(byte_index + 1) * 8]
+            chunk = list(bits[byte_index * 8:(byte_index + 1) * 8])
+            chunk += [0] * (8 - len(chunk))
             value = 0
             for position, bit in enumerate(chunk):
                 if bit:
@@ -765,6 +772,38 @@ def glyph_cell(char: str, font_flag: int = 0, order: str = "msb",
             row.reverse()
         data += bytes(row)
     return bytes(data)
+
+
+# Which corner the marker below sits in, per what the panel does to a glyph.
+# One dot in one corner cannot be misread the way a letter can: "backwards"
+# covers mirrored, upside down and back-to-front, and a letter looks the same
+# for two of those.
+CORNERS = {
+    "top-left": "msb",              # nothing is being done to it
+    "top-right": "lsb-swap",        # mirrored left to right
+    "bottom-left": "msb-flip",      # upside down
+    "bottom-right": "lsb-swap-flip",  # both, i.e. rotated 180
+}
+
+
+def marker_cell(font_flag: int = 1, order: str = "msb") -> bytes:
+    """A bracket in the top-left corner: two edges, so it has a handedness.
+
+    A solid square would survive every transform and tell you nothing; a
+    letter needs reading. This is a corner, and naming a corner is not a
+    judgement call.
+    """
+    width, height = TEXT_CELLS.get(font_flag, TEXT_CELLS[0])
+    arm = max(2, width // 2)
+    rows = []
+    for y in range(height):
+        if y < 2:
+            rows.append([1 if x < arm else 0 for x in range(width)])
+        elif y < max(3, height // 2):
+            rows.append([1 if x < 2 else 0 for x in range(width)])
+        else:
+            rows.append([0] * width)
+    return pack_cell(rows, width, order)
 
 
 def describe_message(message: dict, mode: str = None) -> str:
@@ -1061,7 +1100,7 @@ class IPixel(MatrixDriver):
 
     def native_text_frames(self, message: dict, slot: int = 0,
                            order: str = None, font_flag: int = None,
-                           animation: int = None) -> list:
+                           animation: int = None, **kwargs) -> list:
         """One packet: the message, and how the panel should animate it.
 
         After this the panel is on its own -- it scrolls, flashes or pages
@@ -1089,8 +1128,10 @@ class IPixel(MatrixDriver):
         except (TypeError, ValueError):
             speed = 50
 
+        cells = kwargs.get("cells")
+        count = len(cells) if cells else len(text)
         payload = bytearray()
-        payload += len(text).to_bytes(2, "little")
+        payload += count.to_bytes(2, "little")
         payload.append(0x01)                      # horizontal alignment
         payload.append(0x01)                      # vertical alignment
         payload.append(int(animation) & 0xFF)
@@ -1099,10 +1140,12 @@ class IPixel(MatrixDriver):
         payload += bytes(colour)
         payload.append(0x00)                      # background colour mode
         payload += bytes(background)
-        for char in text:
+        for index in range(count):
             payload.append(font_flag & 0xFF)
             payload += bytes(colour)
-            payload += glyph_cell(char, font_flag, order, self.stretch())
+            payload += (cells[index] if cells
+                        else glyph_cell(text[index], font_flag, order,
+                                        self.stretch()))
 
         header = bytearray()
         header.append(0x00)                       # no further chunk

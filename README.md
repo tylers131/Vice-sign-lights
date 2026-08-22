@@ -1857,11 +1857,30 @@ for the panel:
 sudo ./matrix_probe.py text AA:BB:CC:DD:EE:FF --sweep
 ```
 
-That sends `FL` in each of the eight orders, pausing between. Two letters, not
-one: a mirrored glyph and a reversed character order look the same on a single
-letter, and different on two. `FL` should read left to right with each letter
-the right way round -- mirrored letters mean a different `bitmap_order`,
-letters in the wrong order mean `text_reversed`. Whichever looked right:
+That sends `FL` in each of the eight orders, pausing between. But letters are
+the wrong question, and two rounds of "it still looks backwards" proved it:
+"backwards" covers mirrored, upside down and back-to-front, and a letter looks
+the same under two of those. Ask something with one answer instead:
+
+```bash
+sudo ./matrix_probe.py text AA:BB:CC:DD:EE:FF --corner
+```
+
+That puts up a corner bracket and a solid square, sent as *bracket in the
+top-left, square to its right*. Which corner the bracket comes out in names
+the transform, because a corner is not a judgement call; which side of the
+square it lands on says whether the panel lays characters left to right or
+right to left. One look, two answers:
+
+```bash
+./matrix_probe.py text AA:BB:CC:DD:EE:FF --saw top-right,left
+```
+
+which prints the exact setting. And if the panel shows neither a bracket nor a
+square -- stripes, scattered pixels -- that is not an orientation at all: the
+bitmap is not laid out in rows and none of the eight orders will help.
+
+Whichever the test names:
 
 ```bash
 curl -X POST http://localhost/api/matrix -H 'content-type: application/json' \

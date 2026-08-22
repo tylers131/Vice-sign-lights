@@ -1213,6 +1213,8 @@ async def do_text(args):
     with a pause between. Watch the panel and say which one was right; that is
     the same way the colour order got settled, and for the same reason.
     """
+    if args.corner or args.saw:
+        return await do_text_corner(args)
     ack = _ack(args)
     from vicelights.matrix import IPixel, BITMAP_ORDERS, TEXT_ANIMATIONS
 
@@ -1280,6 +1282,99 @@ async def do_text(args):
     else:
         print("If that looked wrong, --sweep sends all %d orders in turn."
               % len(BITMAP_ORDERS))
+    return 0
+
+
+async def do_text_corner(args):
+    """Ask the panel what it does to a glyph, in a way that has one answer.
+
+    Two rounds of "it looks backwards" is two rounds of me guessing, and the
+    fault is the question: a letter looks the same mirrored as it does with
+    the characters in reverse order, and "backwards" covers both plus upside
+    down. So this sends no letters.
+
+    It sends two blocks: a bracket occupying one corner, and a solid square.
+    Which corner the bracket ends up in names the transform -- a corner is not
+    a judgement call -- and which side of the square it lands on says whether
+    the panel lays characters out left to right or right to left. One look,
+    two answers, nothing to interpret.
+    """
+    from vicelights.matrix import (IPixel, CORNERS, marker_cell, pack_cell,
+                                   TEXT_CELLS)
+
+    if args.saw:
+        parts = [p.strip().lower() for p in args.saw.replace(",", " ").split()]
+        corner = next((p for p in parts if p in CORNERS), None)
+        if corner is None:
+            print("say which corner the bracket was in: %s"
+                  % ", ".join(sorted(CORNERS)), file=sys.stderr)
+            return 2
+        side = next((p for p in parts if p in ("left", "right")), "left")
+        order = CORNERS[corner]
+        reversed_text = side == "right"
+        print("bracket in the %s, %s of the square" % (corner, side))
+        print()
+        print("  the panel %s"
+              % {"msb": "draws a glyph exactly as sent",
+                 "lsb-swap": "mirrors a glyph left to right",
+                 "msb-flip": "turns a glyph upside down",
+                 "lsb-swap-flip": "rotates a glyph 180 degrees"}[order])
+        if reversed_text:
+            print("  and lays its characters out right to left")
+        print()
+        print("Set it:")
+        print("  curl -X POST http://localhost/api/matrix \\")
+        print("    -H 'content-type: application/json' \\")
+        print("    -d '{\"text_mode\":\"native\",\"bitmap_order\":\"%s\""
+              "%s}'" % (order, ",\"text_reversed\":true" if reversed_text else ""))
+        return 0
+
+    config = {"width": args.width, "height": args.height,
+              "text_mode": "native", "text_font": args.font,
+              "pixel_layout": args.layout}
+    driver = IPixel(config)
+    font_flag = M.TEXT_FONTS.get(args.font, 1)
+    width, height = TEXT_CELLS.get(font_flag, TEXT_CELLS[1])
+    # Sent as msb -- the reference. Whatever the panel does to it is what the
+    # answer describes.
+    bracket = marker_cell(font_flag, "msb")
+    square = pack_cell([[1] * width for _ in range(height)], width, "msb")
+
+    print("Putting two blocks on the panel: a corner bracket, then a solid square.")
+    print("Sent as: bracket in the TOP-LEFT, square to its RIGHT.")
+    print()
+    frames = driver.native_text_frames(
+        {"text": "  ", "color": args.color}, slot=0, order="msb",
+        animation=0, cells=[bracket, square])
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        if listening:
+            print("listening on %s" % ", ".join(_short_uuid(u) for u in listening))
+        await _stream(client, IPixel.write_uuid, frames, args, "corner test")
+        await asyncio.sleep(args.gap)
+        for uuid, reply in replies:
+            decoded = _decode_reply(reply)
+            print("   <- %s  %s%s" % (_short_uuid(uuid), reply.hex(" "),
+                                      ("   %s" % decoded) if decoded else ""))
+        if not replies:
+            print("   no reply")
+    print()
+    print("Look at the panel, then tell it what you saw:")
+    print("  ./matrix_probe.py text %s --saw <corner>,<side>" % args.address)
+    print()
+    print("  <corner>  which corner the BRACKET is in:")
+    print("            top-left, top-right, bottom-left, bottom-right")
+    print("  <side>    which side of the SQUARE the bracket is on: left, right")
+    print()
+    print("  e.g.  --saw top-right,left      (mirrored, characters in order)")
+    print()
+    print("If you see neither a bracket nor a square -- stripes, scattered")
+    print("pixels, nothing at all -- say so instead: that is not an")
+    print("orientation, it means the bitmap is not laid out in rows and none")
+    print("of the eight orders will fix it.")
     return 0
 
 
@@ -1903,6 +1998,11 @@ def build_parser():
     p.add_argument("--order", choices=M.BITMAP_ORDERS, default="msb")
     p.add_argument("--sweep", action="store_true",
                    help="send every bit order in turn so you can pick one")
+    p.add_argument("--corner", action="store_true",
+                   help="send a corner bracket and a square: one look names "
+                        "both the glyph transform and the character order")
+    p.add_argument("--saw", default="",
+                   help="what the corner test showed, e.g. top-right,left")
     p.add_argument("--reverse", action="store_true",
                    help="send the characters back to front, if the panel lays "
                         "them out right to left")
