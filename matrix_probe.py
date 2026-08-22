@@ -239,6 +239,13 @@ def _connect_failed(address, exc, device_found):
         print("itself is what failed. Usually:", file=sys.stderr)
         print("  * something else holds a connection to it (close the app)",
               file=sys.stderr)
+        print("  * the access point is on 2.4GHz and is starving Bluetooth.",
+              file=sys.stderr)
+        print("    This is measured, not theoretical -- see README section 8:",
+              file=sys.stderr)
+        print("      sudo systemctl stop hostapd     # to test", file=sys.stderr)
+        print("      sudo ./scripts/setup_ap_hostapd.sh   # to fix (5GHz)",
+              file=sys.stderr)
         print("  * the sign's own service is mid-sweep and owns the adapter:",
               file=sys.stderr)
         print("      sudo systemctl stop vice-lights", file=sys.stderr)
@@ -362,6 +369,129 @@ async def do_info(args):
                 for uuid, handle, _props in writable:
                     print("    handle 0x%04x = %s" % (handle, uuid))
 
+
+
+async def do_confirm(args):
+    """Walk a panel from "does it hear us at all" up to "does it show text".
+
+    One connection for the whole sequence, in order of how much each step
+    assumes. The control commands are short and their framing is well
+    established; the text encoder is the part that was written from
+    documentation rather than from this hardware. Running them together in one
+    go means a failure lands on a specific step instead of on "the driver".
+
+    Anything the panel sends back on its notify characteristic is printed
+    against the step that provoked it. A device that answers a good command and
+    stays silent on a bad one tells us more than watching the screen does.
+    """
+    driver = driver_from_args(args)
+    char = driver.characteristic()
+    print("panel   %s" % args.address)
+    print("driver  %s  (%s)"
+          % (driver.label, "confirmed" if driver.confirmed else "UNCONFIRMED"))
+    print("writing to %s\n" % char)
+
+    steps = [
+        ("screen off", "the panel goes dark", driver.power_frames(False), 2.5),
+        ("screen on", "the panel lights up again", driver.power_frames(True), 2.5),
+        ("brightness 20%", "it dims", driver.brightness_frames(20), 2.5),
+        ("brightness 100%", "it goes back to full", driver.brightness_frames(100), 2.5),
+        ("text VICE", "VICE appears, in pink",
+         driver.text_frames(M.normalize_message({"text": "VICE", "mode": "static",
+                                                 "color": "#ff2f6e"})), 6.0),
+        ("text scrolling", "BAR IS OPEN scrolls past, in cyan",
+         driver.text_frames(M.normalize_message({"text": "BAR IS OPEN",
+                                                 "mode": "scroll",
+                                                 "color": "#22d3ee"})), 8.0),
+    ]
+    if args.steps:
+        wanted = {int(n) for n in args.steps.split(",") if n.strip().isdigit()}
+        steps = [s for i, s in enumerate(steps, 1) if i in wanted]
+
+    replies = []
+
+    def on_notify(_sender, data):
+        replies.append(bytes(data))
+
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        # Listen on every notify characteristic the panel has. Which one it
+        # answers on is itself information.
+        services = getattr(client, "services", None)
+        if services is None:
+            services = await client.get_services()
+        listening = []
+        for service in services:
+            for characteristic in service.characteristics:
+                if "notify" in (characteristic.properties or ()):
+                    try:
+                        await client.start_notify(characteristic.uuid, on_notify)
+                        listening.append(characteristic.uuid)
+                    except Exception as exc:
+                        print("  (could not subscribe to %s: %s)"
+                              % (characteristic.uuid, exc))
+        if listening:
+            print("listening on %s\n" % ", ".join(listening))
+
+        print("Watch the panel. Each step says what it should do.\n")
+        results = []
+        for index, (name, expect, frames, hold) in enumerate(steps, 1):
+            if not frames:
+                print("%d. %-16s SKIPPED -- this driver has no such command"
+                      % (index, name))
+                results.append((name, expect, "no command"))
+                continue
+            replies.clear()
+            print("%d. %-16s -> %s" % (index, name, expect))
+            print("      %d frame(s), %d bytes" % (len(frames), sum(len(f) for f in frames)))
+            try:
+                for position, frame in enumerate(frames):
+                    await client.write_gatt_char(char, frame, response=False)
+                    if position + 1 < len(frames):
+                        await asyncio.sleep(args.delay)
+            except Exception as exc:
+                print("      WRITE FAILED: %s: %s" % (type(exc).__name__, exc))
+                results.append((name, expect, "write failed"))
+                continue
+            await asyncio.sleep(hold)
+            if replies:
+                print("      panel replied: %s"
+                      % "  ".join(r.hex(" ") for r in replies[:4]))
+            # "sent" is not evidence -- a write-without-response always
+            # "succeeds". A reply is evidence, so record which happened.
+            results.append((name, expect,
+                            "answered" if replies else "no reply"))
+
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+
+    print("\n===== what to report back =====")
+    for index, (name, expect, outcome) in enumerate(results, 1):
+        print("  %d. %-16s %-34s [%s]" % (index, name, expect, outcome))
+    answered = [n for n, _e, o in results if o == "answered"]
+    if answered and len(answered) < len(results):
+        print("\n  The panel answered %d of %d commands. It is not ignoring us,"
+              % (len(answered), len(results)))
+        print("  so the characteristic is right and the silent ones are the")
+        print("  commands it did not understand.")
+    elif not answered:
+        print("\n  The panel answered nothing. That is not proof of failure --"
+              "\n  plenty of these never reply -- so go by what the screen did.")
+    print("""
+Say which numbers actually happened on the panel. The split matters:
+
+  * 1-4 work, 5-6 do not  -> the family and the framing are right and only
+    the text encoder is wrong. That is the good outcome: capture the vendor
+    app once and the exact bytes come out of it.
+        ./matrix_probe.py btsnoop <capture> --emit-config
+
+  * nothing at all        -> right characteristic, wrong protocol. Same fix,
+    and the capture becomes the only route.
+
+  * everything works      -> say so and the driver gets marked confirmed.""")
 
 # -------------------------------------------------------------------- sending
 
@@ -738,6 +868,14 @@ def build_parser():
     p.add_argument("--speed", type=int, default=50)
     p.add_argument("--commands", help="JSON command table, for --family raw")
     p.set_defaults(run=lambda a: asyncio.run(do_send(a)))
+
+    p = sub.add_parser("confirm",
+                       help="run a panel through every command, in order of risk")
+    ble_args(p)
+    p.add_argument("--steps", default="",
+                   help="only these step numbers, e.g. 1,2,5")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_confirm(a)))
 
     p = sub.add_parser("control", help="on | off | clear | a brightness percentage")
     ble_args(p)
