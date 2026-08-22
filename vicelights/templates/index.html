@@ -1147,6 +1147,7 @@ function previewMessage(){
       var bits = [j.width + "\u00d7" + tall + " on a " + j.panel.width
                   + "\u00d7" + high + " panel"];
       if(j.scale > 1) bits.push(j.scale + "\u00d7 size");
+      if(j.bold) bits.push("bold");
       if(!j.fits){
         bits.push("too long — trim it to fit");
       } else if(j.scale === 1 && tall * 2 <= high && j.text){

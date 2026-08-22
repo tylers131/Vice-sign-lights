@@ -134,6 +134,12 @@ DEFAULT_MATRIX = {
     # slightly uneven -- three LEDs thick in places, two in others -- in
     # exchange for letters that reach the edges.
     "stretch": True,
+    # Widen every stroke by one column. "auto" does it only at 1x, where
+    # stretching to a 16-row panel otherwise leaves horizontal strokes two or
+    # three LEDs tall and vertical ones a single LED wide -- and that imbalance
+    # is what makes small text hard to read at a distance. At 2x the strokes
+    # are already two wide, so it is skipped. true forces it, false never.
+    "bold": "auto",
     # Where the four colour bytes of a set-pixel command go. The published
     # protocol says rgba; this sign's panel is agrb. matrix_probe.py colortest
     # works it out from what the panel shows.
@@ -269,6 +275,8 @@ def _matrix(raw) -> dict:
     value["write_response"] = bool(value.get("write_response", True))
     value["batch_writes"] = bool(value.get("batch_writes", True))
     value["stretch"] = bool(value.get("stretch", True))
+    bold = str(value.get("bold", "auto")).strip().lower()
+    value["bold"] = bold if bold in ("auto", "true", "false") else "auto"
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
                                     ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),
                                     ("png_opt", 0, 255, 0), ("png_buffer", 0, 255, 0)):

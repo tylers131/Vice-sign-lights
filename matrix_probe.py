@@ -1150,21 +1150,21 @@ async def do_say(args):
     diagnosis; this is the thing you actually want at the sign.
     """
     ack = _ack(args)
-    from vicelights.matrix import IPixel, scale_for, text_width
+    from vicelights.matrix import IPixel, layout_for
 
     config = {"width": args.width, "height": args.height}
     if args.scale:
         config["scale"] = str(args.scale)
     driver = IPixel(config)
     message = M.normalize_message({"text": args.text, "color": args.color})
-    scale = scale_for(config, message["text"])
-    drawn = text_width(message["text"], scale=scale)
+    plan = layout_for(config, message["text"])
+    scale, drawn = plan["scale"], plan["width"]
 
-    tall = args.height if driver.stretch() else min(args.height, 7 * scale)
-    print("%r at %dx -- %d x %d on a %d x %d panel%s"
-          % (message["text"], scale, drawn, tall, args.width, args.height,
-             " (stretched to fill the height)" if driver.stretch()
-             and tall != 7 * scale else ""))
+    print("%r at %dx%s -- %d x %d on a %d x %d panel%s"
+          % (message["text"], scale, ", bold" if plan["bold"] else "",
+             drawn, plan["height"], args.width, args.height,
+             " (stretched to fill the height)"
+             if driver.stretch() and plan["height"] != 7 * scale else ""))
     if drawn > args.width:
         print("  too long: %d columns of %d. It will be cut off."
               % (drawn, args.width))

@@ -564,7 +564,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "playlist", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
-                       "pixel_layout", "scale", "write_response", "stretch")
+                       "pixel_layout", "scale", "write_response", "stretch",
+                       "bold", "batch_writes")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -682,10 +683,10 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         # Preview at the scale the panel will actually use, so what the phone
         # draws is the size the message really appears at -- previewing a 5x7
         # glyph for something that goes up 2x is a picture of a different thing.
-        scale = matrix.scale_for(panel, text)
-        drawn = matrix.text_width(text, scale=scale)
+        plan = matrix.layout_for(panel, text)
+        scale, drawn = plan["scale"], plan["width"]
         stretch = bool(panel.get("stretch", True))
-        tall = height if stretch else min(height, matrix.FONT_HEIGHT * scale)
+        tall = plan["height"]
         return jsonify({
             "ok": True,
             "text": text,
@@ -694,8 +695,10 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "scale": scale,
             "stretch": stretch,
             "fits": drawn <= width,
+            "bold": plan["bold"],
             "rows": matrix.render_bitmap(text, height=tall, scale=scale,
-                                         stretch=stretch),
+                                         stretch=stretch, spacing=plan["spacing"],
+                                         bold=plan["bold"]),
             "ascii": matrix.preview(text),
             "panel": {"width": width, "height": height},
         })
