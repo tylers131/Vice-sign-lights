@@ -300,6 +300,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <p class="muted">The text panel is a separate Bluetooth device from the twelve
       light controllers. Power it on, scan, and pick it out of the list.</p>
     <button class="btn" style="margin-top:10px" onclick="startScan()">Scan for it</button>
+    <p id="panelScanStatus" class="muted" style="margin-top:8px;display:none"></p>
     <div id="panelCandidates" style="margin-top:10px"></div>
     <hr>
     <label>Or pair it by address</label>
@@ -408,6 +409,8 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <button class="btn" onclick="startScan()">Scan (8s)</button>
       <button class="btn ghost" onclick="loadScan()">Show last scan</button>
     </div>
+    <p id="scanStatus" class="muted" style="margin-top:8px;display:none"></p>
+    <div id="scanAge" class="muted" style="margin-top:8px"></div>
     <div id="scanList" style="margin-top:10px"></div>
   </div>
 
@@ -458,6 +461,7 @@ var PRESETS = ["#ff0000","#ff5a00","#ffaa00","#ffff00","#00ff40","#00ffd0",
 var LIVE_TIMER = null;
 var PANEL = null;           /* last /api/state panel block */
 var PREVIEW_TIMER = null;
+var SCAN_JOB = null;        /* the scan we are waiting on, if any */
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,
@@ -935,15 +939,60 @@ function applyToGroup(name){
     if(b.dataset.tab==="control") b.click();
   });
 }
+/* Wait for the scan to actually run, rather than guessing how long it takes.
+   BLE is serialized, so a scan queues behind whatever the radio is doing --
+   and when controllers are timing out at 12s each that is minutes, not
+   seconds. The old fixed 11s timer showed the PREVIOUS scan's results as if
+   they were the answer, which is worse than showing nothing. */
 function startScan(){
   post("/api/scan",{seconds:8}).then(function(j){
-    if(j.ok){ toast("Scanning 8s (BLE is serialized, so this waits its turn)");
-              setTimeout(loadScan, 11000); }
+    if(!j.ok) return;
+    SCAN_JOB = j.job.id;
+    scanStatus("Queued. BLE is serialized, so this waits for the radio.");
+    pollScan(0);
   });
+}
+function pollScan(tries){
+  if(!SCAN_JOB) return;
+  get("/api/job/"+SCAN_JOB).then(function(j){
+    if(!j.ok){ SCAN_JOB=null; scanStatus("Scan job vanished."); return; }
+    var state = j.job.state;
+    if(state==="queued"){
+      scanStatus("Waiting for the radio\u2026 "+(10+tries*2)+"s so far. "
+                +"A sweep with unreachable controllers can take minutes.");
+      setTimeout(function(){ pollScan(tries+1); }, 2000);
+      return;
+    }
+    if(state==="running"){
+      scanStatus("Scanning\u2026");
+      setTimeout(function(){ pollScan(tries+1); }, 2000);
+      return;
+    }
+    SCAN_JOB = null;
+    if(state==="superseded"){ scanStatus("Another scan replaced this one."); return; }
+    scanStatus("");
+    loadScan();
+  }).catch(function(){ SCAN_JOB=null; scanStatus("Lost contact with the sign."); });
+}
+function scanStatus(message){
+  ["scanStatus","panelScanStatus"].forEach(function(id){
+    var box = $(id);
+    if(box){ box.textContent = message; box.style.display = message ? "" : "none"; }
+  });
+}
+function scanAge(at){
+  if(!at) return "";
+  var seconds = Math.max(0, Math.round(Date.now()/1000 - at));
+  if(seconds < 90) return seconds+"s ago";
+  if(seconds < 5400) return Math.round(seconds/60)+" min ago";
+  return Math.round(seconds/3600)+"h ago";
 }
 function loadScan(){
   get("/api/scan/result").then(function(j){
     var found=(j.scan&&j.scan.devices)||[];
+    var age = scanAge(j.scan && j.scan.at);
+    var stale = j.scan && j.scan.at
+              && (Date.now()/1000 - j.scan.at) > 120;
     $("scanList").innerHTML = found.length ? found.map(function(d){
       return '<div class="item"><span class="dot '+(d.is_elk?"ok":"")+'"></span>'
         + '<div class="grow"><div class="name">'+esc(d.name||"(no name)")+'</div>'
@@ -953,6 +1002,7 @@ function loadScan(){
            +esc(d.name||d.address)+'\')">Add</button>')
         + '</div>';
     }).join("") : '<p class="muted">Nothing found yet.</p>';
+    if($("scanAge")) $("scanAge").textContent = age ? ("last scan "+age) : "";
 
     /* The same scan feeds the panel pairing list. A panel candidate is
        anything that is not an ELK controller and looks like a display; the
@@ -960,6 +1010,12 @@ function loadScan(){
     var box = $("panelCandidates");
     if(box){
       var cands = found.filter(function(d){ return d.is_panel; });
+      var empty = !found.length
+        ? '<p class="muted">No scan has run yet. Tap Scan for it.</p>'
+        : ('<p class="muted">Nothing panel-shaped in the scan from '+esc(age)+'.'
+           + (stale ? ' That is old \u2014 scan again with the panel powered on.'
+                    : ' Make sure the panel is powered on, then scan again.')
+           + '</p>');
       box.innerHTML = cands.length ? cands.map(function(d){
         return '<div class="item"><span class="dot"></span>'
           + '<div class="grow"><div class="name">'+esc(d.name||"(no name)")+'</div>'
@@ -968,7 +1024,7 @@ function loadScan(){
           + '</div></div>'
           + '<button class="btn sm" onclick="pairFound(\''+d.address+'\',\''
              +esc(d.name||"")+'\')">Pair</button></div>';
-      }).join("") : '<p class="muted">No panel-looking device in the last scan.</p>';
+      }).join("") : empty;
     }
   });
 }
