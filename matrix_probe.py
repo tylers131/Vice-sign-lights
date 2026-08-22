@@ -55,6 +55,50 @@ except Exception:                    # pragma: no cover - decoding on a laptop
     _require_bleak = None
 
 
+# Where the previous scan is kept, so a second scan can say what changed. A
+# crowded band means 40+ rows a pass, and picking the one new line out by eye is
+# the step most likely to go wrong -- the panel hides in plain sight.
+SCAN_CACHE = "/var/lib/vice-lights/last-scan.json"
+
+
+def _scan_cache_path():
+    for candidate in (SCAN_CACHE,
+                      os.path.expanduser("~/.cache/vice-lights-last-scan.json"),
+                      "/tmp/vice-lights-last-scan.json"):
+        directory = os.path.dirname(candidate)
+        if os.path.isdir(directory) and os.access(directory, os.W_OK):
+            return candidate
+        try:
+            os.makedirs(directory, exist_ok=True)
+            return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _load_last_scan():
+    path = _scan_cache_path()
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _save_last_scan(rows):
+    path = _scan_cache_path()
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"addresses": {r["address"]: r["name"] for r in rows}}, handle)
+    except Exception:
+        pass
+
+
 def need_bleak():
     if HAVE_BLEAK:
         return
@@ -93,9 +137,17 @@ async def do_scan(args):
         })
 
     from vicelights.protocol import looks_like_elk
-    rows.sort(key=lambda r: -(r["rssi"] or -999))
-    print("\n%-18s %-26s %5s  %s" % ("ADDRESS", "NAME", "RSSI", "VERDICT"))
-    print("-" * 76)
+
+    previous = None if args.forget else _load_last_scan()
+    seen_before = set((previous or {}).get("addresses") or {})
+    for row in rows:
+        row["new"] = bool(seen_before) and row["address"] not in seen_before
+    _save_last_scan(rows)
+
+    rows.sort(key=lambda r: (not r["new"], -(r["rssi"] or -999)))
+    print("\n%-18s %-26s %5s  %-4s %s"
+          % ("ADDRESS", "NAME", "RSSI", "NEW", "VERDICT"))
+    print("-" * 84)
     hidden = 0
     for row in rows:
         if looks_like_elk(row["name"]):
@@ -109,10 +161,20 @@ async def do_scan(args):
         else:
             hidden += 1
             continue
-        print("%-18s %-26s %5s  %s" % (row["address"], row["name"][:26] or "(no name)",
-                                       row["rssi"] if row["rssi"] is not None else "?", verdict))
+        if row["new"] and not verdict:
+            verdict = "appeared since the last scan"
+        print("%-18s %-26s %5s  %-4s %s"
+              % (row["address"], row["name"][:26] or "(no name)",
+                 row["rssi"] if row["rssi"] is not None else "?",
+                 "NEW" if row["new"] else "", verdict))
     candidates = [r for r in rows if r["panel"]]
+    fresh = [r for r in rows if r["new"]]
     print("\n%d device(s) seen, %d look like a text panel." % (len(rows), len(candidates)))
+    if seen_before:
+        print("%d of them were not in the previous scan." % len(fresh))
+    else:
+        print("No previous scan to compare against -- this one is the baseline "
+              "now.\nPower the panel on and run this again to see what appears.")
     # Plenty of these panels advertise as a bare MAC, a hex blob, or a generic
     # word, and the name filter cannot help with those -- so never let the
     # default view imply the panel was not there.
@@ -120,14 +182,20 @@ async def do_scan(args):
         print("%d device(s) hidden by the name filter. If the panel is not "
               "listed above,\nre-run with --all -- it may be advertising under "
               "something meaningless." % hidden)
-    if not candidates:
-        print("\nNothing obvious. The reliable way to find an unnamed panel:\n"
+    if candidates:
+        print("Next: ./matrix_probe.py info %s" % candidates[0]["address"])
+    elif fresh:
+        print("\nNothing matched by name, but these appeared since the last scan:")
+        for row in fresh[:5]:
+            print("  ./matrix_probe.py info %-18s # %s, rssi %s"
+                  % (row["address"], row["name"] or "(no name)", row["rssi"]))
+    else:
+        print("\nNothing obvious. To find a panel advertising under a "
+              "meaningless name:\n"
               "  1. power the panel OFF, then: ./matrix_probe.py scan --all\n"
               "  2. power it ON, wait 10s, then run the same command again\n"
-              "  3. whatever is in the second list and not the first is the panel\n"
+              "  3. the second run marks anything new with NEW\n"
               "Then: ./matrix_probe.py info <address>")
-    else:
-        print("Next: ./matrix_probe.py info %s" % candidates[0]["address"])
 
 
 # ------------------------------------------------------------------ inspection
@@ -542,6 +610,8 @@ def build_parser():
     p = sub.add_parser("scan", help="list nearby BLE devices and guess which is the panel")
     p.add_argument("--seconds", type=float, default=8.0)
     p.add_argument("--all", action="store_true", help="show every device, not just candidates")
+    p.add_argument("--forget", action="store_true",
+                   help="ignore the remembered scan and start a fresh baseline")
     p.set_defaults(run=lambda a: asyncio.run(do_scan(a)))
 
     p = sub.add_parser("info", help="connect and dump the GATT tree")

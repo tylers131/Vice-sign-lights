@@ -538,4 +538,8 @@ def looks_like_panel(name: str) -> bool:
     if identify(lowered):
         return True
     return any(hint in lowered for hint in
-               ("matrix", "pixel", "badge", "screen", "display", "led-", "sign"))
+               ("matrix", "pixel", "badge", "screen", "display", "sign",
+                # Seen on this sign's own panel: LED_BLE_4B3289C5, where the
+                # tail is the device's own MAC suffix. The dash, underscore and
+                # run-together spellings all occur across these brands.
+                "led-", "led_", "ledble", "led ble"))
