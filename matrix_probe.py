@@ -2084,8 +2084,6 @@ def build_parser():
                    help="send the message at a series of lengths to find the "
                         "longest the panel will show; optionally a list, "
                         "e.g. --bisect 4,8,16")
-    p.add_argument("--chunk", type=int, default=20,
-                   help="bytes per piece when splitting a big packet")
     p.add_argument("--reverse", action="store_true",
                    help="send the characters back to front, if the panel lays "
                         "them out right to left")
