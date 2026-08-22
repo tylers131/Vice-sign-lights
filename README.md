@@ -423,7 +423,7 @@ that needs SSH is a check that does not get run. The *System* tab has a
 
 | Button | What it runs |
 | --- | --- |
-| Go / no-go | `scripts/preflight.sh` -- services, AP band, radio, controllers, panel, disk, clock |
+| Go / no-go | `scripts/preflight.sh` -- services, AP band, radio, controllers, panel, runtime limit, disk, clock |
 | Bluetooth and system | `scripts/diagnose.sh` -- adapter state, throttling, temperature, what is advertising |
 | Service journal | the last 300 lines systemd holds, including whatever killed the service before it could log |
 
@@ -1279,6 +1279,55 @@ So drive a group while you're playing with colours and save `all` for scenes you
 apply and walk away from. Live apply on a two-device group feels immediate;
 live apply on all 12 does not.
 
+### The battery, and the thing that actually protects it
+
+The sign runs off a battery on a solar charge controller. The controllers do
+not switch themselves off, and neither does anyone at four in the morning: left
+lit overnight, this sign took its battery below the voltage the controller will
+begin charging at. That is worse than a dark sign. It is a sign that cannot
+come back the next day without mains power, and on the playa there is none.
+
+**The real safeguard is the charge controller's own load output.** Wire the
+lights (and the Pi) to the controller's LOAD terminals rather than straight to
+the battery, and its low-voltage disconnect cuts them in hardware at a set
+voltage, with nothing running and nothing to go wrong. Nothing in this
+repository can do that job, because the Pi is on the same battery: by the time
+the voltage is low enough to matter, the thing that was supposed to react is
+browning out too. Do the wiring.
+
+**The software half is a runtime budget**, and it handles the ordinary case --
+nobody remembering. The sign gets N minutes of being lit; when they are spent
+everything is switched off, the panel included, and rotation is stopped so the
+next tick cannot light it all again.
+
+```
+POST /api/battery        {"enabled": true, "run_minutes": 360}
+POST /api/battery/rearm  another full budget, for a night that runs long
+```
+
+Counted on `time.monotonic`, like everything else timed here, because the Pi
+has no RTC and comes up on the playa knowing nothing about the date -- a
+wall-clock "off at 3am" is exactly the thing that cannot be relied on there.
+
+The clock runs only while something is actually lit, read from what the worker
+recorded after each successful write rather than from what was asked for: a
+controller that never answered is not drawing anything, and counting it would
+spend the budget on lights that are not on. A warning goes in the log and on
+the Control tab before the cut, so someone who wants another hour can press
+**Give it another**.
+
+Defaults to six hours. `"enabled": false` turns it off entirely, and the
+Control tab says `no limit` in that state rather than saying nothing -- the
+failure this exists to prevent is silent. `preflight.sh` fails on it being
+off, which is the check that would have caught the night it happened.
+
+Two things it deliberately does not do. It does not turn anything back on:
+without an RTC there is no "at sunset" to schedule against, and the lights
+coming on by themselves at four in the morning is the same bug in the other
+direction. And a cut that did not take -- controllers out of range, a write
+that failed -- is re-sent every five minutes rather than left at one attempt,
+because the battery does not care that we tried.
+
 ### One dead controller used to cost a minute
 
 A controller that is powered down, out of range or simply dead costs
@@ -1549,6 +1598,8 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/scene/apply` | `{scene}` |
 | POST | `/api/queue/clear` | Drop everything still queued |
 | POST | `/api/stop` | Stop now: drops the queue *and* cancels the write in flight |
+| GET/POST | `/api/battery` | The runtime budget: `{enabled, run_minutes, warn_minutes, include_panel}` |
+| POST | `/api/battery/rearm` | Another full budget |
 | POST | `/api/devices` | Create/update `{address, name, groups, enabled}` |
 | DELETE | `/api/devices/<addr>` | |
 | POST | `/api/devices/<addr>/test` | Blink it green |

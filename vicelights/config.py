@@ -22,6 +22,27 @@ log = logging.getLogger("vicelights.config")
 
 ADDR_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
 
+# The sign runs off a battery on a solar charge controller, and the lights do
+# not switch themselves off. Left on overnight they took the battery below the
+# voltage the controller will start charging at -- a flat battery is not a dark
+# sign for one night, it is a sign that cannot come back the next day without
+# mains power, which on the playa there is none of.
+#
+# This is the software half of the answer. The other half is wiring the load
+# through the controller's own low-voltage disconnect, and it is the more
+# important half: nothing here can help once the Pi itself browns out, because
+# the Pi is on the same battery.
+DEFAULT_BATTERY = {
+    "enabled": True,
+    # How long the lights may stay lit before they are turned off. Six hours
+    # covers a night of a party and stops well short of a dead battery.
+    "run_minutes": 360.0,
+    # Say so before it happens, so someone who wants another hour can take it.
+    "warn_minutes": 20.0,
+    # The panel is on the same battery. Off means off.
+    "include_panel": True,
+}
+
 DEFAULT_SETTINGS = {
     "host": "0.0.0.0",
     "port": 80,
@@ -185,6 +206,7 @@ DEFAULT_CONFIG = {
     "timers": [],
     "matrix": dict(DEFAULT_MATRIX),
     "messages": [],
+    "battery": dict(DEFAULT_BATTERY),
 }
 
 
@@ -246,6 +268,30 @@ def _rotation(raw) -> dict:
             0.0, float(value.get("hold_after_manual_minutes", 15.0)))
     except (TypeError, ValueError):
         value["hold_after_manual_minutes"] = 15.0
+    return value
+
+
+def _battery(raw) -> dict:
+    """Validate the runtime budget, clamping anything unusable.
+
+    The floor on run_minutes is deliberate: a budget of nought would turn the
+    sign off the moment it lit, which reads as broken lights rather than as a
+    setting, and someone would spend the night fighting it instead of fixing
+    the number.
+    """
+    value = dict(DEFAULT_BATTERY)
+    value.update(raw or {})
+    value["enabled"] = bool(value.get("enabled", True))
+    value["include_panel"] = bool(value.get("include_panel", True))
+    for key, low, high, default in (("run_minutes", 5.0, 1440.0, 360.0),
+                                    ("warn_minutes", 0.0, 120.0, 20.0)):
+        try:
+            value[key] = max(low, min(high, float(value.get(key, default))))
+        except (TypeError, ValueError):
+            value[key] = default
+    if value["warn_minutes"] >= value["run_minutes"]:
+        # A warning that arrives before the lights do is not a warning.
+        value["warn_minutes"] = min(value["run_minutes"] / 2.0, 20.0)
     return value
 
 
@@ -526,6 +572,7 @@ class ConfigStore:
         data["rotation"] = _rotation(raw.get("rotation"))
         data["mode_names"] = _mode_names(raw.get("mode_names"))
         data["matrix"] = _matrix(raw.get("matrix"))
+        data["battery"] = _battery(raw.get("battery"))
 
         from .matrix import normalize_message, MAX_MESSAGES
         dwell = data["matrix"]["default_dwell"]
@@ -921,6 +968,19 @@ class ConfigStore:
             cleaned.update(merged)
             data["settings"] = cleaned
             return cleaned
+
+        return self.mutate(apply)
+
+    def battery(self) -> dict:
+        with self._lock:
+            return dict(self._data.get("battery") or DEFAULT_BATTERY)
+
+    def update_battery(self, changes: dict) -> dict:
+        def apply(data):
+            merged = dict(data.get("battery") or DEFAULT_BATTERY)
+            merged.update(changes or {})
+            data["battery"] = _battery(merged)
+            return data["battery"]
 
         return self.mutate(apply)
 
