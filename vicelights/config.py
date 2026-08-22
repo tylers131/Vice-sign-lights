@@ -77,6 +77,34 @@ DEFAULT_ROTATION = {
 # the UI permanently sluggish.
 MIN_ROTATION_MINUTES = 2.0
 
+# The BLE text panel. One panel, not twelve: it is a single named device with
+# its own protocol, so it lives here rather than in "devices" where every
+# entry is assumed to speak ELK-BLEDOM and to be targetable by a group.
+DEFAULT_MATRIX = {
+    "enabled": False,
+    "address": "",
+    "name": "",
+    # auto = pick a driver from the advertised name and characteristics.
+    # See vicelights/matrix.py for the families and matrix_probe.py for how
+    # to fingerprint a panel that none of them match.
+    "family": "auto",
+    "char_uuid": "",
+    "width": 32,
+    "height": 16,
+    "brightness": 100,
+    # Cycle the saved messages, one at a time, each for its own dwell.
+    "playlist": False,
+    "default_dwell": 20.0,
+    # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
+    # nothing here negotiates a larger one, so raising it needs evidence.
+    "chunk": 20,
+    "frame_delay": 0.02,
+    # A protocol lifted off an HCI capture, for family "raw". Hex strings,
+    # so a panel nobody has written a driver for can still be driven from
+    # the config file alone.
+    "commands": {},
+}
+
 DEFAULT_CONFIG = {
     "settings": dict(DEFAULT_SETTINGS),
     "rotation": dict(DEFAULT_ROTATION),
@@ -89,6 +117,8 @@ DEFAULT_CONFIG = {
     "scenes": [],
     "schedules": [],
     "timers": [],
+    "matrix": dict(DEFAULT_MATRIX),
+    "messages": [],
 }
 
 
@@ -150,6 +180,54 @@ def _rotation(raw) -> dict:
             0.0, float(value.get("hold_after_manual_minutes", 15.0)))
     except (TypeError, ValueError):
         value["hold_after_manual_minutes"] = 15.0
+    return value
+
+
+def _matrix(raw) -> dict:
+    """Validate the panel block, clamping anything a bad client could send."""
+    from .matrix import FAMILIES, DEFAULT_FAMILY
+    value = dict(DEFAULT_MATRIX)
+    value.update(raw or {})
+    value["enabled"] = bool(value.get("enabled"))
+    value["playlist"] = bool(value.get("playlist"))
+    address = str(value.get("address") or "").strip()
+    if address:
+        try:
+            address = normalize_address(address)
+        except ValueError as exc:
+            log.error("dropping matrix address: %s", exc)
+            address = ""
+    value["address"] = address
+    value["name"] = str(value.get("name") or "").strip()[:60]
+    family = str(value.get("family") or DEFAULT_FAMILY).strip().lower()
+    if family not in FAMILIES and family != DEFAULT_FAMILY:
+        log.warning("unknown matrix family %r; falling back to auto-detect", family)
+        family = DEFAULT_FAMILY
+    value["family"] = family
+    value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
+    for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
+                                    ("brightness", 5, 100, 100), ("chunk", 8, 512, 20)):
+        try:
+            value[key] = max(low, min(high, int(value.get(key, default))))
+        except (TypeError, ValueError):
+            value[key] = default
+    try:
+        value["default_dwell"] = max(0.0, min(3600.0, float(value.get("default_dwell", 20.0))))
+    except (TypeError, ValueError):
+        value["default_dwell"] = 20.0
+    try:
+        value["frame_delay"] = max(0.0, min(1.0, float(value.get("frame_delay", 0.02))))
+    except (TypeError, ValueError):
+        value["frame_delay"] = 0.02
+    commands = {}
+    for name, entry in (value.get("commands") or {}).items():
+        if isinstance(entry, str):
+            entry = [entry]
+        if not isinstance(entry, (list, tuple)):
+            log.warning("ignoring matrix command %r: not hex or a list of hex", name)
+            continue
+        commands[str(name)] = [str(part) for part in entry]
+    value["commands"] = commands
     return value
 
 
@@ -338,6 +416,21 @@ class ConfigStore:
         data["settings"] = settings
         data["rotation"] = _rotation(raw.get("rotation"))
         data["mode_names"] = _mode_names(raw.get("mode_names"))
+        data["matrix"] = _matrix(raw.get("matrix"))
+
+        from .matrix import normalize_message, MAX_MESSAGES
+        dwell = data["matrix"]["default_dwell"]
+        seen_messages = set()
+        for entry in (raw.get("messages") or [])[:MAX_MESSAGES]:
+            message = normalize_message(entry, dwell)
+            if not message["text"]:
+                log.warning("dropping message with no text")
+                continue
+            if message["id"] in seen_messages:
+                log.warning("dropping duplicate message id %s", message["id"])
+                continue
+            seen_messages.add(message["id"])
+            data["messages"].append(message)
 
         seen = set()
         for entry in raw.get("devices") or []:
@@ -731,6 +824,91 @@ class ConfigStore:
                 continue
             names.append(scene["name"])
         return names
+
+    # ------------------------------------------------------------ matrix panel
+
+    def matrix(self) -> dict:
+        with self._lock:
+            return dict(self._data.get("matrix") or DEFAULT_MATRIX)
+
+    def update_matrix(self, changes: dict) -> dict:
+        def apply(data):
+            merged = dict(data.get("matrix") or DEFAULT_MATRIX)
+            merged.update(changes or {})
+            data["matrix"] = _matrix(merged)
+            return data["matrix"]
+
+        return self.mutate(apply)
+
+    def messages(self, enabled_only: bool = False) -> list:
+        with self._lock:
+            messages = [dict(m) for m in self._data.get("messages") or []]
+        if enabled_only:
+            messages = [m for m in messages if m.get("enabled", True) and m.get("text")]
+        return messages
+
+    def message(self, message_id: str):
+        for message in self.messages():
+            if message["id"] == message_id:
+                return message
+        return None
+
+    def upsert_message(self, entry: dict) -> dict:
+        """Add or edit one queued message.
+
+        New messages go on the end of the list. The list order IS the play
+        order -- there is no separate sort key -- so reordering is a single
+        call and what you see in the UI is what the panel will do.
+        """
+        from .matrix import normalize_message, MAX_MESSAGES
+
+        def apply(data):
+            dwell = (data.get("matrix") or DEFAULT_MATRIX).get("default_dwell", 20.0)
+            message = normalize_message(entry, dwell)
+            if not message["text"]:
+                raise ConfigError("a message needs some text")
+            existing = data.setdefault("messages", [])
+            for index, current in enumerate(existing):
+                if current["id"] == message["id"]:
+                    existing[index] = message
+                    return message
+            if len(existing) >= MAX_MESSAGES:
+                raise ConfigError("the queue holds %d messages; delete one first"
+                                  % MAX_MESSAGES)
+            existing.append(message)
+            return message
+
+        return self.mutate(apply)
+
+    def delete_message(self, message_id: str) -> bool:
+        def apply(data):
+            existing = data.setdefault("messages", [])
+            remaining = [m for m in existing if m["id"] != message_id]
+            if len(remaining) == len(existing):
+                return False
+            data["messages"] = remaining
+            return True
+
+        return self.mutate(apply)
+
+    def reorder_messages(self, ids: list) -> list:
+        """Put the queue in the given order.
+
+        Anything the caller left out keeps its relative position at the end
+        rather than being deleted: a reorder request built from a stale copy
+        of the list should shuffle the queue, never silently empty it.
+        """
+        wanted = [str(i) for i in (ids or [])]
+
+        def apply(data):
+            existing = data.setdefault("messages", [])
+            by_id = {m["id"]: m for m in existing}
+            ordered = [by_id.pop(i) for i in wanted if i in by_id]
+            ordered += [m for m in existing if m["id"] in by_id]
+            data["messages"] = ordered
+            return [m["id"] for m in ordered]
+
+        return self.mutate(apply)
 
     def mark_schedule_fired(self, schedule_id: str, stamp: str):
         def apply(data):

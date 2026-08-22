@@ -23,6 +23,7 @@ import time
 import random
 
 from .config import new_id
+from .messages import MatrixRunner
 
 log = logging.getLogger("vicelights.scheduler")
 
@@ -196,6 +197,11 @@ class Scheduler:
         self.worker = worker
         self.timekeeper = timekeeper
         self.rotation = Rotation(store, worker)
+        # The text panel cycles on this same thread. It is a different device
+        # on a different protocol, but it is the same "wait, then send one
+        # thing" shape, and giving it its own thread would only add a second
+        # writer racing for the one radio.
+        self.panel = MatrixRunner(store, worker)
         self._thread = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -230,6 +236,10 @@ class Scheduler:
             self.rotation.tick()
         except Exception:
             log.exception("rotation tick failed")
+        try:
+            self.panel.tick()
+        except Exception:
+            log.exception("panel tick failed")
         if not self.timekeeper.clock_ok():
             return
         self._fire_schedules()

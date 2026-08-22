@@ -990,5 +990,21 @@
       "last_fired": ""
     }
   ],
-  "timers": []
+  "timers": [],
+  "matrix": {
+    "enabled": false,
+    "address": "",
+    "name": "",
+    "family": "auto",
+    "char_uuid": "",
+    "width": 32,
+    "height": 16,
+    "brightness": 100,
+    "playlist": false,
+    "default_dwell": 20.0,
+    "chunk": 20,
+    "frame_delay": 0.02,
+    "commands": {}
+  },
+  "messages": []
 }

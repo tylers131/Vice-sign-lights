@@ -17,9 +17,10 @@ import time
 
 from flask import Flask, jsonify, render_template, request
 
+from . import matrix
 from . import protocol
 from .ble import describe_state
-from .config import normalize_address
+from .config import ConfigError, normalize_address
 
 log = logging.getLogger("vicelights.web")
 
@@ -305,6 +306,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "timers": scheduler.timers(),
             "next_runs": scheduler.next_runs(),
             "rotation": scheduler.rotation.status(),
+            "panel": scheduler.panel.status(),
             "time": timekeeper.info(),
             "modes": protocol.mode_catalog(store.mode_names()),
             "queue": {"queued": status["queued"], "busy": status["busy"],
@@ -328,6 +330,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "now": timekeeper.info()["now"],
             "timers": scheduler.timers(),
             "rotation": scheduler.rotation.status(),
+            "panel": _slim_panel(scheduler.panel.status()),
         })
 
     @app.route("/api/job/<job_id>")
@@ -544,6 +547,145 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
 
     # ----------------------------------------------------------- config / log
 
+    # ------------------------------------------------------------ text panel
+
+    @app.route("/api/matrix", methods=["GET", "POST"])
+    def api_matrix():
+        """Read or change the panel's settings.
+
+        Everything the UI needs to draw the panel page comes back from GET,
+        including which commands this panel's driver can actually build, so a
+        family without a brightness command does not get a dead slider.
+        """
+        if request.method == "POST":
+            body = _body()
+            allowed = ("enabled", "address", "name", "family", "char_uuid",
+                       "playlist", "width", "height", "default_dwell",
+                       "chunk", "frame_delay", "commands")
+            changes = {k: body[k] for k in allowed if k in body}
+            if not changes:
+                return _json_error("nothing to change")
+            # The store drops an unparseable address and carries on, which is
+            # right when it is loading a config file it did not write -- but
+            # here it would answer 200 to "pair this panel" and leave the panel
+            # unpaired. Reject it where the caller can still be told.
+            if changes.get("address"):
+                try:
+                    changes["address"] = normalize_address(changes["address"])
+                except ValueError as exc:
+                    return _json_error(exc)
+            try:
+                store.update_matrix(changes)
+            except ConfigError as exc:
+                return _json_error(exc)
+            log.info("panel settings changed: %s", ", ".join(sorted(changes)))
+        return jsonify({"ok": True, "matrix": scheduler.panel.status(),
+                        "families": matrix.family_names()})
+
+    @app.route("/api/matrix/send", methods=["POST"])
+    def api_matrix_send():
+        """Put a message on the panel now, whether or not it is in the queue."""
+        body = _body()
+        try:
+            result = scheduler.panel.send(body, hold=body.get("hold"))
+        except ValueError as exc:
+            return _json_error(exc)
+        if not result["sent"]:
+            return _json_error(result["error"] or "the panel did not take it", 503)
+        worker.note_manual()
+        return jsonify({"ok": True, "message": result["message"]})
+
+    @app.route("/api/matrix/next", methods=["POST"])
+    def api_matrix_next():
+        result = scheduler.panel.play_next(force=True)
+        if not result["sent"]:
+            return _json_error(result["error"] or "nothing to play", 409)
+        return jsonify({"ok": True, "message": result["message"]})
+
+    @app.route("/api/matrix/clear", methods=["POST"])
+    def api_matrix_clear():
+        if not scheduler.panel.clear():
+            return _json_error("this panel has no clear command", 503)
+        return jsonify({"ok": True})
+
+    @app.route("/api/matrix/power", methods=["POST"])
+    def api_matrix_power():
+        on = bool(_body().get("on", True))
+        if not scheduler.panel.power(on):
+            return _json_error("this panel has no power command", 503)
+        return jsonify({"ok": True, "on": on})
+
+    @app.route("/api/matrix/brightness", methods=["POST"])
+    def api_matrix_brightness():
+        try:
+            percent = int(_body().get("percent", 100))
+        except (TypeError, ValueError):
+            return _json_error("brightness must be a number")
+        if not 0 <= percent <= 100:
+            return _json_error("brightness must be 0-100")
+        if not scheduler.panel.brightness(percent):
+            return _json_error("this panel has no brightness command", 503)
+        return jsonify({"ok": True, "percent": percent})
+
+    # -- the queue itself
+
+    @app.route("/api/matrix/messages", methods=["GET", "POST"])
+    def api_matrix_messages():
+        if request.method == "POST":
+            try:
+                message = store.upsert_message(_body())
+            except (ConfigError, ValueError) as exc:
+                return _json_error(exc)
+            return jsonify({"ok": True, "message": message,
+                            "messages": store.messages()})
+        return jsonify({"ok": True, "messages": store.messages()})
+
+    @app.route("/api/matrix/messages/<message_id>", methods=["DELETE"])
+    def api_matrix_message_delete(message_id):
+        if not store.delete_message(message_id):
+            return _json_error("no such message", 404)
+        return jsonify({"ok": True, "messages": store.messages()})
+
+    @app.route("/api/matrix/messages/<message_id>/send", methods=["POST"])
+    def api_matrix_message_send(message_id):
+        message = store.message(message_id)
+        if not message:
+            return _json_error("no such message", 404)
+        result = scheduler.panel.send(message)
+        if not result["sent"]:
+            return _json_error(result["error"] or "the panel did not take it", 503)
+        worker.note_manual()
+        return jsonify({"ok": True, "message": result["message"]})
+
+    @app.route("/api/matrix/messages/order", methods=["POST"])
+    def api_matrix_message_order():
+        ids = _body().get("ids")
+        if not isinstance(ids, list):
+            return _json_error("send an 'ids' list in the order you want")
+        return jsonify({"ok": True, "ids": store.reorder_messages(ids),
+                        "messages": store.messages()})
+
+    @app.route("/api/matrix/preview")
+    def api_matrix_preview():
+        """What a message will look like, as pixels, without the panel.
+
+        The font lives on the Pi, so this is the only honest preview -- and it
+        means a message can be checked from the phone before it goes up on a
+        sign several people are looking at.
+        """
+        text = request.args.get("text", "")[:matrix.MAX_TEXT]
+        height = store.matrix().get("height", 16)
+        return jsonify({
+            "ok": True,
+            "text": text,
+            "width": matrix.text_width(text),
+            "height": matrix.FONT_HEIGHT,
+            "fits": matrix.text_width(text) <= store.matrix().get("width", 32),
+            "rows": matrix.render_bitmap(text, height=matrix.FONT_HEIGHT),
+            "ascii": matrix.preview(text),
+            "panel": {"width": store.matrix().get("width", 32), "height": height},
+        })
+
     @app.route("/api/config", methods=["GET", "PUT"])
     def api_config():
         if request.method == "GET":
@@ -570,6 +712,18 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         return jsonify({"ok": True, "path": log_path, "lines": lines})
 
     return app
+
+
+def _slim_panel(panel: dict) -> dict:
+    """The panel status without the whole queue.
+
+    /api/status is polled every couple of seconds by both the phone and the
+    touch panel; shipping forty messages each time to show one line of "now
+    showing" is forty times the bytes for none of the information.
+    """
+    keep = ("enabled", "configured", "name", "address", "playlist", "queued",
+            "current", "next_in", "last_error", "brightness")
+    return {key: panel.get(key) for key in keep}
 
 
 def _slim_job(job: dict) -> dict:

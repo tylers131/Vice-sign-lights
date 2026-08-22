@@ -18,6 +18,7 @@ import os
 import threading
 import time
 
+from . import matrix as matrix_module
 from . import protocol
 from .config import new_id
 
@@ -355,17 +356,63 @@ class BleWorker:
                   [self._item(address, frames)], coalesce_key="test:" + address)
         return self._register(job)
 
+    def submit_matrix(self, frames, label: str, coalesce_key: str = None,
+                      payload: dict = None) -> Job:
+        """Write already-encoded frames to the text panel.
+
+        The panel is not an ELK-BLEDOM controller and nothing above knows how
+        to build its frames -- ``matrix.py`` does that -- but it is on the same
+        radio, so it queues here with everything else. A panel write landing in
+        the middle of a twelve-device sweep would cost both.
+
+        Returns None rather than raising when no panel is configured: the
+        callers are a scheduler tick and an HTTP handler, and neither should
+        have to guard every call.
+        """
+        matrix = self.store.matrix()
+        address = matrix.get("address")
+        if not address:
+            log.debug("no matrix panel configured; dropping %s", label)
+            return None
+        driver = matrix_module.driver_for(matrix)
+        char_uuid = driver.characteristic()
+        if not char_uuid:
+            log.warning("matrix panel %s has no write characteristic; "
+                        "run matrix_probe.py to fingerprint it", address)
+            return None
+        frames = [bytes(f) for f in frames if f]
+        if not frames:
+            log.debug("nothing to send to the panel for %s", label)
+            return None
+        item = self._item(address, frames,
+                          name=matrix.get("name") or "panel",
+                          char_uuid=char_uuid,
+                          frame_delay=matrix.get("frame_delay", 0.02))
+        job = Job("matrix", label, [item],
+                  coalesce_key=coalesce_key or "matrix",
+                  payload=dict(payload or {}))
+        log.info("queued %s: %d frame(s), %d bytes to %s via %s",
+                 label, len(frames), sum(len(f) for f in frames), address, char_uuid)
+        return self._register(job)
+
     def submit_scan(self, seconds: float = None) -> Job:
         seconds = float(seconds or self.store.setting("scan_seconds", 8.0))
         job = Job("scan", "scan %.0fs" % seconds, [], coalesce_key="scan",
                   payload={"seconds": seconds})
         return self._register(job)
 
-    def _item(self, address, frames, state=None):
+    def _item(self, address, frames, state=None, name=None, char_uuid=None,
+              frame_delay=None):
+        """One device's worth of work.
+
+        ``name`` and ``char_uuid`` exist for devices that are not in the
+        ELK-BLEDOM device list -- the text panel, which has its own protocol
+        and a characteristic that must not be guessed at.
+        """
         device = self.store.device(address)
-        return {
+        item = {
             "address": address,
-            "name": device["name"] if device else address,
+            "name": name or (device["name"] if device else address),
             "status": "pending",
             "detail": "",
             "frames": [f.hex() for f in frames],
@@ -374,6 +421,11 @@ class BleWorker:
             # the sign as it actually is rather than as a generic diagram.
             "want": _showing(state),
         }
+        if char_uuid:
+            item["char_uuid"] = char_uuid
+        if frame_delay is not None:
+            item["frame_delay"] = float(frame_delay)
+        return item
 
     # ---------------------------------------------------------------- status
 
@@ -468,7 +520,9 @@ class BleWorker:
             started = time.time()
             ok, detail, char_uuid, phases = await self._write_device(
                 item["address"], frames, settings,
-                probing=self._is_known_bad(item["address"], settings))
+                probing=self._is_known_bad(item["address"], settings),
+                char_override=item.get("char_uuid"),
+                frame_delay=item.get("frame_delay"))
             elapsed = time.time() - started
             item["status"] = "ok" if ok else "failed"
             item["detail"] = detail
@@ -501,7 +555,8 @@ class BleWorker:
         return bool(state and threshold > 0
                     and state.get("consecutive_failures", 0) >= threshold)
 
-    async def _write_device(self, address, frames, settings, probing=False):
+    async def _write_device(self, address, frames, settings, probing=False,
+                            char_override=None, frame_delay=None):
         # A device that just came off cooldown gets one cheap probe rather than
         # the full retry budget: if it is still dead, that is 12s wasted, not 60.
         attempts = 1 if probing else int(settings.get("attempts", 3))
@@ -511,7 +566,9 @@ class BleWorker:
             try:
                 phases = {}
                 char_uuid = await asyncio.wait_for(
-                    self._connect_and_write(address, frames, settings, phases),
+                    self._connect_and_write(address, frames, settings, phases,
+                                            char_override=char_override,
+                                            frame_delay=frame_delay),
                     timeout=float(settings.get("connect_timeout", 12.0)) + 15.0,
                 )
                 phases["attempts"] = attempt
@@ -525,7 +582,8 @@ class BleWorker:
                 await asyncio.sleep(backoff * (2 ** (attempt - 1)))
         return False, last_error, None, {}
 
-    async def _connect_and_write(self, address, frames, settings, phases=None):
+    async def _connect_and_write(self, address, frames, settings, phases=None,
+                                 char_override=None, frame_delay=None):
         """Connect, write, disconnect -- timing each phase into ``phases``.
 
         The split matters: connect and discover are ATT round trips gated by the
@@ -538,10 +596,12 @@ class BleWorker:
             return await self._fake_write(address, frames, settings, phases)
 
         connect_timeout = float(settings.get("connect_timeout", 12.0))
-        frame_delay = float(settings.get("inter_frame_delay", 0.06))
+        if frame_delay is None:
+            frame_delay = settings.get("inter_frame_delay", 0.06)
+        frame_delay = float(frame_delay)
         write_timeout = float(settings.get("write_timeout", 6.0))
         device = self.store.device(address) or {}
-        cached = device.get("char_uuid")
+        cached = char_override or device.get("char_uuid")
 
         client = BleakClient(address, timeout=connect_timeout)
         mark = time.monotonic()
@@ -550,11 +610,19 @@ class BleWorker:
         try:
             mark = time.monotonic()
             services = await get_services(client)
-            char_uuid, without_response = resolve_characteristic(services, cached)
+            if char_override:
+                # The panel's characteristic is a fact about its protocol, not
+                # a guess to be re-derived: pick_characteristic scores UUIDs for
+                # ELK-BLEDOM controllers and would happily choose a different
+                # writable one here.
+                char_uuid, without_response = require_characteristic(
+                    services, char_override, address)
+            else:
+                char_uuid, without_response = resolve_characteristic(services, cached)
             phases["discover"] = time.monotonic() - mark
             if char_uuid is None:
                 raise RuntimeError("no writable characteristic on %s" % address)
-            if char_uuid != cached:
+            if not char_override and char_uuid != cached:
                 self.store.remember_characteristic(address, char_uuid)
             mark = time.monotonic()
             for index, frame in enumerate(frames):
@@ -605,7 +673,12 @@ class BleWorker:
         await asyncio.sleep(0.4 + 0.05 * len(frames))
         if address.upper().endswith("FF:FF"):
             raise RuntimeError("simulated unreachable device")
-        log.info("[sim] %s <- %s", address, protocol.describe_frames(frames))
+        # A panel text payload is dozens of chunks; log the shape, not the wall.
+        if len(frames) > 6:
+            log.info("[sim] %s <- %d frames, %d bytes (%s ...)", address, len(frames),
+                     sum(len(f) for f in frames), frames[0].hex(" "))
+        else:
+            log.info("[sim] %s <- %s", address, protocol.describe_frames(frames))
         return protocol.PREFERRED_CHAR_UUIDS[0]
 
     async def _do_scan(self, job):
@@ -621,7 +694,13 @@ class BleWorker:
         for entry in found:
             entry["known"] = entry["address"] in known
             entry["is_elk"] = protocol.looks_like_elk(entry.get("name"))
-        found.sort(key=lambda e: (not e["is_elk"], -(e.get("rssi") or -999)))
+            # Worth offering as the text panel? Deliberately loose -- an extra
+            # row in the pairing list is cheaper than a panel that never shows up.
+            entry["is_panel"] = (not entry["is_elk"]
+                                 and matrix_module.looks_like_panel(entry.get("name")))
+            entry["family"] = matrix_module.identify(entry.get("name")) or ""
+        found.sort(key=lambda e: (not e["is_elk"], not e.get("is_panel"),
+                                  -(e.get("rssi") or -999)))
         self.last_scan = {"at": time.time(), "devices": found}
         job.result = found
         log.info("scan finished: %d device(s), %d look like ELK-BLEDOM",
@@ -641,6 +720,26 @@ async def get_services(client):
             raise RuntimeError("this bleak version exposes no service collection")
         services = await getter()
     return list(services)
+
+
+def require_characteristic(collection, wanted, address=""):
+    """Use exactly this characteristic, or say why it cannot be used.
+
+    Falling back to "some other writable characteristic" for a device whose
+    protocol we know would write a text payload into whatever the panel
+    happens to expose, which is worse than failing.
+    """
+    wanted = str(wanted).lower()
+    for service in collection:
+        for char in service.characteristics:
+            if char.uuid.lower() == wanted:
+                props = set(char.properties or ())
+                if not ("write" in props or "write-without-response" in props):
+                    raise RuntimeError("%s on %s is not writable (%s)"
+                                       % (wanted, address or "device",
+                                          ", ".join(sorted(props)) or "no properties"))
+                return char.uuid.lower(), "write-without-response" in props
+    raise RuntimeError("%s does not expose %s" % (address or "device", wanted))
 
 
 def resolve_characteristic(collection, cached=None):
