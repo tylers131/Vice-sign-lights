@@ -1837,7 +1837,13 @@ compose screen used to offer and could not deliver are 1, 5 and 6.
 ```
 
 `flag` 0 is an 8x16 cell (16 bytes, one per row); flag 1 is 16x16 (32 bytes,
-two per row) and fills a sixteen-row panel to the edges. Six characters fit
+two per row) and fills a sixteen-row panel to the edges. A 16-wide row is two
+bytes, so there are three independent ways to lay it out wrong -- which end of
+a byte is the left of the picture, which byte comes first, and whether rows run
+top-down -- and mirroring a row means reversing the bits *and* swapping the
+bytes. The first version of this offered only bit order and row order, so all
+four of its choices came out backwards on the sign: none of them could produce
+a mirror. `lsb-swap` is the mirror of `msb`. Six characters fit
 across 96 pixels at 16x16 -- which stops mattering once the panel is scrolling
 rather than holding still.
 
@@ -1851,13 +1857,15 @@ for the panel:
 sudo ./matrix_probe.py text AA:BB:CC:DD:EE:FF --sweep
 ```
 
-That sends one asymmetric letter four times, in each bit order, pausing
-between. Whichever looked right goes in `bitmap_order`, and `text_mode` goes
-to `native`:
+That sends `FL` in each of the eight orders, pausing between. Two letters, not
+one: a mirrored glyph and a reversed character order look the same on a single
+letter, and different on two. `FL` should read left to right with each letter
+the right way round -- mirrored letters mean a different `bitmap_order`,
+letters in the wrong order mean `text_reversed`. Whichever looked right:
 
 ```bash
 curl -X POST http://localhost/api/matrix -H 'content-type: application/json' \
-  -d '{"text_mode":"native","bitmap_order":"msb"}'
+  -d '{"text_mode":"native","bitmap_order":"lsb-swap"}'
 ```
 
 The compose screen then offers the panel's animations, because the menu is

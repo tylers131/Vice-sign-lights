@@ -111,6 +111,7 @@ DEFAULT_MATRIX = {
     # matrix_probe.py text --sweep at the sign and set what looked right.
     "text_font": "wide",        # wide fills a 16-row panel; narrow fits more
     "bitmap_order": "msb",
+    "text_reversed": False,     # for a panel that lays characters right to left
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
@@ -274,6 +275,7 @@ def _matrix(raw) -> dict:
     value["text_font"] = font if font in TEXT_FONTS else "wide"
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
+    value["text_reversed"] = bool(value.get("text_reversed"))
     scale = str(value.get("scale") or "auto").strip().lower()
     if scale != "auto":
         try:

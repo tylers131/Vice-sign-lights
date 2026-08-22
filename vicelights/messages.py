@@ -108,6 +108,12 @@ class MatrixRunner:
             "stretch": bool(matrix.get("stretch", True)),
             "pixel_layout": matrix.get("pixel_layout",
                                        matrix_module.DEFAULT_PIXEL_LAYOUT),
+            # Which route text takes to the panel, and the two settings that
+            # only matter on the native one. Reported so "did that actually
+            # save" is a question the API answers.
+            "text_mode": matrix.get("text_mode", "pixels"),
+            "bitmap_order": matrix.get("bitmap_order", "msb"),
+            "text_reversed": bool(matrix.get("text_reversed")),
             "char_uuid": driver.characteristic() or "",
             "capabilities": driver.capabilities,
             "modes": list(driver.modes),

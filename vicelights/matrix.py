@@ -700,9 +700,18 @@ TEXT_ANIMATIONS = {
 TEXT_FONTS = {"narrow": 0, "wide": 1}
 TEXT_CELLS = {0: (8, 16), 1: (16, 16)}
 
-# Four ways the same glyph can be laid out. Which one this panel wants is a
-# question for the panel.
-BITMAP_ORDERS = ("msb", "lsb", "msb-flip", "lsb-flip")
+# A row of a 16-wide glyph is two bytes, and there are three independent ways
+# to get it wrong: which end of a byte is the left of the picture, which of the
+# two bytes comes first, and whether rows run top-down or bottom-up. Eight
+# combinations.
+#
+# The first version of this offered four -- it varied bit order and row order
+# and left byte order alone -- and every one of them came out backwards on the
+# sign, which is exactly what that omission predicts: mirroring a 16-pixel row
+# means reversing the bits AND swapping the bytes, so no combination of the
+# four could produce a mirror. "lsb-swap" is that mirror.
+BITMAP_ORDERS = ("msb", "lsb-swap", "lsb", "msb-swap",
+                 "msb-flip", "lsb-swap-flip", "lsb-flip", "msb-swap-flip")
 
 
 def glyph_cell(char: str, font_flag: int = 0, order: str = "msb",
@@ -736,19 +745,25 @@ def glyph_cell(char: str, font_flag: int = 0, order: str = "msb",
                 bits[left + index] = bit
         out.append(bits)
 
-    if order.endswith("flip"):
+    parts = str(order or "msb").split("-")
+    high_first = parts[0] != "lsb"          # is bit 7 the left of the picture?
+    swap = "swap" in parts                  # does the right-hand byte go first?
+    if "flip" in parts:
         out.reverse()
+
     data = bytearray()
     for bits in out:
+        row = []
         for byte_index in range(width // 8):
             chunk = bits[byte_index * 8:(byte_index + 1) * 8]
             value = 0
             for position, bit in enumerate(chunk):
-                if not bit:
-                    continue
-                value |= (0x80 >> position) if order.startswith("msb") \
-                    else (1 << position)
-            data.append(value)
+                if bit:
+                    value |= (0x80 >> position) if high_first else (1 << position)
+            row.append(value)
+        if swap:
+            row.reverse()
+        data += bytes(row)
     return bytes(data)
 
 
@@ -1058,6 +1073,11 @@ class IPixel(MatrixDriver):
         text = str((message or {}).get("text") or "")[:MAX_TEXT]
         if not text:
             return []
+        # Some of these panels lay the character blocks out right to left. If
+        # this one does, the letters arrive in the wrong order however right
+        # each glyph is, and reversing here is the whole fix.
+        if self.config.get("text_reversed"):
+            text = text[::-1]
         order = order or self.bitmap_order()
         font_flag = self.text_font() if font_flag is None else int(font_flag)
         colour = parse_color((message or {}).get("color"))

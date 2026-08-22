@@ -1220,7 +1220,8 @@ async def do_text(args):
               "text_mode": "native", "text_font": args.font,
               "pixel_layout": args.layout}
     driver = IPixel(config)
-    message = M.normalize_message({"text": args.text, "color": args.color,
+    text = args.text[::-1] if args.reverse else args.text
+    message = M.normalize_message({"text": text, "color": args.color,
                                    "mode": args.mode, "speed": args.speed})
     animation = TEXT_ANIMATIONS.get(args.mode, 0)
     orders = list(BITMAP_ORDERS) if args.sweep else [args.order]
@@ -1262,17 +1263,23 @@ async def do_text(args):
                 print("   watch the panel for %.0fs" % args.hold)
                 await asyncio.sleep(args.hold)
     print()
+    print("Reading the panel: %r should read left to right, each letter the "
+          "right way round." % args.text)
+    print("  mirrored letters      -> a different bit order below")
+    print("  letters in the wrong order -> add --reverse")
+    print("  nothing at all, and a reply ending 02 -> the panel rejected it,")
+    print("     which is the packet layout rather than the bit order")
+    print()
     if args.sweep:
         print("Which one was right? Set it and it stays set:")
         print("  curl -X POST http://localhost/api/matrix \\")
         print("    -H 'content-type: application/json' \\")
-        print("    -d '{\"text_mode\":\"native\",\"bitmap_order\":\"msb\"}'")
-        print("(swap msb for whichever of %s looked right)"
-              % ", ".join(BITMAP_ORDERS))
+        print("    -d '{\"text_mode\":\"native\",\"bitmap_order\":\"lsb-swap\"}'")
+        print("(swap lsb-swap for whichever of these looked right:")
+        print("   %s)" % ", ".join(BITMAP_ORDERS))
     else:
-        print("If that looked wrong, try --sweep to see all four bit orders.")
-        print("If the panel said 02, it rejected the packet -- the layout is")
-        print("wrong rather than the bit order, and the pixel path still works.")
+        print("If that looked wrong, --sweep sends all %d orders in turn."
+              % len(BITMAP_ORDERS))
     return 0
 
 
@@ -1884,8 +1891,10 @@ def build_parser():
     p = sub.add_parser("text",
                        help="send the panel's OWN text command -- it animates itself")
     ble_args(p)
-    p.add_argument("-t", "--text", default="F",
-                   help="an asymmetric letter reads wrong-way-up at a glance")
+    p.add_argument("-t", "--text", default="FL",
+                   help="two asymmetric letters: mirrored glyphs and reversed "
+                        "character order look different, and one letter "
+                        "cannot tell them apart")
     p.add_argument("--color", default="#ff2f6e")
     p.add_argument("--mode", choices=sorted(M.TEXT_ANIMATIONS), default="scroll",
                    help="what the PANEL does with it, not what we do")
@@ -1893,7 +1902,10 @@ def build_parser():
     p.add_argument("--font", choices=sorted(M.TEXT_FONTS), default="wide")
     p.add_argument("--order", choices=M.BITMAP_ORDERS, default="msb")
     p.add_argument("--sweep", action="store_true",
-                   help="send all four bit orders in turn so you can pick one")
+                   help="send every bit order in turn so you can pick one")
+    p.add_argument("--reverse", action="store_true",
+                   help="send the characters back to front, if the panel lays "
+                        "them out right to left")
     p.add_argument("--slot", type=int, default=0,
                    help="0 shows it; 1-100 also stores it on the panel")
     p.add_argument("--layout", default="argb", help="colour byte order")
