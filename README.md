@@ -22,10 +22,13 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/config.py` | JSON config store (atomic writes). |
 | `vicelights/scheduler.py` | Pure-Python schedules + relative timers. |
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
+| `vicelights/matrix.py` | BLE text panel: drivers, fingerprints, 5x7 font. |
+| `vicelights/messages.py` | The message queue and its dwell timer. |
 | `vicelights/web.py` | Flask JSON API. |
 | `vicelights/templates/index.html` | Phone UI, all CSS/JS inline. |
 | `vicelights/app.py` | Entry point (`python3 -m vicelights`). |
 | `elk_scan.py` | CLI: scan / probe / flash / adopt. Shares `protocol.py`. |
+| `matrix_probe.py` | CLI: identify the text panel, or lift its protocol off a capture. |
 | `systemd/vice-lights.service` | systemd unit. |
 | `scripts/install.sh` | Installer for Pi OS Lite. |
 | `scripts/setup_ap_networkmanager.sh` | Access point via NetworkManager (Bookworm). |
@@ -1501,6 +1504,17 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/rotation/next` | Skip to the next scene now |
 | GET/POST | `/api/rotation` | `{enabled, interval_minutes, order, playlist, exclude, avoid_repeat, hold_after_manual_minutes}` |
 | POST | `/api/rotation/next` | Skip to the next scene now |
+| GET/POST | `/api/matrix` | Panel settings: `{enabled, address, name, family, char_uuid, playlist, width, height, default_dwell, chunk, frame_delay, commands}` |
+| POST | `/api/matrix/send` | Say it now: `{text, color, mode, speed, dwell}` |
+| POST | `/api/matrix/next` | Skip to the next queued message |
+| POST | `/api/matrix/clear` | Blank the panel (also stops the cycle) |
+| POST | `/api/matrix/power` | `{on}` |
+| POST | `/api/matrix/brightness` | `{percent}` |
+| GET/POST | `/api/matrix/messages` | The queue; POST creates or edits one |
+| DELETE | `/api/matrix/messages/<id>` | |
+| POST | `/api/matrix/messages/<id>/send` | Put that one up now |
+| POST | `/api/matrix/messages/order` | `{ids: [...]}` — the list order is the play order |
+| GET | `/api/matrix/preview?text=` | The bitmap the panel will get, and whether it fits |
 | GET/POST | `/api/time` | `{iso: "2026-08-28T19:30:00"}` or `{epoch: ...}` |
 | GET/PUT | `/api/config` | Whole config |
 | GET | `/api/log?n=200` | Log tail |
@@ -1586,3 +1600,105 @@ simulated radio — no hardware, no bleak, real timings:
 VICELIGHTS_FAKE_BLE=1 python3 -m vicelights --config ./config.example.json \
     --log ./vice.log --state ./time.state --port 8080
 ```
+
+---
+
+## 10. The text panel
+
+A BLE LED matrix that scrolls messages. It is a **different device class** from
+the twelve controllers -- a length-prefixed, chunked protocol carrying a bitmap
+rather than a 9-byte frame -- so it lives in `vicelights/matrix.py` and has its
+own config block. What it shares is the radio: panel writes queue through the
+same serialized `BleWorker` as everything else, because a panel write racing a
+scene sweep would cost both.
+
+### Two queues, and why
+
+The BLE worker's queue drains as fast as the adapter allows. The **message**
+queue drains at reading speed: each message carries its own dwell, and the
+runner in `messages.py` holds it on the panel for that long before handing the
+next one over. Timed on `time.monotonic`, like scene rotation, because the Pi
+has no RTC. It backs off while a twelve-device sweep is in flight rather than
+stacking writes behind it.
+
+### Pairing it
+
+These panels are sold under a dozen brands with no common protocol, so the
+driver is chosen from evidence, not assumed:
+
+```bash
+sudo ./matrix_probe.py scan               # what is advertising; flags candidates
+sudo ./matrix_probe.py info AA:BB:CC:DD:EE:FF   # GATT tree + fingerprint
+```
+
+`info` prints the family it matched and the exact `curl` to pair it. Then test
+before trusting it:
+
+```bash
+sudo ./matrix_probe.py send AA:BB:CC:DD:EE:FF --text VICE
+```
+
+A driver is marked **confirmed** only once its encoding has been checked
+against real hardware; until then the UI says `encoding unconfirmed` rather
+than pretending. Everything above the driver -- queue, API, both UIs -- is
+protocol independent, so confirming a panel is a change to one class.
+
+### When no driver fits
+
+Lift the protocol off the panel's own phone app:
+
+1. Android → Developer options → **Enable Bluetooth HCI snoop log**
+2. Send one message from the vendor app
+3. Pull the capture (`adb bugreport`, or the phone's own bug-report export)
+4. Decode it:
+
+```bash
+./matrix_probe.py btsnoop capture.log --emit-config
+```
+
+That reassembles fragmented ACL, maps ATT handles to characteristic UUIDs using
+the capture's own discovery traffic, and prints a config block the `raw` driver
+runs with **no code change**. Capture a second, different message and:
+
+```bash
+./matrix_probe.py diff first.log second.log --emit-config
+```
+
+separates the framing (identical in both) from the payload (different), which
+is what turns "replay this one message" into "send any message". Both work on a
+laptop with no radio and no bleak.
+
+### Using it
+
+* **Phone** — the *Message* tab: compose with a live pixel preview, reorder the
+  queue, start the cycle, pair the panel off the same scan the controllers use.
+  The preview is rendered by the Pi, not the browser: the panel draws our own
+  5x7 bitmap font, so a preview in a browser typeface would be a picture of a
+  different thing.
+* **Touchscreen** — the *Panel* tab: what is up now, the queue as one-tap chips,
+  and `WRITE` for an on-screen keyboard so a message can be typed at the sign
+  with no phone. Upper case only; sign messages are shouty anyway and dropping
+  the shift key buys a row of width on an 800-pixel screen.
+
+### Config
+
+```json
+"matrix": {
+  "enabled": true,
+  "address": "AA:BB:CC:DD:EE:FF",
+  "family": "auto",          // auto | idotmatrix | raw
+  "char_uuid": "",           // forced; never guessed at, unlike the controllers
+  "width": 32, "height": 16,
+  "playlist": false,         // cycle the saved messages
+  "default_dwell": 20.0,
+  "chunk": 20,               // payload bytes per write at the default 23-byte MTU
+  "commands": {}             // hex, for family "raw"
+},
+"messages": [
+  {"text": "BAR IS OPEN", "color": "#22d3ee", "mode": "scroll", "dwell": 30}
+]
+```
+
+A `dwell` of `0` means *hold until something replaces it*. In a cycling
+playlist that would stall forever, so the playlist substitutes `default_dwell`;
+a message sent by hand keeps the literal meaning.
