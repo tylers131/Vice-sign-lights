@@ -503,22 +503,61 @@ def _short_uuid(uuid: str) -> str:
     return text[:8]
 
 
-def _decode_reply(data: bytes) -> str:
-    """Read one of this panel's status replies.
+def _looks_random(block: bytes) -> bool:
+    """Does this block look like ciphertext rather than fields?
 
-    Observed on the sign's own panel: a reply is 05 00 <b2> <b3> <status>,
-    echoing the two bytes that followed the length in the packet it is
-    answering. Control commands that visibly worked came back with status 01;
-    the text command came back 02. So 01 reads as accepted and 02 as
-    something else -- which is an inference from four samples, not a
-    specification, and is labelled as such wherever it is printed.
+    Crude on purpose, and only ever used to label output -- but the difference
+    between "a reply we cannot parse" and "this channel is encrypted" is the
+    difference between keep probing and stop, so it is worth getting roughly
+    right rather than not saying it.
+
+    Three tests, all of which structured data tends to fail:
+      * nearly every byte distinct -- a status or an id repeats values
+      * a real spread above 0x7f -- counters, ASCII and small integers do not
+      * not an arithmetic run -- 01 02 03 04 has distinct bytes and is not
+        random at all
     """
-    if len(data) != 5 or data[0] != 0x05:
-        return "unrecognised shape"
-    status = data[4]
-    meaning = {0x01: "accepted?", 0x02: "rejected / not understood?"}.get(
-        status, "status 0x%02x, meaning unknown" % status)
-    return "echoes cmd %02x %02x, %s" % (data[2], data[3], meaning)
+    if len(block) < 8:
+        return False
+    if len(set(block)) < len(block) * 0.8:
+        return False
+    if block.count(0) > 1:
+        return False
+    if sum(1 for byte in block if byte >= 0x80) < len(block) * 0.2:
+        return False
+    steps = {block[i + 1] - block[i] for i in range(len(block) - 1)}
+    if len(steps) <= 2:                      # a ramp, not a cipher
+        return False
+    return True
+
+
+def _decode_reply(data: bytes) -> str:
+    """Read one of this panel's replies.
+
+    Two shapes have been seen on this sign's panel, on two different notify
+    characteristics:
+
+    * ``05 00 <b2> <b3> <status>`` on fa03, echoing the two bytes that followed
+      the length in the packet being answered. Control commands came back 01
+      and the text command came back 02, so 01 reads as accepted and 02 as
+      something else. That is an inference from a handful of samples, not a
+      specification, and is printed with a question mark for that reason.
+
+    * ``01`` plus sixteen high-entropy bytes on ae02 -- one AES block, a
+      different one every time. That is not a status code, and a channel that
+      answers a plaintext write with a cipher-sized block of noise is not one
+      we can drive without its key.
+    """
+    if len(data) == 5 and data[0] == 0x05:
+        status = data[4]
+        meaning = {0x01: "accepted?", 0x02: "rejected / not understood?"}.get(
+            status, "status 0x%02x, meaning unknown" % status)
+        return "echoes cmd %02x %02x, %s" % (data[2], data[3], meaning)
+    if len(data) == 17 and _looks_random(data[1:]):
+        return "type %02x + a 16-byte high-entropy block -- looks encrypted" % data[0]
+    if _looks_random(data):
+        return "%d high-entropy bytes -- looks encrypted" % len(data)
+    return "%d bytes, shape not recognised" % len(data)
 
 
 
@@ -530,6 +569,7 @@ async def _trace_one(client, char, chunks, replies, args) -> int:
     provoked it rather than to whatever came before.
     """
     answered = 0
+    encrypted_looking = False
     silent_since = None
     for index, chunk in enumerate(chunks, 1):
         replies.clear()
@@ -538,7 +578,7 @@ async def _trace_one(client, char, chunks, replies, args) -> int:
         except Exception as exc:
             print("%3d/%d  WRITE FAILED: %s: %s"
                   % (index, len(chunks), type(exc).__name__, exc))
-            return answered
+            return answered, encrypted_looking
         await asyncio.sleep(args.gap)
         head = "%3d/%d  %-3d bytes  %s" % (index, len(chunks), len(chunk),
                                            chunk[:12].hex(" "))
@@ -550,8 +590,10 @@ async def _trace_one(client, char, chunks, replies, args) -> int:
                 silent_since = None
             print(head)
             for uuid, reply in replies:
+                note = _decode_reply(reply)
+                encrypted_looking = encrypted_looking or "encrypted" in note
                 print("        <- %s  %s   %s"
-                      % (_short_uuid(uuid), reply.hex(" "), _decode_reply(reply)))
+                      % (_short_uuid(uuid), reply.hex(" "), note))
         else:
             if silent_since is None:
                 silent_since = index
@@ -567,11 +609,13 @@ async def _trace_one(client, char, chunks, replies, args) -> int:
         if replies:
             answered += len(replies)
             for uuid, reply in replies:
+                note = _decode_reply(reply)
+                encrypted_looking = encrypted_looking or "encrypted" in note
                 print("  late <- %s  %s   %s"
-                      % (_short_uuid(uuid), reply.hex(" "), _decode_reply(reply)))
+                      % (_short_uuid(uuid), reply.hex(" "), note))
         else:
             print("  nothing further")
-    return answered
+    return answered, encrypted_looking
 
 
 async def do_trace(args):
@@ -657,12 +701,14 @@ async def do_trace(args):
             print("sweeping %d writable characteristic(s)\n" % len(targets))
 
         summary = []
+        encrypted_looking = False
         for target in targets:
             if len(targets) > 1:
                 print("=" * 70)
                 print("writing to %s" % target)
                 print("=" * 70)
-            answered = await _trace_one(client, target, chunks, replies, args)
+            answered, sus = await _trace_one(client, target, chunks, replies, args)
+            encrypted_looking = encrypted_looking or sus
             summary.append((target, answered))
             if len(targets) > 1 and target != targets[-1]:
                 # Let the panel settle before the next characteristic, so a
@@ -676,6 +722,16 @@ async def do_trace(args):
                 print("  %-42s %s" % (target,
                                       "%d repl%s" % (answered, "y" if answered == 1 else "ies")
                                       if answered else "silent"))
+        if encrypted_looking:
+            print("""
+One channel answered with cipher-sized blocks of noise, different every
+time. Writing to it without the key is not something more probing will
+solve -- and a capture of the vendor app using that channel would record
+ciphertext, which is no more usable than what we have.
+
+If the app instead drives the plaintext channel, the capture gives us the
+payload exactly. That is the thing worth finding out, and it is one
+capture either way.""")
 
         for characteristic in listening:
             try:
