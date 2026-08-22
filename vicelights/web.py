@@ -8,7 +8,11 @@ polls ``/api/status`` (1 Hz) for queue depth and per-device progress, so a
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import socket
+import subprocess
+import threading
 import time
 
 from flask import Flask, jsonify, render_template, request
@@ -68,6 +72,68 @@ def _state_from(body: dict) -> dict:
     return state
 
 
+def _installed_from() -> str:
+    try:
+        with open("/opt/vice-sign-lights/INSTALLED_FROM", "r", encoding="utf-8") as h:
+            return h.read().strip()[:60]
+    except Exception:
+        return ""
+
+
+def _probe(command, timeout=4.0) -> str:
+    """Run a small system command, or return "" if it is not on this box."""
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        return done.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _uptime() -> str:
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as handle:
+            seconds = float(handle.read().split()[0])
+    except Exception:
+        return "unknown"
+    days, rest = divmod(int(seconds), 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return "%dd %dh" % (days, hours)
+    if hours:
+        return "%dh %dm" % (hours, minutes)
+    return "%dm" % minutes
+
+
+def _throttled():
+    """The firmware's sticky under-voltage and throttling bits.
+
+    They latch until reboot, so a brownout at 3am is still readable at
+    breakfast -- the live bits would have cleared long before anyone walked
+    over. Silent data corruption from a marginal supply is the failure this is
+    here to catch, and it does not announce itself any other way.
+    """
+    raw = _probe(["vcgencmd", "get_throttled"])
+    if "=" not in raw:
+        return None, "not a Pi, or vcgencmd missing"
+    try:
+        bits = int(raw.split("=", 1)[1], 0)
+    except ValueError:
+        return None, raw
+    if bits == 0:
+        return True, "no under-voltage since boot"
+    seen = []
+    if bits & 0x1:
+        seen.append("under-voltage NOW")
+    if bits & 0x4:
+        seen.append("throttled NOW")
+    if bits & 0x10000:
+        seen.append("under-voltage has happened")
+    if bits & 0x40000:
+        seen.append("throttling has happened")
+    return False, ", ".join(seen) or ("bits %s" % raw)
+
+
 def local_addresses() -> list:
     """Best-effort list of IPv4 addresses, so we can print the UI URL on boot."""
     found = []
@@ -114,6 +180,99 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             modes=sorted(protocol.MODES.items()),
             version=app.config.get("VERSION", "1.0"),
         )
+
+    @app.route("/api/diagnostics")
+    def api_diagnostics():
+        """One screen's worth of "is this thing healthy", judged here.
+
+        The verdict is decided server-side rather than in the panel, because
+        "is this healthy" is a statement about the sign, not about pixels, and
+        the phone should be able to show the same answers. Every row says the
+        consequence, not just the fact.
+        """
+        status = worker.status()
+        devices = status["devices"]
+        down = [addr for addr, state in devices.items()
+                if state.get("reachable") is False]
+        rows = []
+
+        def row(name, value, ok, note=""):
+            rows.append({"name": name, "value": value, "ok": ok, "note": note})
+
+        total = len(store.devices(enabled_only=True))
+        row("Controllers",
+            "%d of %d answering" % (total - len(down), total),
+            not down,
+            ", ".join(store.device(a)["name"] for a in down if store.device(a))
+            or "all answering")
+
+        backend = status["backend"]
+        row("Bluetooth", backend, backend == "bleak",
+            "real radio" if backend == "bleak"
+            else "SIMULATED -- nothing is being sent to the lights")
+
+        clock = timekeeper.info()
+        row("Clock", clock["now"].replace("T", " "), clock["clock_ok"],
+            "set from %s" % (clock["source"] or "unknown")
+            if clock["clock_ok"] else "never set -- schedules will not run")
+
+        addresses = local_addresses()
+        row("Network", ", ".join(addresses) or "none", bool(addresses),
+            "the panel talks to 127.0.0.1 regardless")
+
+        healthy, note = _throttled()
+        row("Pi power", "OK" if healthy else ("CHECK" if healthy is False else "n/a"),
+            healthy is not False, note)
+
+        try:
+            usage = shutil.disk_usage("/")
+            free = usage.free / 1e9
+            row("Storage", "%.1f GB free" % free, free > 0.5,
+                "logs are capped at 8 MB")
+        except Exception as exc:
+            row("Storage", "unknown", False, str(exc))
+
+        row("Uptime", _uptime(), True, "since the last power-up")
+        row("Version", app.config.get("VERSION", "?"), True, _installed_from())
+
+        rotation = scheduler.rotation.status()
+        row("Rotation", "on" if rotation["enabled"] else "off", True,
+            "%d scenes, every %g min" % (len(rotation["scenes"]),
+                                         rotation["interval_minutes"]))
+        return jsonify({"ok": True, "rows": rows,
+                        "down": [{"address": a,
+                                  "name": (store.device(a) or {}).get("name", a),
+                                  "error": devices[a].get("last_error", ""),
+                                  "since": devices[a].get("last_attempt")}
+                                 for a in down]})
+
+    @app.route("/api/system", methods=["POST"])
+    def api_system():
+        """Shut down or reboot the Pi.
+
+        Deliberate: the config is written continuously and pulling power
+        mid-write is the usual way to corrupt an SD card -- which on this
+        machine would take the mode audit and the device mapping with it.
+        """
+        action = (_body().get("action") or "").strip().lower()
+        if action not in ("shutdown", "reboot"):
+            return _json_error("action must be 'shutdown' or 'reboot'")
+        if os.geteuid() != 0:
+            return _json_error("not running as root; cannot %s" % action, 500)
+        command = ["/sbin/shutdown", "-h" if action == "shutdown" else "-r", "now"]
+        log.warning("%s requested from the UI", action)
+
+        def go():
+            # After a beat, so this request gets its reply out first -- without
+            # it the caller sees a dropped connection and cannot tell whether
+            # the machine is going down or the request simply failed.
+            time.sleep(1.0)
+            subprocess.run(command, capture_output=True)
+
+        threading.Thread(target=go, daemon=True).start()
+        return jsonify({"ok": True, "action": action,
+                        "message": "shutting down" if action == "shutdown"
+                        else "rebooting"})
 
     @app.route("/healthz")
     def healthz():

@@ -202,6 +202,49 @@ vertically -- no control is ever below a fold.
   dashed outline as well as red text, so it reads without relying on hue.
 - The bottom bar is OFF (scoped to the target), SURPRISE ME, and ROTATE.
 
+### The Status tab
+
+Alerts, diagnostics, and the way to switch the Pi off cleanly. Nine rows,
+judged on the server rather than in the panel -- "is this healthy" is a
+statement about the sign, not about pixels, so the phone can show the same
+answers. Each row says the consequence, not just the fact: "SIMULATED --
+nothing is being sent to the lights" beats "simulated".
+
+    Controllers   how many are answering, and which are not
+    Bluetooth     the real radio, or the simulator
+    Clock         set or never set -- an unset clock means schedules do not run
+    Network       the addresses the phone UI is on
+    Pi power      the firmware's sticky under-voltage bits
+    Storage / Uptime / Version / Rotation
+
+**Pi power is the one worth understanding.** Those bits latch until reboot, so
+a brownout at 3am is still readable at breakfast, where the live bits would
+have cleared long before anyone walked over. A marginal supply corrupts data
+silently and announces itself no other way -- it is what turned an apt install
+into a wall of hash mismatches during the build.
+
+### Shutting down
+
+**SHUT DOWN PI**, behind a prompt that names the consequence rather than asking
+"are you sure": the panel goes dark and does not come back, and the only way to
+start it again is unplugging the Pi and plugging it in. Do it before pulling
+power -- the config is written continuously, and a mid-write power cut is how
+SD cards corrupt, which on this machine would take the mode audit and the
+device mapping with it.
+
+**REBOOT PI** is the gentler one and says so: the controllers keep running
+whatever they were showing, because they do not need the Pi, and the sign is
+back in about a minute.
+
+While a prompt is up nothing else on the screen is live -- a stray finger on
+the tab row cannot dismiss it by navigating away.
+
+Both go through `POST /api/system`, which refuses anything other than
+`shutdown` or `reboot` and refuses outright when not running as root. **Anyone
+on the access point can call it**, the same as every other control here; that
+is the deliberate no-auth design, and the passphrase on the AP is what stands
+in front of it.
+
 ### Rolling starts
 
 Writes are serialised one controller at a time, so a built-in pattern started

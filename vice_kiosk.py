@@ -67,7 +67,8 @@ MUTED    = over(INK, 0.45)
 FAINT    = over(INK, 0.40)
 DIM      = over(INK, 0.30)
 CHIP_BG  = over(INK, 0.06)
-TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("lights", "Lights"))
+TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("lights", "Lights"),
+        ("status", "Status"))
 
 # The twelve circles from 2b, in the board's order.
 SWATCHES = (
@@ -129,6 +130,11 @@ class Sign:
         self.down = 0
         self.total = 0
         self.online = False
+        self.diagnostics = []
+        # Not "down": Sign.down is already the count of finished items in the
+        # running job, and shadowing it silently broke the progress strip.
+        self.unreachable = []
+        self._diag_at = 0.0
         self.devices_total = 0
         self.devices_bad = 0
         self.pending = None
@@ -164,6 +170,8 @@ class Sign:
                 "devices_total": self.devices_total, "devices_bad": self.devices_bad,
                 "groups": list(self.groups), "devices": list(self.devices),
                 "patterns": list(self.patterns),
+                "diagnostics": list(self.diagnostics),
+                "unreachable": list(self.unreachable),
                 "toast": self.toast if time.monotonic() < self.toast_until else "",
             }
 
@@ -259,6 +267,17 @@ class Sign:
                                  or time.monotonic() - self.pending_since > 45):
                 self.pending = None
 
+    def _poll_diagnostics(self):
+        try:
+            data = _get("/api/diagnostics", timeout=8.0)
+        except Exception:
+            return
+        if not data.get("ok"):
+            return
+        with self.lock:
+            self.diagnostics = data.get("rows") or []
+            self.unreachable = data.get("down") or []
+
     def _run(self):
         while not self._stop.is_set():
             try:
@@ -267,6 +286,11 @@ class Sign:
                 if need_scenes:
                     self._load_scenes()
                 self._poll_status()
+                # Diagnostics change slowly and cost a few subprocesses, so
+                # they run on their own beat rather than every status poll.
+                if time.monotonic() - self._diag_at > 10:
+                    self._diag_at = time.monotonic()
+                    self._poll_diagnostics()
                 with self.lock:
                     quick = self.busy or self.queued
             except (urllib.error.URLError, OSError, ValueError, TimeoutError):
@@ -621,6 +645,9 @@ class Panel:
         # started one unit at a time already sweeps across the sign; this makes
         # the roll deliberate. Off means "as fast as the radio manages".
         self.roll = 0.0
+        # A pending prompt, drawn over the middle third. Nothing that changes
+        # the machine happens without one.
+        self.confirm = None
         # The shelves scroll by the page, via the "›" card at the end.
         self.shelf = {"scenes": 0, "solid": 0}
 
@@ -983,7 +1010,8 @@ class Panel:
         if not (state["busy"] or state["queued"] or state["job"]):
             hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
                     "colour": "tap the sign above to pick zones",
-                    "lights": "tap one to colour just it"}[self.tab]
+                    "lights": "tap one to colour just it",
+                    "status": "alerts \u00b7 diagnostics \u00b7 power"}[self.tab]
             image = self.f_tiny.render(hint, True, over(INK, 0.35))
             self.screen.blit(image, (right - image.get_width(),
                                      centre - image.get_height() // 2))
@@ -1299,6 +1327,104 @@ class Panel:
             self.text(self.screen, self.f_small, "RETRY", INK, center=retry.center)
             self.buttons.append(Button(retry, "RETRY", "retry", down))
 
+    def draw_status(self, state):
+        """Alerts and diagnostics, and the way to shut the Pi down cleanly."""
+        s = self.k
+        rows = state["diagnostics"]
+        if not rows:
+            self.text(self.screen, self.f_small, "Reading the sign\u2026", MUTED,
+                      topleft=(self.middle.x, self.middle.y + int(8 * s)))
+            return
+
+        # Two columns, so nine rows fit without scrolling.
+        column_w = (self.middle.w - int(14 * s)) // 2
+        row_h = int(30 * s)
+        per_column = (len(rows) + 1) // 2
+        for index, entry in enumerate(rows):
+            col, line = index // per_column, index % per_column
+            x = self.middle.x + col * (column_w + int(14 * s))
+            y = self.middle.y + line * row_h
+            ok = entry.get("ok")
+            pygame.draw.circle(self.screen, OLIVE if ok else PINK,
+                               (x + int(5 * s), y + row_h // 2), int(4 * s))
+            self.text(self.screen, self.f_small, entry["name"], INK,
+                      topleft=(x + int(16 * s),
+                               y + row_h // 2 - self.f_small.get_height() // 2))
+            value = entry["value"]
+            image = self.f_small.render(value, True, INK if ok else PINK_SOFT)
+            # Values sit hard right so the verdicts read down the edge.
+            self.screen.blit(image, (x + column_w - image.get_width(),
+                                     y + row_h // 2 - image.get_height() // 2))
+
+        y = self.middle.y + per_column * row_h + int(6 * s)
+        note = state["unreachable"]
+        if note:
+            first = note[0]
+            text = "%s: %s" % (first["name"], (first.get("error") or "not answering")[:52])
+            if len(note) > 1:
+                text += "   +%d more" % (len(note) - 1)
+            strip = pygame.Rect(self.middle.x, y, self.middle.w, int(28 * s))
+            self.rounded(self.screen, strip, over(PINK, 0.06), over(PINK, 0.22),
+                         radius=int(12 * s))
+            self.text(self.screen, self.f_tiny, text, PINK_SOFT,
+                      topleft=(strip.x + int(12 * s),
+                               strip.centery - self.f_tiny.get_height() // 2))
+            y = strip.bottom + int(8 * s)
+
+        # The two that change the machine sit apart from the read-only rows.
+        width = int(150 * s)
+        height = int(40 * s)
+        retry = pygame.Rect(self.middle.x, y, width, height)
+        self.rounded(self.screen, retry, CARD, LINE, radius=height // 2)
+        self.text(self.screen, self.f_small, "RETRY DOWN", INK, center=retry.center)
+        self.buttons.append(Button(retry, "RETRY DOWN", "retry-down"))
+
+        reboot = pygame.Rect(retry.right + int(10 * s), y, width, height)
+        self.rounded(self.screen, reboot, CARD, over(ORANGE, 0.45), radius=height // 2)
+        self.text(self.screen, self.f_small, "REBOOT PI", ORANGE, center=reboot.center)
+        self.buttons.append(Button(reboot, "REBOOT PI", "ask-reboot"))
+
+        shut = pygame.Rect(reboot.right + int(10 * s), y, width, height)
+        self.rounded(self.screen, shut, over(PINK, 0.10), over(PINK, 0.45),
+                     radius=height // 2)
+        self.text(self.screen, self.f_small, "SHUT DOWN PI", PINK_SOFT,
+                  center=shut.center)
+        self.buttons.append(Button(shut, "SHUT DOWN PI", "ask-shutdown"))
+
+    def draw_confirm(self):
+        """A full-width prompt over the middle third.
+
+        It names the consequence rather than asking "are you sure": after a
+        shutdown the sign is dark and this panel is dead, and the only way back
+        is unplugging the Pi and plugging it in again.
+        """
+        s = self.k
+        ask = self.confirm
+        panel = pygame.Rect(self.middle.x, self.middle.y - int(4 * s),
+                            self.middle.w, self.middle.h)
+        self.rounded(self.screen, panel, CARD_ALT, over(PINK, 0.35),
+                     radius=int(16 * s))
+        self.text(self.screen, self.f_head2, ask["title"], INK,
+                  topleft=(panel.x + int(18 * s), panel.y + int(16 * s)))
+        y = panel.y + int(46 * s)
+        for line in ask["body"]:
+            self.text(self.screen, self.f_small, line, MUTED,
+                      topleft=(panel.x + int(18 * s), y))
+            y += int(20 * s)
+
+        height = int(46 * s)
+        wide = int(190 * s)
+        yes = pygame.Rect(panel.right - int(18 * s) - wide,
+                          panel.bottom - int(18 * s) - height, wide, height)
+        self.rounded(self.screen, yes, over(PINK, 0.16), PINK, radius=height // 2)
+        self.text(self.screen, self.f_head2, ask["yes"], PINK_SOFT, center=yes.center)
+        self.buttons.append(Button(yes, ask["yes"], "confirm-yes"))
+
+        cancel = pygame.Rect(yes.x - int(10 * s) - wide, yes.y, wide, height)
+        self.rounded(self.screen, cancel, CARD, LINE, radius=height // 2)
+        self.text(self.screen, self.f_head2, "CANCEL", INK, center=cancel.center)
+        self.buttons.append(Button(cancel, "CANCEL", "confirm-no"))
+
     def target_options(self, state):
         preferred = ["letters", "drink", "cup", "straw", "border", "side-a", "side-b"]
         groups = list(state["groups"])
@@ -1380,6 +1506,16 @@ class Panel:
     # -- input ----------------------------------------------------------------
 
     def tap(self, position):
+        if self.confirm:
+            # While a prompt is up nothing else is live, so a stray finger on
+            # the tab row cannot dismiss it by navigating away.
+            for button in self.buttons:
+                if button.kind in ("confirm-yes", "confirm-no") \
+                        and button.rect.collidepoint(position):
+                    ask, self.confirm = self.confirm, None
+                    if button.kind == "confirm-yes":
+                        self.system(ask["action"])
+            return
         for button in self.tabs:
             if button.rect.collidepoint(position):
                 self.tab = button.payload
@@ -1445,12 +1581,48 @@ class Panel:
                     else self.shelf[name] + page
             elif kind == "retry":
                 self.retry(button.payload)
+            elif kind == "retry-down":
+                down = self.sign.snapshot()["unreachable"]
+                if down:
+                    self.retry([{"name": d["name"], "address": d["address"]}
+                                for d in down])
+                else:
+                    self.sign.say("Nothing is down")
+            elif kind == "ask-reboot":
+                self.confirm = {
+                    "action": "reboot", "yes": "REBOOT",
+                    "title": "Reboot the Pi?",
+                    "body": ["The lights hold whatever they are showing -- the",
+                             "controllers keep running without the Pi.",
+                             "The sign comes back on its own in about a minute."]}
+            elif kind == "ask-shutdown":
+                self.confirm = {
+                    "action": "shutdown", "yes": "SHUT DOWN",
+                    "title": "Shut the Pi down?",
+                    "body": ["This panel goes dark and does not come back.",
+                             "To start it again, unplug the Pi and plug it in.",
+                             "",
+                             "Do this before pulling power: the config is written",
+                             "continuously, and a mid-write power cut is how SD",
+                             "cards corrupt."]}
             elif kind == "save":
                 # Naming needs a keyboard, and the panel deliberately has none.
                 self.sign.say("Saving a scene needs a name -- use the phone UI")
             elif kind == "revert":
                 self.act("revert")
             return
+
+    def system(self, action):
+        self.sign.say("Rebooting\u2026" if action == "reboot"
+                      else "Shutting down\u2026 wait for the green light to stop")
+        threading.Thread(target=self._system, args=(action,), daemon=True).start()
+
+    @staticmethod
+    def _system(action):
+        try:
+            _post("/api/system", {"action": action}, timeout=10.0)
+        except Exception:
+            pass
 
     def retry(self, devices):
         """Re-send to whatever is silent, rather than waiting for the next sweep."""
@@ -1626,12 +1798,16 @@ class Panel:
             if state["online"] and (state["scenes"] or state["devices"]):
                 self.draw_preview(state)
                 self.draw_tabs(state)
-                if self.tab == "scenes":
+                if self.confirm:
+                    self.draw_confirm()
+                elif self.tab == "scenes":
                     self.draw_scenes(state)
                 elif self.tab == "colour":
                     self.draw_colour(state)
-                else:
+                elif self.tab == "lights":
                     self.draw_lights(state)
+                else:
+                    self.draw_status(state)
                 self.draw_bottom(state)
             else:
                 self.text(self.screen, self.f_head2,
