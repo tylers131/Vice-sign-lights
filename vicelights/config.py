@@ -99,6 +99,16 @@ DEFAULT_MATRIX = {
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
     "frame_delay": 0.02,
+    # How an iPixel panel is given text. "pixels" sets one pixel at a time and
+    # every byte of it is documented; "png" sends the whole image in one
+    # transfer but has two header bytes nobody has written down. See
+    # matrix_probe.py png-sweep.
+    "text_mode": "pixels",
+    # Paint the dark pixels too, so a new message erases the last one. Costs
+    # width x height packets, so it is off by default.
+    "fill_background": False,
+    "png_opt": 0,
+    "png_buffer": 0,
     # A protocol lifted off an HCI capture, for family "raw". Hex strings,
     # so a panel nobody has written a driver for can still be driven from
     # the config file alone.
@@ -205,8 +215,12 @@ def _matrix(raw) -> dict:
         family = DEFAULT_FAMILY
     value["family"] = family
     value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
+    mode = str(value.get("text_mode") or "pixels").strip().lower()
+    value["text_mode"] = mode if mode in ("pixels", "png") else "pixels"
+    value["fill_background"] = bool(value.get("fill_background"))
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
-                                    ("brightness", 5, 100, 100), ("chunk", 8, 512, 20)):
+                                    ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),
+                                    ("png_opt", 0, 255, 0), ("png_buffer", 0, 255, 0)):
         try:
             value[key] = max(low, min(high, int(value.get(key, default))))
         except (TypeError, ValueError):

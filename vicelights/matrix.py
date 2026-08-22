@@ -205,6 +205,48 @@ def preview(text: str, on: str = "#", off: str = ".") -> str:
                      for row in render_bitmap(text))
 
 
+def text_pixels(text: str, width: int, height: int, colour, background):
+    """The message as rows of RGB tuples, sized to the panel.
+
+    Left-aligned and vertically centred, clipped rather than scaled: a panel
+    pixel is a panel pixel, and squeezing a wide message into a narrow display
+    turns readable letters into mush.
+    """
+    rows = render_bitmap(text, height=height)
+    out = []
+    for y in range(height):
+        row = rows[y] if y < len(rows) else []
+        out.append([colour if (x < len(row) and row[x]) else background
+                    for x in range(width)])
+    return out
+
+
+def png_bytes(pixels, width: int, height: int) -> bytes:
+    """Encode rows of RGB tuples as a PNG, using nothing but the stdlib.
+
+    Pillow is not installed on the sign and adding it for this would be a
+    compiled dependency on a machine that has to be rebuildable in a tent. A
+    PNG is a signature, three chunks and a zlib stream, so it is written here.
+    """
+    import struct
+    import zlib
+
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)                        # filter type 0: none
+        for pixel in row:
+            raw += bytes(pixel)
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+            + chunk(b"IEND", b""))
+
+
 # ------------------------------------------------------------------- messages
 
 _HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
@@ -323,87 +365,180 @@ class MatrixDriver:
         return [payload[at:at + size] for at in range(0, len(payload), size)] or [b""]
 
 
-class IDotMatrix(MatrixDriver):
-    """iDotMatrix / "IDM-" pixel panels.
+class IPixel(MatrixDriver):
+    """iPixel Color panels -- the app is "iPixel Color" on the phone.
 
-    The commonest BLE matrix sold for this job.  The short control commands
-    below are length-prefixed five-byte packets and are the first thing to
-    test with ``matrix_probe.py send``: if the screen blanks and comes back,
-    the family is right and only the text encoder is in question.
+    Protocol from the community's reverse engineering (see README section 10
+    for the sources), and corroborated on this sign's own panel: the power and
+    brightness bytes below are byte-for-byte what it acknowledged.
 
-    ``confirmed`` stays False until the text path has been seen to work on the
-    panel in hand.  The queue does not care -- an unconfirmed driver still
-    queues, still shows in the UI, and still reports what it sent -- so the
-    only thing gated on confirmation is how loudly the status API hedges.
+    Every packet is::
+
+        [len lo][len hi][cmd lo][cmd hi][data ...]
+
+    where the length counts the whole packet including itself. The panel
+    answers on its notify characteristic with a packet of the same shape --
+    ``05 00 <cmd lo> <cmd hi> <status>`` -- echoing the command it is replying
+    to. Status 01 came back for every command that is known-correct here, and
+    02 for a payload it rejected, which makes the panel its own test harness.
+
+    Text has two routes, because they trade certainty against speed:
+
+    ``pixels`` (the default)
+        Turn on DIY mode and set the lit pixels one at a time. Every byte is
+        documented and nothing is guessed. It costs one small packet per lit
+        pixel, so a short message is a second or two.
+
+    ``png``
+        One transfer of a PNG with a CRC32. Far fewer packets, but two header
+        bytes are not documented, so it stays off by default until the panel
+        answers 01 to one. ``matrix_probe.py png-sweep`` finds them.
     """
 
-    key = "idotmatrix"
-    label = "iDotMatrix (IDM-*)"
+    key = "ipixel"
+    label = "iPixel Color"
+    # Control commands are confirmed against the protocol docs and the panel's
+    # own acknowledgements. The flag tracks TEXT, which is what a user means
+    # by "does this work".
     confirmed = False
-    name_prefixes = ("idm-", "idotmatrix")
+    name_prefixes = ("ipixel", "led_ble", "ledble", "led-ble")
     write_uuid = "0000fa02-0000-1000-8000-00805f9b34fb"
     notify_uuid = "0000fa03-0000-1000-8000-00805f9b34fb"
 
-    MODE_VALUES = {"scroll": 0, "static": 1, "marquee": 2, "flash": 3, "fade": 4}
+    # Commands, as (low, high) exactly how they sit on the wire.
+    CMD_POWER = (0x07, 0x01)
+    CMD_BRIGHTNESS = (0x04, 0x80)
+    CMD_DIY = (0x04, 0x01)
+    CMD_PIXEL = (0x05, 0x01)
+    CMD_SCREEN = (0x07, 0x80)
+    CMD_PNG = (0x02, 0x00)
+    CMD_GIF = (0x03, 0x00)
+
+    @staticmethod
+    def packet(cmd, data=b"") -> bytes:
+        """One protocol packet, length included.
+
+        The length counts itself and the command, which is why it is computed
+        here rather than by every caller -- getting it wrong by two is the
+        kind of mistake that produces a silent panel.
+        """
+        body = bytes(cmd) + bytes(data)
+        total = len(body) + 2
+        return bytes([total & 0xFF, (total >> 8) & 0xFF]) + body
+
+    # -- capabilities
+
+    @property
+    def capabilities(self) -> dict:
+        caps = super().capabilities
+        caps["pixels"] = True
+        caps["text_mode"] = self.text_mode
+        return caps
+
+    @property
+    def text_mode(self) -> str:
+        mode = str(self.config.get("text_mode") or "pixels").strip().lower()
+        return mode if mode in ("pixels", "png") else "pixels"
+
+    # -- control
 
     def power_frames(self, on: bool) -> list:
-        return [bytes([0x05, 0x00, 0x07, 0x01, 0x01 if on else 0x00])]
+        return [self.packet(self.CMD_POWER, [0x01 if on else 0x00])]
 
     def brightness_frames(self, percent: int) -> list:
-        level = max(5, min(100, int(percent)))
-        return [bytes([0x05, 0x00, 0x04, 0x80, level])]
+        return [self.packet(self.CMD_BRIGHTNESS, [max(1, min(100, int(percent)))])]
+
+    def diy_frames(self, on: bool) -> list:
+        return [self.packet(self.CMD_DIY, [0x01 if on else 0x00])]
+
+    def pixel_frame(self, x: int, y: int, rgb) -> bytes:
+        r, g, b = rgb
+        return self.packet(self.CMD_PIXEL, [r, g, b, 0xFF, x & 0xFF, y & 0xFF])
 
     def clear_frames(self) -> list:
-        # Off then on is the portable way to blank one of these: it needs no
-        # knowledge of the drawing commands and every unit in the family has it.
-        return self.power_frames(False) + self.power_frames(True)
+        """Paint the whole panel in the background colour.
+
+        Deliberately not a power cycle: DIY mode holds whatever was drawn, so
+        turning the screen off and on again brings the old message back.
+        """
+        width, height = self.size()
+        frames = self.diy_frames(True)
+        for y in range(height):
+            for x in range(width):
+                frames.append(self.pixel_frame(x, y, (0, 0, 0)))
+        return frames
+
+    def size(self):
+        try:
+            width = max(4, min(256, int(self.config.get("width") or 32)))
+            height = max(4, min(256, int(self.config.get("height") or 16)))
+        except (TypeError, ValueError):
+            width, height = 32, 16
+        return width, height
+
+    # -- text
 
     def text_frames(self, message: dict) -> list:
-        payload = self._text_payload(message)
-        return self._chunked(payload, self.chunk)
+        if self.text_mode == "png":
+            return self.png_frames(message)
+        return self.pixel_frames(message)
 
-    def _text_payload(self, message: dict) -> bytes:
-        """Header describing how to show the message, then the bitmap.
+    def pixel_frames(self, message: dict, fill: bool = None) -> list:
+        """Draw the message a pixel at a time. Nothing here is guessed.
 
-        The header layout is the part still to be checked against hardware --
-        see the module note.  The bitmap after it is our own font, so what the
-        panel shows is under our control either way.
+        Only the lit pixels are sent by default. Painting the dark ones too is
+        correct but costs width x height packets -- 512 on a 32x16 panel, which
+        is ten seconds of radio for a four-letter word.
         """
+        width, height = self.size()
         colour = parse_color(message.get("color"))
         background = parse_color(message.get("background"), (0, 0, 0))
-        mode = self.MODE_VALUES.get(message.get("mode"), 0)
-        speed = max(0, min(100, int(message.get("speed", 50))))
-        text = message.get("text") or ""
-        bitmap = self._bitmap(text)
+        if fill is None:
+            fill = bool(self.config.get("fill_background", False))
 
+        rows = render_bitmap(message.get("text") or "", height=height)
+        frames = self.diy_frames(True)
+        for y in range(height):
+            row = rows[y] if y < len(rows) else []
+            for x in range(width):
+                lit = x < len(row) and row[x]
+                if lit:
+                    frames.append(self.pixel_frame(x, y, colour))
+                elif fill:
+                    frames.append(self.pixel_frame(x, y, background))
+        return frames
+
+    def png_frames(self, message: dict) -> list:
+        """One PNG transfer.
+
+        The extended-data header is::
+
+            [len 2][type 2][opt 1][frame len 4][crc32 4][buffer 1][png ...]
+
+        ``opt`` and ``buffer`` are not documented anywhere I could find, so
+        they come from config and default to zero. The panel says 01 or 02, so
+        finding them is a search with an answer rather than a guess -- see
+        matrix_probe.py png-sweep.
+        """
+        width, height = self.size()
+        colour = parse_color(message.get("color"))
+        background = parse_color(message.get("background"), (0, 0, 0))
+        blob = png_bytes(text_pixels(message.get("text") or "", width, height,
+                                     colour, background), width, height)
+        opt = int(self.config.get("png_opt", 0)) & 0xFF
+        buffer = int(self.config.get("png_buffer", 0)) & 0xFF
+        import binascii
+        crc = binascii.crc32(blob) & 0xFFFFFFFF
         body = bytearray()
-        body += bytes([0x00, 0x00])          # placeholder for total length
-        body += bytes([0x03, 0x00, 0x00, 0x00, 0x00])
-        body += bytes([mode, speed])
-        body += bytes([0x01]) + bytes(colour)
-        body += bytes([0x00]) + bytes(background)
-        count = len(text)
-        body += bytes([count & 0xFF, (count >> 8) & 0xFF])
-        body += bitmap
-        total = len(body)
-        body[0] = total & 0xFF
-        body[1] = (total >> 8) & 0xFF
-        return bytes(body)
-
-    def _bitmap(self, text: str) -> bytes:
-        """One 16x16 cell per character, packed row-major, 2 bytes per row."""
-        out = bytearray()
-        for char in text:
-            columns = glyph(char)
-            for row in range(16):
-                source = row - 4          # centre the 7-row font in 16
-                bits = 0
-                if 0 <= source < FONT_HEIGHT:
-                    for index, column in enumerate(columns):
-                        if (column >> source) & 1:
-                            bits |= 1 << (index + 5)   # centre 5 cols in 16
-                out += bytes([bits & 0xFF, (bits >> 8) & 0xFF])
-        return bytes(out)
+        body += bytes(self.CMD_PNG)
+        body += bytes([opt])
+        body += len(blob).to_bytes(4, "little")
+        body += crc.to_bytes(4, "little")
+        body += bytes([buffer])
+        body += blob
+        total = len(body) + 2
+        payload = bytes([total & 0xFF, (total >> 8) & 0xFF]) + bytes(body)
+        return self._chunked(payload, self.chunk)
 
 
 class RawDriver(MatrixDriver):
@@ -487,7 +622,7 @@ class RawDriver(MatrixDriver):
         return self._chunked(prefix + bytes(body) + suffix, self.chunk)
 
 
-FAMILIES = {driver.key: driver for driver in (IDotMatrix, RawDriver)}
+FAMILIES = {driver.key: driver for driver in (IPixel, RawDriver)}
 DEFAULT_FAMILY = "auto"
 
 

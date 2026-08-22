@@ -749,6 +749,97 @@ Reading it:
     and the final status is the verdict on the whole payload.
   * no reply at all               -> the command byte is not one it knows.""")
 
+
+async def do_png_sweep(args):
+    """Find the two undocumented bytes in the PNG header, by asking the panel.
+
+    The extended-data header carries an ``opt`` byte and a ``buffer`` byte that
+    no public write-up specifies. Guessing them blind would be poor, but the
+    panel answers 01 or 02 to every packet, so this is a search with an oracle
+    rather than a guess: send the same valid PNG with each combination and keep
+    whichever comes back 01.
+
+    Small on purpose. If nothing in the default set answers 01, the answer is
+    not one byte further along and the pixel path is already working.
+    """
+    from vicelights.matrix import IPixel
+
+    opts = [int(v, 0) for v in args.opts.split(",")] if args.opts else [0, 1, 2, 3]
+    buffers = ([int(v, 0) for v in args.buffers.split(",")]
+               if args.buffers else [0, 1, 2])
+    message = M.normalize_message({"text": args.text, "color": args.color})
+    print("trying %d combination(s) of opt x buffer on %r"
+          % (len(opts) * len(buffers), message["text"]))
+    print("a status of 01 is the answer; 02 means it did not like the packet\n")
+
+    replies = []
+
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        services = getattr(client, "services", None)
+        if services is None:
+            services = await client.get_services()
+        listening = []
+        for service in services:
+            for characteristic in service.characteristics:
+                if "notify" not in (characteristic.properties or ()):
+                    continue
+                uuid = characteristic.uuid
+
+                def on_notify(_sender, data, _uuid=uuid):
+                    replies.append((_uuid, bytes(data)))
+
+                try:
+                    await client.start_notify(uuid, on_notify)
+                    listening.append(uuid)
+                except Exception:
+                    pass
+
+        winners = []
+        for opt in opts:
+            for buffer in buffers:
+                driver = IPixel({"width": args.width, "height": args.height,
+                                 "chunk": args.chunk, "text_mode": "png",
+                                 "png_opt": opt, "png_buffer": buffer})
+                frames = driver.png_frames(message)
+                replies.clear()
+                for position, frame in enumerate(frames):
+                    await client.write_gatt_char(driver.characteristic(), frame,
+                                                 response=False)
+                    if position + 1 < len(frames):
+                        await asyncio.sleep(args.delay)
+                await asyncio.sleep(args.gap)
+                verdict = "no reply"
+                for _uuid, reply in replies:
+                    if len(reply) == 5 and reply[0] == 0x05:
+                        verdict = "status %02x" % reply[4]
+                        if reply[4] == 0x01:
+                            winners.append((opt, buffer))
+                        break
+                print("  opt %3d  buffer %3d  ->  %s" % (opt, buffer, verdict))
+
+        for characteristic in listening:
+            try:
+                await client.stop_notify(characteristic)
+            except Exception:
+                pass
+
+    print()
+    if winners:
+        opt, buffer = winners[0]
+        print("Accepted with opt=%d buffer=%d. Put it in the config:" % (opt, buffer))
+        print('  curl -s -X POST http://127.0.0.1/api/matrix '
+              '-H "Content-Type: application/json" \\')
+        print('    -d \'{"text_mode":"png","png_opt":%d,"png_buffer":%d}\''
+              % (opt, buffer))
+        if len(winners) > 1:
+            print("\n(%d combinations were accepted; the panel may ignore these "
+                  "bytes entirely.)" % len(winners))
+    else:
+        print("Nothing was accepted. The PNG route needs something this does not\n"
+              "cover, and it is an optimisation rather than a requirement --\n"
+              "text_mode=pixels is fully documented and already works.")
+
 # -------------------------------------------------------------------- sending
 
 async def write_frames(address, char_uuid, frames, timeout, delay, response=False,
@@ -1152,6 +1243,20 @@ def build_parser():
                    help="repeat the payload on every writable characteristic")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_trace(a)))
+
+    p = sub.add_parser("png-sweep",
+                       help="find the undocumented PNG header bytes by trying them")
+    ble_args(p)
+    p.add_argument("-t", "--text", default="VICE")
+    p.add_argument("--color", default="#ff2f6e")
+    p.add_argument("--width", type=int, default=32)
+    p.add_argument("--height", type=int, default=16)
+    p.add_argument("--opts", default="", help="comma-separated, default 0,1,2,3")
+    p.add_argument("--buffers", default="", help="comma-separated, default 0,1,2")
+    p.add_argument("--gap", type=float, default=1.5,
+                   help="seconds to wait for a verdict after each attempt")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_png_sweep(a)))
 
     p = sub.add_parser("control", help="on | off | clear | a brightness percentage")
     ble_args(p)

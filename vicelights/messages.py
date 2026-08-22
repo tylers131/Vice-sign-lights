@@ -47,6 +47,27 @@ class MatrixRunner:
         matrix = self.store.matrix()
         return bool(matrix.get("enabled") and matrix.get("address"))
 
+    def unusable(self) -> str:
+        """Why the panel cannot be driven, or "" if it can.
+
+        "No panel configured" is the wrong answer for a panel that is paired
+        but whose family we do not recognise -- it sends someone to re-pair a
+        device that is already paired. Name the real problem.
+        """
+        matrix = self.store.matrix()
+        if not matrix.get("enabled"):
+            return "the panel is switched off in settings"
+        if not matrix.get("address"):
+            return "no panel is paired"
+        driver = matrix_module.driver_for(matrix)
+        if not driver.characteristic():
+            return ("%s is paired but its type is not recognised, so nothing "
+                    "knows which characteristic to write to. Run "
+                    "matrix_probe.py info %s on the Pi."
+                    % (matrix.get("name") or matrix.get("address"),
+                       matrix.get("address")))
+        return ""
+
     def status(self) -> dict:
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)
@@ -77,7 +98,7 @@ class MatrixRunner:
             "current": current,
             "showing_since": since,
             "next_in": remaining,
-            "last_error": error,
+            "last_error": error or self.unusable(),
         }
 
     # ------------------------------------------------------------------ sends
@@ -104,7 +125,7 @@ class MatrixRunner:
             payload={"message_id": message.get("id"), "text": message.get("text")})
         if job is None:
             with self._lock:
-                self._last_error = "no panel configured"
+                self._last_error = self.unusable() or "the panel did not take it"
             return False
         with self._lock:
             self._current = dict(message)
@@ -210,7 +231,7 @@ class MatrixRunner:
                                         coalesce_key="matrix:" + kind)
         if job is None:
             with self._lock:
-                self._last_error = "no panel configured"
+                self._last_error = self.unusable() or "the panel did not take it"
             return False
         with self._lock:
             self._last_error = ""

@@ -1663,6 +1663,56 @@ next one over. Timed on `time.monotonic`, like scene rotation, because the Pi
 has no RTC. It backs off while a twelve-device sweep is in flight rather than
 stacking writes behind it.
 
+### This sign's panel
+
+Advertises as `LED_BLE_4B3289C5` and is driven by the phone app **iPixel
+Color**. Write to `0000fa02-0000-1000-8000-00805f9b34fb`, replies arrive on
+`0000fa03`.
+
+Every packet is:
+
+```
+[len lo][len hi][cmd lo][cmd hi][data ...]
+```
+
+where the length counts the whole packet including itself, and the command is
+**two bytes**. The panel answers with a packet of the same shape --
+`05 00 <cmd lo> <cmd hi> <status>` -- echoing the command it is replying to.
+Status `01` means it took the packet, `02` that it did not, which makes the
+panel its own test harness.
+
+| Command | Bytes |
+| --- | --- |
+| Power on / off | `05 00 07 01 01` / `05 00 07 01 00` |
+| Brightness (1-100) | `05 00 04 80 <level>` |
+| DIY mode on / off | `05 00 04 01 01` / `05 00 04 01 00` |
+| Set one pixel | `0A 00 05 01 <r> <g> <b> FF <x> <y>` |
+| Select screen buffer | `05 00 07 80 <1-9>` |
+| PNG image | type `02 00`, extended header, CRC32 |
+| GIF | type `03 00`, same shape |
+
+Text has two routes, and the config picks between them with `text_mode`:
+
+* **`pixels`** (default) -- DIY mode on, then one small packet per lit pixel.
+  Every byte of it is documented, so it is the one that is certain. "VICE" is
+  55 pixels, about a second.
+* **`png`** -- the whole image in one transfer with a CRC32. Far fewer packets,
+  but the extended header carries an `opt` byte and a `buffer` byte that no
+  public write-up specifies. `./matrix_probe.py png-sweep <address>` tries the
+  plausible values and keeps whichever the panel answers `01` to.
+
+The panel also exposes a second service, `0000ae00` with a writable `ae01`.
+Do not use it: it answers a plaintext write with a type byte and sixteen
+high-entropy bytes -- one AES block, different every time. Whatever that
+channel is, it is encrypted, and nothing here needs it.
+
+Protocol details from the community's reverse engineering of iPixel Color:
+[cagcoach/ha-ipixel-color](https://github.com/cagcoach/ha-ipixel-color),
+[lucagoc/iPixel-CLI](https://github.com/lucagoc/iPixel-CLI),
+[DonKracho/ESPHome-component-iPixel-ble](https://github.com/DonKracho/ESPHome-component-iPixel-ble).
+Corroborated against this panel: the power and brightness bytes above are what
+it acknowledged with status `01`.
+
 ### Pairing it
 
 These panels are sold under a dozen brands with no common protocol, so the
@@ -1679,6 +1729,11 @@ before trusting it:
 ```bash
 sudo ./matrix_probe.py send AA:BB:CC:DD:EE:FF --text VICE
 ```
+
+`confirm` walks a panel from "does it hear us" up to "does it show text", in
+order of how much each step assumes, and prints whatever the panel says back.
+`trace` sends a payload one chunk at a time so a failure lands on a chunk
+instead of on "the driver".
 
 A driver is marked **confirmed** only once its encoding has been checked
 against real hardware; until then the UI says `encoding unconfirmed` rather
