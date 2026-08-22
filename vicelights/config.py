@@ -112,6 +112,9 @@ DEFAULT_MATRIX = {
     "text_font": "narrow",      # 8x16 cells: the one this panel is proven on
     "bitmap_order": "msb",
     "text_reversed": False,     # for a panel that lays characters right to left
+    "color_mode": 0,            # 0 solid; 2-4 are the panel's own gradients
+    "h_align": 1,
+    "v_align": 1,
     # Payload bytes per write. 20 is what fits the default 23-byte MTU, and
     # nothing here negotiates a larger one, so raising it needs evidence.
     "chunk": 20,
@@ -276,6 +279,13 @@ def _matrix(raw) -> dict:
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     value["text_reversed"] = bool(value.get("text_reversed"))
+    from .matrix import MAX_COLOR_MODE
+    for key, low, high, default in (("color_mode", 0, MAX_COLOR_MODE, 0),
+                                    ("h_align", 0, 2, 1), ("v_align", 0, 2, 1)):
+        try:
+            value[key] = max(low, min(high, int(value.get(key, default))))
+        except (TypeError, ValueError):
+            value[key] = default
     scale = str(value.get("scale") or "auto").strip().lower()
     if scale != "auto":
         try:

@@ -407,6 +407,59 @@ class MatrixRunner:
             self._reset_pages()
         return ok
 
+    def program(self) -> dict:
+        """Store the queue in the panel and let the panel cycle it.
+
+        The point is not convenience, it is the radio. Cycling from here costs
+        a connection and a write every time a message changes, on the one
+        antenna the twelve controllers also need. Stored in the panel's own
+        slots, the whole playlist costs one connection now and nothing at all
+        afterwards -- the sign keeps running with the Pi switched off.
+
+        Only for a panel that animates: drawing pixel by pixel has no slots to
+        put anything in.
+        """
+        matrix = self.store.matrix()
+        driver = matrix_module.driver_for(matrix)
+        if not driver.animates:
+            return {"ok": False, "error": "this panel draws from here; there is "
+                                          "nothing on it to store a message in",
+                    "stored": 0}
+        queue = self.store.messages(enabled_only=True)[:100]
+        if not queue:
+            return {"ok": False, "error": "the queue is empty", "stored": 0}
+        frames = []
+        for slot, message in enumerate(queue, 1):
+            frames.extend(driver.native_text_frames(message, slot=slot))
+        frames.extend(driver.program_frames(range(1, len(queue) + 1)))
+        job = self.worker.submit_matrix(
+            frames, "panel: store %d message(s)" % len(queue),
+            coalesce_key="matrix:program", manual=True)
+        if job is None:
+            return {"ok": False, "stored": 0,
+                    "error": self.unusable() or "the panel did not take it"}
+        # Two things cycling the same panel would fight each other, and the one
+        # that is not using the radio should win.
+        if matrix.get("playlist"):
+            self.store.update_matrix({"playlist": False})
+        with self._lock:
+            self._last_error = ""
+            self._reset_pages()
+            self._current = None
+        log.info("panel: stored %d message(s) in its own slots", len(queue))
+        return {"ok": True, "stored": len(queue)}
+
+    def program_clear(self) -> dict:
+        """Stop the panel cycling its own slots."""
+        matrix = self.store.matrix()
+        driver = matrix_module.driver_for(matrix)
+        frames = driver.program_clear_frames()
+        if not frames:
+            return {"ok": False, "error": "this panel has no stored playlist"}
+        ok = self._send_control(frames, "panel: clear its stored playlist",
+                                "program")
+        return {"ok": ok, "error": "" if ok else self._last_error}
+
     def power(self, on: bool) -> bool:
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)

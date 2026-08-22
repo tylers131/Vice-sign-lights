@@ -631,9 +631,18 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
         speed = int(raw.get("speed", 50))
     except (TypeError, ValueError):
         speed = 50
+    try:
+        color_mode = max(0, min(MAX_COLOR_MODE, int(raw.get("color_mode", 0))))
+    except (TypeError, ValueError):
+        color_mode = TEXT_COLOR_MODES.get(
+            str(raw.get("color_mode") or "").strip().lower(), 0)
     return {
         "id": raw.get("id") or new_id(),
         "text": text,
+        # 0 is one solid colour; the panel's gradients are 2-4. Per message
+        # rather than per panel: "BAR IS OPEN" in one colour and a rainbow
+        # "GOOD MORNING" is the point of having it.
+        "color_mode": color_mode,
         "color": format_color(parse_color(raw.get("color"), (255, 47, 110))),
         "background": format_color(parse_color(raw.get("background"), (0, 0, 0))),
         "mode": mode,
@@ -682,6 +691,23 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
 # asymmetric letter and asks which one looked right -- the same way the colour
 # order was settled.
 CMD_TEXT = (0x00, 0x01)
+CMD_PROGRAM_SET = (0x08, 0x80)     # which stored slots the panel cycles
+CMD_PROGRAM_DEL = (0x02, 0x01)     # drop slots from that list
+
+# text_color_mode: 0 uses the colour in each character block (what this sends,
+# so a message is one colour end to end), 1 uses the single colour in the
+# header, and the rest are the app's gradient effects -- documented only as
+# "div. rainbow effects", with 2, 3 and 4 described elsewhere as yellow-to-red,
+# light-blue-to-white and blue-to-yellow, top to bottom. Numbers past 4 are
+# offered because the app's own range is 0-9; what they do is unknown, and a
+# panel that does not like one answers 02 rather than doing something unsafe.
+TEXT_COLOR_MODES = {"per-character": 0, "solid": 1, "sunset": 2,
+                    "ice": 3, "ocean": 4}
+MAX_COLOR_MODE = 9
+
+# back_color_mode: 0 leaves the background off, 1 paints back_color. Sending 1
+# with black is not the same as 0 on every panel, so it follows the message:
+# a background someone actually chose gets painted, and the default does not.
 
 TEXT_ANIMATIONS = {
     "pages": 0,          # a screenful at a time -- what paginate() does by hand
@@ -1102,6 +1128,30 @@ class IPixel(MatrixDriver):
         order = str(self.config.get("bitmap_order") or "msb").strip().lower()
         return order if order in BITMAP_ORDERS else "msb"
 
+    def _align(self, key: str) -> int:
+        try:
+            return max(0, min(2, int(self.config.get(key, 1))))
+        except (TypeError, ValueError):
+            return 1
+
+    def color_mode(self, message: dict) -> int:
+        """0-9: solid, or one of the panel's own gradients."""
+        want = (message or {}).get("color_mode")
+        if want is None:
+            want = self.config.get("color_mode", 0)
+        if isinstance(want, str):
+            key = want.strip().lower()
+            if key in TEXT_COLOR_MODES:
+                return TEXT_COLOR_MODES[key]
+            try:
+                want = int(key)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return max(0, min(MAX_COLOR_MODE, int(want)))
+        except (TypeError, ValueError):
+            return 0
+
     def animation_for(self, message: dict) -> int:
         mode = str((message or {}).get("mode") or DEFAULT_MODE).strip().lower()
         return TEXT_ANIMATIONS.get(mode, TEXT_ANIMATIONS["static"])
@@ -1140,13 +1190,16 @@ class IPixel(MatrixDriver):
         count = len(cells) if cells else len(text)
         payload = bytearray()
         payload += count.to_bytes(2, "little")
-        payload.append(0x01)                      # horizontal alignment
-        payload.append(0x01)                      # vertical alignment
+        payload.append(self._align("h_align"))
+        payload.append(self._align("v_align"))
         payload.append(int(animation) & 0xFF)
         payload.append(speed)
-        payload.append(0x00)                      # text colour mode: plain
+        payload.append(self.color_mode(message))
         payload += bytes(colour)
-        payload.append(0x00)                      # background colour mode
+        # Paint the background only when one was chosen. The character blocks
+        # carry the text colour themselves, so an unwanted background is the
+        # one thing here that can hide a message completely.
+        payload.append(0x01 if any(background) else 0x00)
         payload += bytes(background)
         for index in range(count):
             payload.append(font_flag & 0xFF)
@@ -1177,12 +1230,29 @@ class IPixel(MatrixDriver):
         the Pi is not involved at all, which on a shared antenna is worth more
         than any of it.
         """
-        numbers = [max(1, min(100, int(n))) for n in (slots or [])][:100]
+        return self._program(CMD_PROGRAM_SET, slots)
+
+    def program_clear_frames(self, slots=None) -> list:
+        """Drop slots from the panel's cycle. Everything, unless told otherwise."""
+        return self._program(CMD_PROGRAM_DEL,
+                             slots if slots else range(1, 101))
+
+    def _program(self, cmd, slots) -> list:
+        # Slots are 1-100. Zero and anything above are reserved, so a bad
+        # number is dropped rather than clamped into someone else's message.
+        numbers = []
+        for slot in (slots or []):
+            try:
+                number = int(slot)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= number <= 100 and number not in numbers:
+                numbers.append(number)
         if not numbers:
             return []
         body = bytearray(len(numbers).to_bytes(2, "little"))
         body += bytes(numbers)
-        return [self.packet((0x08, 0x80), bytes(body))]
+        return [self.packet(cmd, bytes(body))]
 
     def scale_for(self, message: dict) -> int:
         """How many LEDs per font pixel, for this message on this panel."""

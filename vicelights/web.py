@@ -612,7 +612,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "text_mode", "fill_background", "png_opt", "png_buffer",
                        "pixel_layout", "scale", "write_response", "stretch",
                        "bold", "batch_writes", "paging", "page_seconds",
-                       "text_font", "bitmap_order", "text_reversed")
+                       "text_font", "bitmap_order", "text_reversed",
+                       "color_mode", "h_align", "v_align")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -752,6 +753,25 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             return _json_error("send an 'ids' list in the order you want")
         return jsonify({"ok": True, "ids": store.reorder_messages(ids),
                         "messages": store.messages()})
+
+    @app.route("/api/matrix/program", methods=["POST", "DELETE"])
+    def api_matrix_program():
+        """Hand the whole queue to the panel, or take it back.
+
+        POST stores every enabled message in one of the panel's slots and sets
+        the cycle going there; DELETE stops it. While it is running the Pi is
+        not involved at all, which is the only arrangement that leaves the
+        radio entirely to the twelve controllers.
+        """
+        if request.method == "DELETE":
+            result = scheduler.panel.program_clear()
+        else:
+            result = scheduler.panel.program()
+        if not result.get("ok"):
+            return _json_error(result.get("error") or "the panel did not take it",
+                               503)
+        worker.note_manual()
+        return jsonify({"ok": True, **result})
 
     @app.route("/api/matrix/colortest", methods=["POST"])
     def api_matrix_colortest():

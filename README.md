@@ -1545,6 +1545,7 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/matrix/messages/<id>/send` | Put that one up now |
 | POST | `/api/matrix/messages/order` | `{ids: [...]}` — the list order is the play order |
 | GET | `/api/matrix/preview?text=` | The bitmap the panel will get, whether it fits, and its pages if it does not |
+| POST/DELETE | `/api/matrix/program` | Store the queue in the panel's own slots and cycle it there / stop |
 | POST | `/api/matrix/colortest` | `{step}` — put one known colour on the panel |
 | POST | `/api/matrix/colorfix` | `{seen: [...], layout}` — solve the byte order from what was seen |
 | GET/POST | `/api/settings` | Server-wide settings, e.g. `{apply_on_boot}` |
@@ -1911,6 +1912,37 @@ The compose screen then offers the panel's animations, because the menu is
 built from what the driver says it can deliver. If the panel answers `02` the
 packet layout is wrong rather than the bit order, and the pixel path is
 untouched and still works.
+
+### The panel can run the playlist too
+
+`POST /api/matrix/program` stores every enabled message in one of the panel's
+own slots (1-100) and sets it cycling there; `DELETE` stops it. That is the
+arrangement that costs the least radio of anything here: one connection now,
+and then nothing at all -- the sign keeps cycling with the Pi switched off,
+and the twelve controllers have the antenna to themselves.
+
+```
+09 00 08 80 03 00 01 02 03      cycle slots 1, 2 and 3
+08 00 02 01 02 00 01 02         drop slots 1 and 2
+```
+
+A stored message is an ordinary text packet with a slot number in byte 14
+instead of zero. Turning it on switches the Pi's own playlist off, because two
+things cycling one panel would fight and the one not using the radio should
+win. Refused on the pixel path, which has no slots to store anything in.
+
+Also from the same reading, and also unconfirmed on hardware: `color_mode` on
+a message (0 solid, 2-4 the panel's own gradients -- yellow-to-red,
+light-blue-to-white, blue-to-yellow, top to bottom), and `h_align`/`v_align`
+in the panel config. The background is now painted only when one was chosen,
+since `back_color_mode` 1 with black is not the same as 0 on every panel and an
+unwanted background is the one thing here that can hide a message completely.
+
+One discrepancy worth recording rather than acting on: this documentation
+gives `04 01` as **power on/off**, where this code has it as "DIY mode" and
+uses `07 01` for power. Both are acknowledged by the panel and the pixel path
+works as it stands, so nothing has been changed on the strength of a document
+that has already been wrong once about this panel (see the cell size above).
 
 Protocol details from
 [DonKracho/ESPHome-component-iPixel-ble](https://github.com/DonKracho/ESPHome-component-iPixel-ble)
