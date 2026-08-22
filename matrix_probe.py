@@ -400,15 +400,18 @@ async def do_confirm(args):
     ]
     # Each message erases what the one before it lit. Without this the two
     # texts end up superimposed on the panel, which reads as a colour fault.
-    first = M.normalize_message({"text": "VICE", "mode": "static",
-                                 "color": "#ff2f6e"})
-    second = M.normalize_message({"text": "BAR IS OPEN", "mode": "scroll",
-                                  "color": "#22d3ee"})
+    # Ends on the large message on purpose. A long message drops to 1x to fit,
+    # so finishing with one leaves the panel showing the smallest thing this
+    # can draw -- which reads as "scaling does nothing" when it is the opposite.
+    long_message = M.normalize_message({"text": "BAR IS OPEN", "mode": "scroll",
+                                        "color": "#22d3ee"})
+    big = M.normalize_message({"text": "VICE", "mode": "static",
+                               "color": "#ff2f6e"})
     steps += [
-        ("text VICE", "VICE appears, in pink",
-         driver.text_frames(first), 6.0),
-        ("text again", "VICE is replaced by BAR IS OPEN, in cyan",
-         driver.text_frames(second, previous=first), 8.0),
+        ("long text", "BAR IS OPEN, small -- 11 letters only fit at 1x",
+         driver.text_frames(long_message), 7.0),
+        ("short text", "VICE, twice the height -- it fits, so it goes bigger",
+         driver.text_frames(big, previous=long_message), 8.0),
     ]
     if args.steps:
         wanted = {int(n) for n in args.steps.split(",") if n.strip().isdigit()}
@@ -1096,6 +1099,60 @@ What is on it now?
                                   ./matrix_probe.py screens %s""" % args.address)
 
 
+async def do_say(args):
+    """Put one message on the panel and leave it there.
+
+    The command this whole exercise was for. Everything else here is
+    diagnosis; this is the thing you actually want at the sign.
+    """
+    from vicelights.matrix import IPixel, scale_for, text_width
+
+    config = {"width": args.width, "height": args.height}
+    if args.scale:
+        config["scale"] = str(args.scale)
+    driver = IPixel(config)
+    message = M.normalize_message({"text": args.text, "color": args.color})
+    scale = scale_for(config, message["text"])
+    drawn = text_width(message["text"], scale=scale)
+
+    print("%r at %dx -- %d x %d on a %d x %d panel"
+          % (message["text"], scale, drawn, 7 * scale, args.width, args.height))
+    if drawn > args.width:
+        print("  too long: %d columns of %d. It will be cut off."
+              % (drawn, args.width))
+    elif scale == 1 and 14 <= args.height:
+        fits_bigger = text_width(message["text"], scale=2) <= args.width
+        if not fits_bigger:
+            print("  at 2x this would be %d columns, past the %d available, so"
+                  " it stays at 1x."
+                  % (text_width(message["text"], scale=2), args.width))
+    print()
+    print(M.preview(message["text"]))
+    print()
+
+    previous = None
+    if args.replaces:
+        previous = M.normalize_message({"text": args.replaces})
+    frames = driver.text_frames(message, previous=previous)
+    if args.clear:
+        frames = driver.pixel_frames(message, fill=True)
+        print("repainting the whole panel (--clear): %d packets, about %.0fs"
+              % (len(frames), len(frames) * args.delay))
+    else:
+        print("%d packets, about %.0fs" % (len(frames), len(frames) * args.delay))
+
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        sent = 0
+        for frame in frames:
+            await client.write_gatt_char(IPixel.write_uuid, frame, response=False)
+            sent += 1
+            if sent % 200 == 0:
+                print("  %d/%d" % (sent, len(frames)))
+            await asyncio.sleep(args.delay)
+    print("done -- it stays up until something replaces it.")
+
+
 async def do_colortest(args):
     """Show pure red, green and blue, and work out where the colour bytes go.
 
@@ -1684,6 +1741,21 @@ def build_parser():
                    help="select this display buffer first (1-9)")
     p.add_argument("--commands")
     p.set_defaults(run=lambda a: asyncio.run(do_fill(a)))
+
+    p = sub.add_parser("say", help="put one message on the panel and leave it")
+    ble_args(p)
+    p.add_argument("-t", "--text", required=True)
+    p.add_argument("--color", default="#ff2f6e")
+    p.add_argument("--width", type=int, default=96)
+    p.add_argument("--height", type=int, default=16)
+    p.add_argument("--scale", type=int, default=0,
+                   help="force a size; default picks the largest that fits")
+    p.add_argument("--replaces", default="",
+                   help="the message currently up, so only its pixels are erased")
+    p.add_argument("--clear", action="store_true",
+                   help="repaint the whole panel first (slow, but certain)")
+    p.add_argument("--commands")
+    p.set_defaults(run=lambda a: asyncio.run(do_say(a)))
 
     p = sub.add_parser("colortest",
                        help="find the panel's colour byte order from what it shows")
