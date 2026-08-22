@@ -1668,7 +1668,7 @@ VICELIGHTS_FAKE_BLE=1 python3 -m vicelights --config ./config.example.json \
 
 ## 10. The text panel
 
-A BLE LED matrix that scrolls messages. It is a **different device class** from
+A BLE LED matrix that shows text. It is a **different device class** from
 the twelve controllers -- a length-prefixed, chunked protocol carrying a bitmap
 rather than a 9-byte frame -- so it lives in `vicelights/matrix.py` and has its
 own config block. What it shares is the radio: panel writes queue through the
@@ -1788,6 +1788,32 @@ completed is what it erases against, and what failed joins a short list of
 things that *might* still be lit and gets erased against as well. The list
 clears on the next successful write and is capped at three, so a bad patch of
 radio cannot grow the erase into a full-panel repaint.
+
+### The text holds still, and the menu says so
+
+A message carries a `mode` -- `scroll`, `static`, `marquee`, `flash`, `fade` --
+and the compose screen used to offer all five. Nothing in any driver read it.
+Five choices, one behaviour, and no way to tell from the screen which one you
+were getting: the menu was decoration.
+
+Movement is not a matter of writing the code. Measured on this sign, a connect
+costs 1.5s and a disconnect 0.2s, and every write is its own connection. Even
+the cheapest possible animation -- a flash using the panel's own one-packet
+power command -- is about 1.8s of radio per step, so a two-second flash holds
+the antenna nine tenths of the time. That antenna is shared with the twelve
+controllers. Scrolling is worse again, at ~29 writes a frame and 1.7 frames a
+second, forever.
+
+So a driver now declares the modes it can actually deliver (`modes`, in its
+capabilities), the compose screen offers those and hides the control when there
+is only one, and the queue lists what this panel will really do rather than
+what a message was saved with. Saved messages keep their own `mode` -- panels
+get swapped, and it may mean something to the next one -- but the draw and the
+log line use the mode that happened:
+
+```
+queued panel: 'HI' static: 135 frame(s)
+```
 
 ### Long messages: pages, not scrolling
 
@@ -1913,7 +1939,7 @@ laptop with no radio and no bleak.
   "commands": {}             // hex, for family "raw"
 },
 "messages": [
-  {"text": "BAR IS OPEN", "color": "#22d3ee", "mode": "scroll", "dwell": 30}
+  {"text": "BAR IS OPEN", "color": "#22d3ee", "mode": "static", "dwell": 30}
 ]
 ```
 

@@ -2027,7 +2027,9 @@ class Panel:
                          daemon=True).start()
 
     def _send_message(self, text, queue):
-        body = {"text": text, "color": "#ff2f6e", "mode": "scroll"}
+        # No mode: the server fills in what the panel can actually do, rather
+        # than this screen naming an effect the panel will not perform.
+        body = {"text": text, "color": "#ff2f6e"}
         try:
             if queue:
                 result = _post("/api/matrix/messages", body)

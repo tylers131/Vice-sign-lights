@@ -130,7 +130,21 @@ def solve_layout(seen, sending_layout: str = None) -> list:
 
 
 MODES = ("scroll", "static", "marquee", "flash", "fade")
-DEFAULT_MODE = "scroll"
+DEFAULT_MODE = "static"
+
+# Which of those a driver can actually deliver. Every one of them means moving
+# or repainting pixels, and on a panel drawn a pixel at a time over BLE that is
+# not a matter of writing the code: measured on this sign, one connect costs
+# 1.5s and one disconnect 0.2s, so even the cheapest animation -- a flash done
+# with the panel's own one-packet power command -- is ~1.8s of radio per step.
+# At a two-second flash the panel holds the antenna nine tenths of the time,
+# and it shares that antenna with the twelve controllers. Scrolling is worse
+# again: a frame moves nearly every lit pixel, which is ~29 writes, 1.7 frames
+# a second, forever.
+#
+# So this driver offers one mode, and the UI offers what the driver offers.
+# A menu of five that all draw the same thing is worse than a menu of one.
+STATIC_ONLY = ("static",)
 
 MAX_TEXT = 240          # characters; longer messages get truncated, not dropped
 MAX_MESSAGES = 40       # playlist ceiling, so a stuck client cannot fill the SD card
@@ -631,10 +645,16 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
     }
 
 
-def describe_message(message: dict) -> str:
+def describe_message(message: dict, mode: str = None) -> str:
+    """One message, for a log line or a job label.
+
+    ``mode`` overrides the saved one so the label says what the panel is
+    actually doing: a line reading "'VICE' scroll" for text that sits still is
+    a lie in the one place someone goes to find out what happened.
+    """
     text = (message or {}).get("text") or ""
     short = text if len(text) <= 24 else text[:23] + "…"
-    return "%r %s" % (short, (message or {}).get("mode", DEFAULT_MODE))
+    return "%r %s" % (short, mode or (message or {}).get("mode", DEFAULT_MODE))
 
 
 # -------------------------------------------------------------------- drivers
@@ -669,7 +689,24 @@ class MatrixDriver:
             "brightness": bool(self.brightness_frames(100)),
             "clear": bool(self.clear_frames()),
             "confirmed": self.confirmed,
+            "modes": list(self.modes),
         }
+
+    # How the message can be made to behave. Static unless a driver says
+    # otherwise -- claiming an effect that lands as still text is worse than
+    # not offering it.
+    modes = STATIC_ONLY
+
+    def mode_for(self, message: dict) -> str:
+        """The mode this driver will actually use for a message.
+
+        A message keeps whatever mode it was saved with -- panels get swapped,
+        and a mode this one cannot do may mean something to the next one. What
+        gets coerced is the mode used for *this* draw, and the label that goes
+        with it, so the log does not claim a scroll that never scrolled.
+        """
+        mode = str((message or {}).get("mode") or DEFAULT_MODE).strip().lower()
+        return mode if mode in self.modes else self.modes[0]
 
     def characteristic(self):
         return self.config.get("char_uuid") or self.write_uuid

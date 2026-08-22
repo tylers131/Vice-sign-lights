@@ -326,17 +326,17 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
           <label>Colour</label>
           <input type="color" id="msgColor" value="#ff2f6e" oninput="previewMessage()">
         </div>
-        <div>
+        <div id="msgModeBox" style="display:none">
           <label>How it moves</label>
-          <select id="msgMode">
-            <option value="scroll">Scroll</option>
-            <option value="static">Hold still</option>
-            <option value="marquee">Marquee</option>
-            <option value="flash">Flash</option>
-            <option value="fade">Fade</option>
-          </select>
+          <select id="msgMode"></select>
         </div>
       </div>
+      <p id="msgStill" class="muted" style="display:none;margin:8px 0 0">
+        Text holds still on this panel. It is drawn one pixel at a time over
+        Bluetooth, and the antenna is shared with the twelve controllers, so
+        moving it would cost the lights more than it is worth — a scroll runs
+        at under two frames a second and never stops. Messages too wide for
+        the panel are shown a page at a time instead.</p>
       <label>Stay up for <b id="msgDwellVal">20s</b></label>
       <input type="range" id="msgDwell" min="0" max="120" step="5" value="20"
              oninput="$('msgDwellVal').textContent = this.value==='0' ? 'until replaced'
@@ -1123,6 +1123,20 @@ function renderPanel(p){
     bits.push('<span class="pill warn">encoding unconfirmed</span>');
   }
   if(p.pixel_layout) bits.push("colour order " + esc(p.pixel_layout));
+  /* Offer the modes the driver can actually deliver, not the five this page
+     used to list -- four of which drew exactly the same still text. With one
+     mode there is no choice to make, so the control goes away and the note
+     says why rather than leaving a dead menu on the screen. */
+  var modes = p.modes || ["static"];
+  var sel = $("msgMode");
+  if(sel && sel.dataset.filled !== modes.join(",")){
+    sel.innerHTML = modes.map(function(m){
+      return '<option value="'+esc(m)+'">'+esc(MODE_LABELS[m] || m)+'</option>';
+    }).join("");
+    sel.dataset.filled = modes.join(",");
+  }
+  $("msgModeBox").style.display = modes.length > 1 ? "" : "none";
+  $("msgStill").style.display = modes.length > 1 ? "none" : "";
   if(p.last_error){ bits.push('<span class="pill bad">'+esc(p.last_error)+'</span>'); }
   $("panelInfo").innerHTML = bits.join(" &middot; ");
   var fam = $("panelFamily");
@@ -1164,7 +1178,10 @@ function renderPanel(p){
       + '</div>'
       + '<span class="swatchdot" style="background:'+esc(m.color)+'"></span>'
       + '<div class="grow"><div class="text">'+esc(m.text)+'</div>'
-      + '<div class="meta">'+esc(m.mode)+' &middot; '
+      /* Saved messages keep the mode they were saved with -- panels get
+         swapped -- but the list shows what this panel will actually do with
+         them, not a promise it cannot keep. */
+      + '<div class="meta">'+esc(shownMode(m.mode))+' &middot; '
       + (m.dwell ? m.dwell+"s" : "until replaced")
       + (m.enabled ? "" : " &middot; skipped") + '</div></div>'
       + '<button class="btn sm" onclick="sendMsg(\''+m.id+'\')">Show</button>'
@@ -1196,12 +1213,17 @@ function previewMessage(){
     get("/api/matrix/preview?text="+encodeURIComponent(text)).then(function(j){
       if(!j.ok) return;
       var colour = $("msgColor").value;
-      /* Smaller cells when the glyph is scaled up, so the preview stays the
-         same physical size on screen however big the message is. */
-      var cell = j.scale > 1 ? 3 : 4;
+      /* Size the cell to the phone, not the other way round: at a fixed 4px
+         plus margins a 96-wide panel is 576px, so on a phone the preview was
+         cut off at "BAR IS O" -- and a preview you have to scroll cannot
+         answer the one question it exists to answer, which is whether the
+         message fits. */
+      var box = $("msgPreview").clientWidth || 340;
+      var wide = (j.panel && j.panel.width) || j.rows[0].length || 96;
+      var cell = Math.max(2, Math.min(6, Math.floor((box - 22) / wide)));
       $("msgPreview").innerHTML = j.rows.map(function(row){
         return '<div class="prow">' + row.map(function(bit){
-          var size = 'width:'+cell+'px;height:'+cell+'px;';
+          var size = 'width:'+(cell-1)+'px;height:'+(cell-1)+'px;margin:0 1px 1px 0;';
           return bit ? '<i class="on" style="'+size+'background:'+esc(colour)+'"></i>'
                      : '<i style="'+size+'"></i>';
         }).join("") + '</div>';
@@ -1233,7 +1255,7 @@ function previewMessage(){
 function composed(){
   var dwell = parseInt($("msgDwell").value, 10);
   return {text:$("msgText").value.trim(), color:$("msgColor").value,
-          mode:$("msgMode").value, dwell:dwell};
+          mode:($("msgMode").value || "static"), dwell:dwell};
 }
 function sendMessage(){
   var m = composed();
@@ -1290,6 +1312,13 @@ function clearPanel(){
    at a time: three bands at once and the answer depends on which end the
    reader started from, which is exactly how this was got wrong the first
    time. */
+var MODE_LABELS = {scroll:"Scroll", static:"Hold still", marquee:"Marquee",
+                   flash:"Flash", fade:"Fade"};
+function shownMode(mode){
+  var modes = (PANEL && PANEL.modes) || ["static"];
+  var use = modes.indexOf(mode) >= 0 ? mode : modes[0];
+  return MODE_LABELS[use] || use;
+}
 var CTEST = null;
 function colourCheck(step){
   post("/api/matrix/colortest", {step:step}).then(function(j){

@@ -110,6 +110,7 @@ class MatrixRunner:
                                        matrix_module.DEFAULT_PIXEL_LAYOUT),
             "char_uuid": driver.characteristic() or "",
             "capabilities": driver.capabilities,
+            "modes": list(driver.modes),
             "brightness": matrix.get("brightness", 100),
             "playlist": bool(matrix.get("playlist")),
             "default_dwell": matrix.get("default_dwell", 20.0),
@@ -322,7 +323,10 @@ class MatrixRunner:
         # Typed by a person, so it is tried even if the panel has been
         # failing: an error on the screen beats a message that quietly never
         # went anywhere.
-        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message),
+        driver = matrix_module.driver_for(matrix)
+        ok = self._send(message,
+                        "panel: %s" % matrix_module.describe_message(
+                            message, driver.mode_for(message)),
                         hold, manual=True)
         with self._lock:
             error = self._last_error
@@ -346,11 +350,12 @@ class MatrixRunner:
                     break
         message = queue[start % len(queue)]
         dwell = message["dwell"] or matrix.get("default_dwell", 20.0)
-        ok = self._send(message, "panel: %s" % matrix_module.describe_message(message),
-                        dwell, manual=force)
+        driver = matrix_module.driver_for(matrix)
+        described = matrix_module.describe_message(message, driver.mode_for(message))
+        ok = self._send(message, "panel: %s" % described, dwell, manual=force)
         if ok:
             log.info("panel -> %s (holding %.0fs, %d in queue)",
-                     matrix_module.describe_message(message), dwell, len(queue))
+                     described, dwell, len(queue))
         with self._lock:
             error = self._last_error
         return {"sent": ok, "message": message, "error": error}
