@@ -43,10 +43,24 @@ except Exception:                    # pragma: no cover - laptop use
     BleakClient = BleakScanner = None
     HAVE_BLEAK = False
 
+# The same problem elk_scan.py already solved: bleak lives in the service's
+# virtualenv, not in /usr/bin/python3, so the shebang picks an interpreter that
+# cannot see it. Reuse that machinery rather than re-deriving it -- and reuse
+# its message too, which points at the interpreter instead of suggesting an
+# install that has already happened.
+try:
+    from elk_scan import reexec_with_venv, require_bleak as _require_bleak
+except Exception:                    # pragma: no cover - decoding on a laptop
+    reexec_with_venv = None
+    _require_bleak = None
+
 
 def need_bleak():
-    if not HAVE_BLEAK:
-        sys.exit("this needs bleak: pip3 install bleak (or run it on the Pi)")
+    if HAVE_BLEAK:
+        return
+    if _require_bleak is not None:
+        _require_bleak()
+    sys.exit("this needs bleak: pip3 install bleak (or run it on the Pi)")
 
 
 # ------------------------------------------------------------------- scanning
@@ -82,6 +96,7 @@ async def do_scan(args):
     rows.sort(key=lambda r: -(r["rssi"] or -999))
     print("\n%-18s %-26s %5s  %s" % ("ADDRESS", "NAME", "RSSI", "VERDICT"))
     print("-" * 76)
+    hidden = 0
     for row in rows:
         if looks_like_elk(row["name"]):
             verdict = "ELK-BLEDOM controller"
@@ -92,15 +107,25 @@ async def do_scan(args):
         elif args.all:
             verdict = ""
         else:
+            hidden += 1
             continue
         print("%-18s %-26s %5s  %s" % (row["address"], row["name"][:26] or "(no name)",
                                        row["rssi"] if row["rssi"] is not None else "?", verdict))
     candidates = [r for r in rows if r["panel"]]
     print("\n%d device(s) seen, %d look like a text panel." % (len(rows), len(candidates)))
+    # Plenty of these panels advertise as a bare MAC, a hex blob, or a generic
+    # word, and the name filter cannot help with those -- so never let the
+    # default view imply the panel was not there.
+    if hidden:
+        print("%d device(s) hidden by the name filter. If the panel is not "
+              "listed above,\nre-run with --all -- it may be advertising under "
+              "something meaningless." % hidden)
     if not candidates:
-        print("Nothing obvious. Re-run with --all to see everything, then\n"
-              "  ./matrix_probe.py info <address>\n"
-              "on anything that appeared only after you powered the panel on.")
+        print("\nNothing obvious. The reliable way to find an unnamed panel:\n"
+              "  1. power the panel OFF, then: ./matrix_probe.py scan --all\n"
+              "  2. power it ON, wait 10s, then run the same command again\n"
+              "  3. whatever is in the second list and not the first is the panel\n"
+              "Then: ./matrix_probe.py info <address>")
     else:
         print("Next: ./matrix_probe.py info %s" % candidates[0]["address"])
 
@@ -576,6 +601,10 @@ def build_parser():
 
 
 def main(argv=None):
+    # Before parsing, so --help and the offline subcommands still work on a
+    # laptop, and so a re-exec carries the whole command line across.
+    if reexec_with_venv is not None:
+        reexec_with_venv()
     args = build_parser().parse_args(argv)
     try:
         args.run(args)
