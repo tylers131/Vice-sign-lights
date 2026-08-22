@@ -1534,33 +1534,63 @@ the intent for a private network; keep the WPA passphrase to yourself.
 
 ## 8. AP / BLE contention
 
-The Zero W has **one radio** shared between the wifi AP and Bluetooth. They
-coexist by time-slicing, so heavy BLE traffic makes the web UI feel sticky. The
-app already: serializes all BLE, holds at most one connection, and waits
-`inter_device_delay` between devices.
+**Measured on this sign, and it is not a matter of degree.** With the access
+point on 2.4GHz, *every* BLE connection failed:
 
-**Test for contention** — from your phone or a laptop on the AP, ping the Pi
-while a full 12-device scene is applying:
+| Trial | Result |
+| --- | --- |
+| as found (AP on channel 6) | FAILED, 42.6s |
+| after clearing BlueZ's cached entry | FAILED, 42.6s |
+| after restarting bluetooth | FAILED, 42.8s |
+| **with the access point stopped** | **ok, 4.7s** |
+| access point stopped + bluetooth restarted | ok, 4.8s |
 
-```bash
-ping -i 0.2 192.168.4.1        # in one terminal
-curl -X POST http://192.168.4.1/api/scene/apply \
-     -H 'Content-Type: application/json' -d '{"scene":"Vice"}'
+`bluetoothctl` showed why: the link established and was then torn down by this
+end.
+
+```
+hci0 AC:36:4B:32:89:C5 type LE Public connected eir_len 21
+[CHG] Device AC:36:4B:32:89:C5 Connected: yes
+Failed to connect: org.bluez.Error.Failed le-connection-abort-by-local
 ```
 
-Occasional 100–400ms spikes are normal. If you see multi-second stalls or
-dropped packets:
+The Pi has **one antenna** shared between wifi and Bluetooth. Advertising uses
+three channels at 2402, 2426 and 2480 MHz -- the edges of the band -- so
+scanning kept working perfectly and showed the device at -56 dBm. A *connection*
+hops across 37 data channels through the middle of the band, which is exactly
+where a 2.4GHz AP sits. That is why "the scan sees it fine" and "every connect
+times out" are not a contradiction; they are the fingerprint of this fault.
 
-* Raise `inter_device_delay` to `0.6`–`1.0` (slower sweeps, calmer AP).
-* Lower `attempts` to `2` so a dead unit gives up sooner.
-* Move the AP to a quieter channel: `sudo iwlist wlan0 scan | grep -i channel`,
-  then re-run the setup script with a different channel (1, 6 and 11 don't overlap).
-* Disable wifi power save: `sudo iw wlan0 set power_save off`.
+### The fix
 
-Watch it live: `journalctl -u vice-lights -f` and
-`sudo btmon` (contention shows up as connect timeouts, not errors).
+Put the AP on 5GHz. The antenna diplexer passes 2.4 and 5 at the same time, so
+they stop competing:
 
----
+```bash
+sudo ./scripts/setup_ap_hostapd.sh          # defaults to 5GHz, channel 36
+```
+
+Then **prove it on the hardware** rather than trusting that the AP came up:
+
+```bash
+sudo ./scripts/ble_connect_test.sh AC:36:4B:32:89:C5
+```
+
+Every trial should pass, including the ones with the AP running.
+
+The cost is range -- 5GHz carries less far and through less. For a sign you walk
+up to that is a fair trade. If it is not, the alternative is a **USB Bluetooth
+dongle** with its own antenna, which lets the AP stay on 2.4GHz for reach.
+
+`BAND=2.4 sudo ./scripts/setup_ap_hostapd.sh` goes back, knowingly.
+
+### Diagnosing it again
+
+`scripts/ble_connect_test.sh` runs the same connection under five conditions and
+maps each outcome to a different cause: the device refusing connections, a stale
+BlueZ address-type cache, a wedged stack, or this. It restores every service it
+touches, and refuses to stop hostapd if you are connected over the sign's own
+wifi.
 
 ## 9. Operating notes
 

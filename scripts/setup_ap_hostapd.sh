@@ -3,11 +3,40 @@
 # Use this on Bullseye, or on Bookworm if NetworkManager AP mode misbehaves.
 #
 #   sudo ./scripts/setup_ap_hostapd.sh [SSID] [PASSPHRASE] [CHANNEL]
+#   BAND=2.4 sudo ./scripts/setup_ap_hostapd.sh          # force the old band
+#
+# BAND defaults to 5 GHz, and that default is the whole point.
+#
+# The Pi 4 has one antenna shared between wifi and Bluetooth. With the AP on
+# 2.4GHz it sits directly on top of the BLE data channels, and the measured
+# result on this sign was not "slower" -- it was total: every BLE connection
+# established at the link layer and was then aborted by the local host
+# (le-connection-abort-by-local), while scanning kept working perfectly,
+# because advertising uses three channels at the edges of the band and a
+# connection hops through the middle of it. Connects went from 4.7s to a 42s
+# timeout, 100% of the time, purely on whether hostapd was running.
+#
+# On 5GHz the antenna diplexer passes 2.4 (Bluetooth) and 5 (wifi) at once, so
+# they stop fighting. Verify it on the hardware afterwards:
+#
+#   sudo ./scripts/ble_connect_test.sh <a BLE address>
+#
+# The cost is range: 5GHz carries less far and through less. For a sign you
+# walk up to that is a fair trade, and if it is not, the other way out is a USB
+# Bluetooth dongle with its own antenna, which lets the AP stay on 2.4GHz.
 set -euo pipefail
 
 SSID="${1:-ViceSign}"
 PSK="${2:-burningman}"
-CHANNEL="${3:-6}"
+BAND="${BAND:-5}"
+if [[ "$BAND" == "5" ]]; then
+  # UNII-1. Non-DFS, so there is no radar-detection wait before the AP comes
+  # up -- which matters on a machine that has to work from cold with nobody
+  # watching it.
+  CHANNEL="${3:-36}"
+else
+  CHANNEL="${3:-6}"
+fi
 IFACE="${IFACE:-wlan0}"
 COUNTRY="${COUNTRY:-US}"
 IP="${AP_IP:-192.168.4.1}"
@@ -95,15 +124,39 @@ CONF
   systemctl daemon-reload
 fi
 
-echo "==> hostapd config"
+if [[ "$BAND" == "5" ]]; then
+  echo "==> checking $IFACE can do 5GHz"
+  if ! iw phy 2>/dev/null | grep -qE '\* 5[0-9]{3}(\.[0-9]+)? MHz'; then
+    echo "    this adapter reports no 5GHz channels; falling back to 2.4GHz" >&2
+    echo "    (BLE will contend with the AP -- see the note at the top of this" >&2
+    echo "     file, and consider a USB Bluetooth dongle)" >&2
+    BAND=2.4
+    CHANNEL=6
+  fi
+fi
+
+echo "==> hostapd config (${BAND}GHz, channel $CHANNEL)"
+if [[ "$BAND" == "5" ]]; then
+  BAND_CONF="hw_mode=a
+ieee80211n=1
+ieee80211ac=1
+# Regulatory rules come from the beacons of whoever else is around, and on the
+# playa there is nobody else -- so the country code has to be authoritative.
+ieee80211d=1
+# No DFS channels above, so radar detection is not needed and the AP does not
+# have to wait a minute before it starts serving.
+ieee80211h=0"
+else
+  BAND_CONF="hw_mode=g
+ieee80211n=1"
+fi
 cat > /etc/hostapd/hostapd.conf <<CONF
 interface=$IFACE
 driver=nl80211
 ssid=$SSID
 country_code=$COUNTRY
-hw_mode=g
 channel=$CHANNEL
-ieee80211n=1
+$BAND_CONF
 wmm_enabled=1
 auth_algs=1
 ignore_broadcast_ssid=0
@@ -178,7 +231,25 @@ if [[ $FAILED -ne 0 ]]; then
   echo
   echo "The access point did NOT come up cleanly. Nothing above is permanent yet"
   echo "beyond the enabled units -- fix the error, or run ./scripts/ap.sh off."
+  if [[ "$BAND" == "5" ]]; then
+    echo
+    echo "On 5GHz the usual cause is the regulatory domain. Check:"
+    echo "    iw reg get                 # should show country $COUNTRY, not 00"
+    echo "    sudo raspi-config          # Localisation -> WLAN Country"
+    echo "Then re-run. To fall back to the old band, losing the BLE fix:"
+    echo "    BAND=2.4 sudo $0 '$SSID' '$PSK'"
+  fi
   exit 1
+fi
+
+# Which band actually came up. hostapd will silently land somewhere else if the
+# requested channel is not permitted, and the whole point of this change is
+# which band the AP is on -- so read it back rather than assume.
+LIVE="$(iw dev "$IFACE" info 2>/dev/null | awk '/channel/ {print $0}')"
+echo "    $IFACE: ${LIVE:-(could not read the channel)}"
+if [[ "$BAND" == "5" ]] && ! grep -qE '\(5[0-9]{3}' <<<"$LIVE"; then
+  echo "    WARNING: asked for 5GHz but the interface is not on a 5GHz channel."
+  echo "             BLE will still contend with the AP." >&2
 fi
 
 cat <<MSG
@@ -186,6 +257,16 @@ cat <<MSG
 Access point configured. Reboot to be sure it comes up cleanly: sudo reboot
   SSID:       $SSID
   Passphrase: $PSK
+  Band:       ${BAND}GHz, channel $CHANNEL
   Web UI:     http://$IP/
   DHCP range: $NET.10 - $NET.60
+
+Now prove Bluetooth got its band back -- this is the measurement that
+matters, not the fact that the AP is up:
+
+  sudo ./scripts/ble_connect_test.sh <a BLE address from ./matrix_probe.py scan>
+
+Every trial should pass. If the ones with the AP running still fail, the
+contention is not fixed and the fallback is a USB Bluetooth dongle with its
+own antenna.
 MSG
