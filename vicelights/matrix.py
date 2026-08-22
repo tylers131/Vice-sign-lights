@@ -420,10 +420,9 @@ class IPixel(MatrixDriver):
 
     key = "ipixel"
     label = "iPixel Color"
-    # Control commands are confirmed against the protocol docs and the panel's
-    # own acknowledgements. The flag tracks TEXT, which is what a user means
-    # by "does this work".
-    confirmed = False
+    # Confirmed on the sign's own panel: a full-width paint lit it end to end,
+    # and text rendered legibly at 96x16 with the AGRB layout below.
+    confirmed = True
     name_prefixes = ("ipixel", "led_ble", "ledble", "led-ble")
     write_uuid = "0000fa02-0000-1000-8000-00805f9b34fb"
     notify_uuid = "0000fa03-0000-1000-8000-00805f9b34fb"
@@ -516,17 +515,37 @@ class IPixel(MatrixDriver):
 
     # -- text
 
-    def text_frames(self, message: dict) -> list:
+    def text_frames(self, message: dict, previous: dict = None) -> list:
         if self.text_mode == "png":
             return self.png_frames(message)
-        return self.pixel_frames(message)
+        return self.pixel_frames(message, previous=previous)
 
-    def pixel_frames(self, message: dict, fill: bool = None) -> list:
+    def lit_pixels(self, message: dict) -> set:
+        """Which pixels a message turns on."""
+        width, height = self.size()
+        rows = render_bitmap((message or {}).get("text") or "", height=height)
+        on = set()
+        for y in range(height):
+            row = rows[y] if y < len(rows) else []
+            for x in range(min(width, len(row))):
+                if row[x]:
+                    on.add((x, y))
+        return on
+
+    def pixel_frames(self, message: dict, fill: bool = None,
+                     previous: dict = None) -> list:
         """Draw the message a pixel at a time. Nothing here is guessed.
 
-        Only the lit pixels are sent by default. Painting the dark ones too is
-        correct but costs width x height packets -- 512 on a 32x16 panel, which
-        is ten seconds of radio for a four-letter word.
+        Drawing only the lit pixels is cheap but leaves the last message
+        underneath, so two messages end up superimposed. Painting the whole
+        panel every time fixes that and costs width x height packets -- 1536 on
+        this sign's 96x16, over thirty seconds of radio for one word.
+
+        So the default is neither: erase exactly the pixels the previous
+        message lit and this one does not. A message replaced by another of
+        similar length costs about twice its own pixels, not the whole display.
+        ``fill`` forces the expensive full repaint, for when what is on the
+        panel is unknown.
         """
         width, height = self.size()
         colour = parse_color(message.get("color"))
@@ -534,16 +553,16 @@ class IPixel(MatrixDriver):
         if fill is None:
             fill = bool(self.config.get("fill_background", False))
 
-        rows = render_bitmap(message.get("text") or "", height=height)
+        wanted = self.lit_pixels(message)
         frames = self.diy_frames(True)
-        for y in range(height):
-            row = rows[y] if y < len(rows) else []
-            for x in range(width):
-                lit = x < len(row) and row[x]
-                if lit:
-                    frames.append(self.pixel_frame(x, y, colour))
-                elif fill:
-                    frames.append(self.pixel_frame(x, y, background))
+        if fill:
+            stale = {(x, y) for y in range(height) for x in range(width)}
+        else:
+            stale = self.lit_pixels(previous) if previous else set()
+        for x, y in sorted(stale - wanted):
+            frames.append(self.pixel_frame(x, y, background))
+        for x, y in sorted(wanted):
+            frames.append(self.pixel_frame(x, y, colour))
         return frames
 
     def png_frames(self, message: dict) -> list:

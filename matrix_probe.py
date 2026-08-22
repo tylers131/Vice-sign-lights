@@ -397,13 +397,18 @@ async def do_confirm(args):
         ("screen on", "the panel lights up again", driver.power_frames(True), 2.5),
         ("brightness 20%", "it dims", driver.brightness_frames(20), 2.5),
         ("brightness 100%", "it goes back to full", driver.brightness_frames(100), 2.5),
+    ]
+    # Each message erases what the one before it lit. Without this the two
+    # texts end up superimposed on the panel, which reads as a colour fault.
+    first = M.normalize_message({"text": "VICE", "mode": "static",
+                                 "color": "#ff2f6e"})
+    second = M.normalize_message({"text": "BAR IS OPEN", "mode": "scroll",
+                                  "color": "#22d3ee"})
+    steps += [
         ("text VICE", "VICE appears, in pink",
-         driver.text_frames(M.normalize_message({"text": "VICE", "mode": "static",
-                                                 "color": "#ff2f6e"})), 6.0),
-        ("text scrolling", "BAR IS OPEN scrolls past, in cyan",
-         driver.text_frames(M.normalize_message({"text": "BAR IS OPEN",
-                                                 "mode": "scroll",
-                                                 "color": "#22d3ee"})), 8.0),
+         driver.text_frames(first), 6.0),
+        ("text again", "VICE is replaced by BAR IS OPEN, in cyan",
+         driver.text_frames(second, previous=first), 8.0),
     ]
     if args.steps:
         wanted = {int(n) for n in args.steps.split(",") if n.strip().isdigit()}

@@ -113,8 +113,13 @@ class MatrixRunner:
         """
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)
+        # What is on the panel now, so the new message can erase exactly what
+        # the old one lit rather than repainting every pixel or leaving the two
+        # superimposed.
+        with self._lock:
+            previous = dict(self._current) if self._current else None
         try:
-            frames = driver.text_frames(message)
+            frames = driver.text_frames(message, previous=previous)
         except Exception as exc:
             with self._lock:
                 self._last_error = "%s: %s" % (type(exc).__name__, exc)
@@ -177,6 +182,17 @@ class MatrixRunner:
         with self._lock:
             error = self._last_error
         return {"sent": ok, "message": message, "error": error}
+
+    def forget_current(self):
+        """Stop assuming we know what is on the panel.
+
+        After anything that changes the display outside this code -- a blank, a
+        buffer switch, someone using the vendor app -- the remembered message
+        is no longer what is up there, and erasing against it would leave
+        fragments behind.
+        """
+        with self._lock:
+            self._current = None
 
     def clear(self) -> bool:
         """Blank the panel, and mean it.
