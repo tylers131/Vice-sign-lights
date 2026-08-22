@@ -1215,6 +1215,8 @@ async def do_text(args):
     """
     if args.corner or args.saw:
         return await do_text_corner(args)
+    if args.bisect:
+        return await do_text_bisect(args)
     ack = _ack(args)
     from vicelights.matrix import IPixel, BITMAP_ORDERS, TEXT_ANIMATIONS
 
@@ -1282,6 +1284,81 @@ async def do_text(args):
     else:
         print("If that looked wrong, --sweep sends all %d orders in turn."
               % len(BITMAP_ORDERS))
+    return 0
+
+
+async def do_text_bisect(args):
+    """Find the longest message this panel will actually show.
+
+    One packet carries the whole message, so a long message is a long packet:
+    twenty characters at 16x16 is 749 bytes against an MTU of about 247. Every
+    short test that ever appeared on this panel fitted a single write, and
+    every real message did not -- so "the glyphs look wrong" and "nothing
+    happens" were being read off two different situations without noticing.
+
+    This sends the same word repeated to a series of lengths, printing the
+    packet size and the number of writes each one takes, with a pause to look.
+    The longest one that appears is the answer:
+
+      * everything appears -> the panel reassembles across writes, and
+        whatever is left is an encoding question
+      * they stop appearing right where the packet passes the MTU -> it does
+        not reassemble, and no amount of bit-order fiddling will help. The
+        message has to be split into several length-prefixed packets using the
+        continuation byte instead.
+    """
+    from vicelights.matrix import IPixel
+    from vicelights.ble import attribute_mtu, pack_frames
+
+    config = {"width": args.width, "height": args.height,
+              "text_mode": "native", "text_font": args.font,
+              "pixel_layout": args.layout, "chunk": args.chunk}
+    driver = IPixel(config)
+    lengths = [int(n) for n in args.bisect.split(",")] if args.bisect != "auto" \
+        else [1, 2, 4, 6, 8, 12, 16, 24]
+
+    print("Sending the same message at %d lengths, %.0fs apart."
+          % (len(lengths), args.hold))
+    print("Watch the panel and note the LONGEST one that appears.")
+    print()
+
+    replies = []
+    holder = connected(args.address, args.timeout, args.retries)
+    async with holder as client:
+        listening = await _listen_all(client, replies)
+        mtu = attribute_mtu(client)
+        room = max(20, mtu - 3)
+        print("negotiated MTU %d, so %d bytes of payload per write" % (mtu, room))
+        if listening:
+            print("listening on %s" % ", ".join(_short_uuid(u) for u in listening))
+        print()
+        for count in lengths:
+            text = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ" * 4)[:count]
+            frames = driver.native_text_frames(
+                {"text": text, "color": args.color}, order=args.order,
+                animation=0)
+            size = sum(len(f) for f in frames)
+            writes = pack_frames(frames, mtu)
+            print("%2d char%s  %4d bytes  %2d write(s)  %s"
+                  % (count, " " if count == 1 else "s", size, len(writes),
+                     "one write" if len(writes) == 1 else "SPLIT"))
+            replies.clear()
+            for chunk in writes:
+                await client.write_gatt_char(IPixel.write_uuid, chunk,
+                                             response=_ack(args))
+            await asyncio.sleep(args.gap)
+            for uuid, reply in replies:
+                decoded = _decode_reply(reply)
+                print("            <- %s%s" % (reply.hex(" "),
+                                               ("   %s" % decoded) if decoded else ""))
+            if not replies:
+                print("            (no reply)")
+            await asyncio.sleep(args.hold)
+    print()
+    print("The longest one that APPEARED on the panel is the answer.")
+    print("  all of them          -> the panel reassembles across writes")
+    print("  they stop at the point marked SPLIT -> it does not, and the")
+    print("     message needs splitting into several packets instead")
     return 0
 
 
@@ -2003,6 +2080,12 @@ def build_parser():
                         "both the glyph transform and the character order")
     p.add_argument("--saw", default="",
                    help="what the corner test showed, e.g. top-right,left")
+    p.add_argument("--bisect", nargs="?", const="auto", default="",
+                   help="send the message at a series of lengths to find the "
+                        "longest the panel will show; optionally a list, "
+                        "e.g. --bisect 4,8,16")
+    p.add_argument("--chunk", type=int, default=20,
+                   help="bytes per piece when splitting a big packet")
     p.add_argument("--reverse", action="store_true",
                    help="send the characters back to front, if the panel lays "
                         "them out right to left")
