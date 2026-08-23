@@ -412,28 +412,49 @@ first, so a tap between two swatches would pick the left one every time rather
 than the one it was closer to. A direct hit always wins, so a confident tap is
 unchanged.
 
-Two controls also grew, because slop only helps where there is empty screen
-next to a control and these had neighbours: the tab pills (26 to 35 pixels,
-using room the row already reserved) and the target chips on the *Colour* tab,
-which are the only controls that wrap onto a second row.
+Controls grew as well, because slop only helps where there is empty screen
+next to one:
+
+| Row | Was | Now | Where the pixels came from |
+| --- | --- | --- | --- |
+| Tab row | 46px, 26px pills | 64px, 48px pills | 12 from the sign band, 6 from the middle |
+| Pattern row (*Colour*) | 34px | 46px | the tab's own spare room |
+| Target chips (*Colour*) | 34px | 42px | as above; they are the only controls that wrap |
+| Status actions | 40px | 48px | the tab's own spare room |
+| Panel controls | 40px | 48px | as above |
+| Keyboard keys | 38px | 58px | the tab row, which the keyboard now covers |
+
+The sign band went from 122 to 110 pixels, which still leaves 88 pixels of
+card around 70-pixel cups. The middle lost 6, measured against the tightest
+tab -- *Panel* with a full queue of eight messages -- which had 24 to give and
+now has 10.
+
+The keyboard covers the tab row now rather than starting below it. Nothing
+outside the keyboard answers a tap while it is up, so that row was 64 pixels
+of screen a keyboard could be using, and key size is the whole experience
+there. Keys went from 4.4mm to 6.8mm.
 
 What a finger gets now, measured per control with its neighbours allowed for:
 
 | Control | Reachable |
 | --- | --- |
-| keyboard backspace | 5.6mm |
-| target chips | 5.9mm |
+| target chips | 6.0mm |
+| keyboard backspace | 7.1mm |
 | compose buttons | 7.3mm |
-| keyboard keys | 7.4mm |
-| tabs, speed slider | 7.8mm |
-| pattern pills | 8.0mm |
+| speed slider | 7.8mm |
 | colour swatches | 8.9mm |
+| keyboard keys | 9.0mm |
+| pattern pills, ROLL | 9.4mm |
+| tabs | 9.5mm |
 | scene shelf | 12.9mm |
 
-The keyboard sets the floor and cannot be fixed by slop: ten columns across
-800 pixels is a 69-pixel key, and keys touch on every side. Typing a long
-message is what the phone is for -- the panel's keyboard is for a quick line
-at the sign.
+Nothing is below 6mm. The keyboard used to set that floor at 5.6mm and stopped
+once it was given the tab row's height.
+
+Pinning the *Status* action row inside the middle fixed a bug found while
+measuring: the unreachable-device strip only appears when something is down,
+and with it on screen that row ran twelve pixels off the bottom -- which is
+precisely when someone is reaching for **RETRY DOWN**.
 
 `touchtest.py` asserts all of this: that a direct hit still wins, that a miss
 up to 18 pixels out lands on the intended control, that a tap 120 pixels away

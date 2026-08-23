@@ -822,8 +822,14 @@ class Panel:
 
     def measure(self):
         s = self.k
-        self.band = pygame.Rect(0, 0, self.w, int(122 * s))
-        self.tabrow = pygame.Rect(0, self.band.bottom, self.w, int(46 * s))
+        # The tab row carries the most-tapped controls on the screen and had
+        # 46 pixels; on a 4.3-inch panel that is a 4mm target. It gets 64.
+        # Twelve of the eighteen come from the sign band, which had 100 pixels
+        # of card around 70-pixel cups, and six from the middle -- measured
+        # against the tightest tab (Panel, with a full queue) which had 24 to
+        # give.
+        self.band = pygame.Rect(0, 0, self.w, int(110 * s))
+        self.tabrow = pygame.Rect(0, self.band.bottom, self.w, int(64 * s))
         bar_h = int(52 * s)
         self.bar = pygame.Rect(0, self.h - bar_h - int(14 * s), self.w, bar_h)
         self.middle = pygame.Rect(int(16 * s), self.tabrow.bottom,
@@ -1030,9 +1036,9 @@ class Panel:
             group_w += self.f_body.size(label)[0] + int(40 * s)
         # The row is 46 tall and the pills used 34 of it. On a 4.3-inch panel
         # the leftover was costing the most-tapped control on the screen.
-        group = pygame.Rect(int(16 * s), self.tabrow.y + int(1 * s),
-                            group_w + int(8 * s), int(43 * s))
-        self.rounded(self.screen, group, CARD, radius=int(17 * s))
+        group = pygame.Rect(int(16 * s), self.tabrow.y + int(4 * s),
+                            group_w + int(8 * s), int(56 * s))
+        self.rounded(self.screen, group, CARD, radius=group.h // 2)
         x = group.x + int(4 * s)
         self.tabs = []
         for key, label in TABS:
@@ -1298,22 +1304,23 @@ class Panel:
 
         y = self.divider("Pattern", y, self.middle.w)
         x = self.middle.x
+        pattern_h = int(46 * s)
         for pattern in self.pattern_choices(state):
             width = self.f_small.size(pattern["label"])[0] + int(28 * s)
-            pill = pygame.Rect(x, y, width, int(34 * s))
+            pill = pygame.Rect(x, y, width, pattern_h)
             on = pattern["value"] == self.chosen_pattern
             self.rounded(self.screen, pill, over(CYAN, 0.14) if on else CARD,
-                         CYAN if on else over(WHITE, 0.08), radius=int(17 * s))
+                         CYAN if on else over(WHITE, 0.08), radius=pattern_h // 2)
             self.text(self.screen, self.f_small, pattern["label"],
                       CYAN_SOFT if on else INK, center=pill.center)
             self.buttons.append(Button(pill, pattern["label"], "pattern",
                                        pattern["value"]))
             x = pill.right + int(8 * s)
 
-        roll = pygame.Rect(x + int(4 * s), y, int(96 * s), int(34 * s))
+        roll = pygame.Rect(x + int(4 * s), y, int(96 * s), pattern_h)
         on = self.roll > 0
         self.rounded(self.screen, roll, over(ORANGE, 0.14) if on else CARD,
-                     ORANGE if on else over(WHITE, 0.08), radius=int(17 * s))
+                     ORANGE if on else over(WHITE, 0.08), radius=pattern_h // 2)
         self.text(self.screen, self.f_small,
                   "ROLL %.1fs" % self.roll if on else "ROLL off",
                   ORANGE if on else over(INK, 0.6), center=roll.center)
@@ -1427,9 +1434,14 @@ class Panel:
                                strip.centery - self.f_tiny.get_height() // 2))
             y = strip.bottom + int(8 * s)
 
-        # The ones that change something sit apart from the read-only rows.
+        # The ones that change something sit apart from the read-only rows,
+        # and they sit on the bottom of the middle rather than after whatever
+        # came before: the unreachable-device strip appears only when a device
+        # is down, and with it the row ran twelve pixels off the screen --
+        # which is exactly when someone needs RETRY DOWN.
         width = int(150 * s)
-        height = int(40 * s)
+        height = int(48 * s)
+        y = min(y, self.middle.bottom - height)
         # First, because it is the one you want in a hurry: a sweep of
         # controllers that are out of range runs for minutes, and everything
         # else -- a test message, a scene, a retry -- waits behind it.
@@ -1569,7 +1581,7 @@ class Panel:
         y += (chip_h + gap) * min(2, max(1, (len(messages) + per_row - 1) // per_row))
 
         # -- the controls
-        height = int(40 * s)
+        height = int(48 * s)
         y = max(y, self.middle.bottom - height)
         wide = int(140 * s)
         write = pygame.Rect(self.middle.x, y, wide, height)
@@ -1605,8 +1617,14 @@ class Panel:
         """
         s = self.k
         gap = int(5 * s)
-        box = pygame.Rect(self.middle.x, self.middle.y, self.middle.w,
-                          self.h - int(14 * s) - self.middle.y)
+        # Over the tab row as well as the tab body. Nothing outside the
+        # keyboard answers a tap while it is up -- the handler says so -- so
+        # the row was sixty-four pixels of screen a keyboard could be using,
+        # and it is the one part of this UI where key size is the whole
+        # experience.
+        top = self.tabrow.y + int(4 * s)
+        box = pygame.Rect(self.middle.x, top, self.middle.w,
+                          self.h - int(14 * s) - top)
         self.rounded(self.screen, box, CARD_ALT, over(CYAN, 0.3), radius=int(16 * s))
 
         text = self.compose["text"]
