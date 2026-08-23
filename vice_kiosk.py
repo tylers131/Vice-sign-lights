@@ -1028,8 +1028,10 @@ class Panel:
         group_w = 0
         for _key, label in TABS:
             group_w += self.f_body.size(label)[0] + int(40 * s)
-        group = pygame.Rect(int(16 * s), self.tabrow.y + int(2 * s),
-                            group_w + int(8 * s), int(34 * s))
+        # The row is 46 tall and the pills used 34 of it. On a 4.3-inch panel
+        # the leftover was costing the most-tapped control on the screen.
+        group = pygame.Rect(int(16 * s), self.tabrow.y + int(1 * s),
+                            group_w + int(8 * s), int(43 * s))
         self.rounded(self.screen, group, CARD, radius=int(17 * s))
         x = group.x + int(4 * s)
         self.tabs = []
@@ -1258,12 +1260,16 @@ class Panel:
         s = self.k
         y = self.middle.y
         x = self.middle.x
-        chip_h = int(34 * s)
+        # Taller than the pills elsewhere, and a wider gap between wrapped
+        # rows: these chips are the only control on the screen that stacks, so
+        # a neighbour sits directly below and takes the room a near miss would
+        # otherwise use.
+        chip_h = int(42 * s)
         for target, label in self.target_options(state):
             round_chip = len(label) == 1
             width = chip_h if round_chip else self.f_small.size(label)[0] + int(30 * s)
             if x + width > self.middle.right:
-                x, y = self.middle.x, y + chip_h + int(7 * s)
+                x, y = self.middle.x, y + chip_h + int(12 * s)
             chip = pygame.Rect(x, y, width, chip_h)
             on = target == self.target
             self.rounded(self.screen, chip, over(CYAN, 0.16) if on else CHIP_BG,
@@ -1604,8 +1610,8 @@ class Panel:
         self.rounded(self.screen, box, CARD_ALT, over(CYAN, 0.3), radius=int(16 * s))
 
         text = self.compose["text"]
-        field = pygame.Rect(box.x + int(12 * s), box.y + int(12 * s),
-                            box.w - int(24 * s), int(42 * s))
+        field = pygame.Rect(box.x + int(12 * s), box.y + int(10 * s),
+                            box.w - int(24 * s), int(36 * s))
         self.rounded(self.screen, field, BG, LINE, radius=int(10 * s))
         shown = text or "type a message"
         self.text(self.screen, self.f_head2, shown[-34:],
@@ -1616,8 +1622,14 @@ class Panel:
         self.screen.blit(count, (field.right - int(12 * s) - count.get_width(),
                                  field.centery - count.get_height() // 2))
 
-        key_h = int(38 * s)
-        top = field.bottom + int(10 * s)
+        # Fill the box rather than taking a fixed 38 pixels and leaving the
+        # rest empty: on the 4.3-inch panel every pixel of key height is worth
+        # having, and deriving it means another screen size gets it too.
+        top = field.bottom + int(8 * s)
+        action_h = int(42 * s)
+        rows = len(KEY_ROWS)
+        room = box.bottom - int(10 * s) - top - action_h - gap
+        key_h = max(int(30 * s), (room - gap * (rows - 1)) // rows)
         columns = max(len(row) for row in KEY_ROWS)
         key_w = (box.w - int(24 * s) - gap * (columns - 1)) // columns
         for r, row in enumerate(KEY_ROWS):
@@ -1635,7 +1647,7 @@ class Panel:
                     Button(key, char, "key-back" if back else "key", char))
 
         y = top + len(KEY_ROWS) * (key_h + gap)
-        action_h = min(int(42 * s), box.bottom - int(10 * s) - y)
+        action_h = min(action_h, box.bottom - int(10 * s) - y)
         space = pygame.Rect(box.x + int(12 * s), y, int(250 * s), action_h)
         self.rounded(self.screen, space, CARD, LINE_SOFT, radius=int(10 * s))
         self.text(self.screen, self.f_small, "SPACE", MUTED, center=space.center)
@@ -1771,24 +1783,66 @@ class Panel:
 
     # -- input ----------------------------------------------------------------
 
+    # A 4.3-inch panel at 800x480 puts about 8.6 pixels in a millimetre, and a
+    # fingertip covers eight to ten of those millimetres. Measured against
+    # that, every control on this screen was under 9mm across its short side
+    # and the tab pills were 3mm -- which is why they are hard to hit.
+    #
+    # Redrawing everything finger-sized would not fit: the middle of the layout
+    # is only ~230 pixels tall once the sign band, the tab row and the bottom
+    # bar have taken theirs. So the hit area is separated from the picture. A
+    # near miss lands on the nearest control instead of on nothing, which makes
+    # a 26-pixel pill behave like a 62-pixel one without looking like one.
+    #
+    # Nearest-centre rather than padded rectangles on purpose: padding two
+    # neighbours until they overlap makes the winner depend on which was drawn
+    # first, and a tap between two swatches would pick the left one every time
+    # rather than the one it was closer to.
+    TOUCH_SLOP = 18          # pixels at 800x480, about 2.1mm on this panel
+
+    @staticmethod
+    def _gap(rect, position) -> float:
+        """How far a point is from a rectangle. Zero when it is inside."""
+        x, y = position
+        dx = max(rect.left - x, 0, x - rect.right)
+        dy = max(rect.top - y, 0, y - rect.bottom)
+        return (dx * dx + dy * dy) ** 0.5
+
+    def _hit(self, position, buttons, kinds=None):
+        """The control the finger meant, or None if it meant nothing.
+
+        A direct hit always wins, so nothing changes for a confident tap.
+        """
+        candidates = [b for b in buttons
+                      if kinds is None or b.kind in kinds]
+        for button in candidates:
+            if button.rect.collidepoint(position):
+                return button
+        slop = self.TOUCH_SLOP * self.k
+        best, best_gap = None, None
+        for button in candidates:
+            gap = self._gap(button.rect, position)
+            if gap <= slop and (best_gap is None or gap < best_gap):
+                best, best_gap = button, gap
+        return best
+
     def tap(self, position):
         if self.confirm:
             # While a prompt is up nothing else is live, so a stray finger on
             # the tab row cannot dismiss it by navigating away.
-            for button in self.buttons:
-                if button.kind in ("confirm-yes", "confirm-no") \
-                        and button.rect.collidepoint(position):
-                    ask, self.confirm = self.confirm, None
-                    if button.kind == "confirm-yes":
-                        self.system(ask["action"])
+            button = self._hit(position, self.buttons,
+                               kinds=("confirm-yes", "confirm-no"))
+            if button is not None:
+                ask, self.confirm = self.confirm, None
+                if button.kind == "confirm-yes":
+                    self.system(ask["action"])
             return
         if self.compose is not None:
             # Same reasoning as the confirm prompt above: while the keyboard is
             # up it is the only thing that answers, so a stray finger on the
             # tab row cannot navigate away mid-word.
-            for button in self.buttons:
-                if not button.rect.collidepoint(position):
-                    continue
+            button = self._hit(position, self.buttons)
+            if button is not None:
                 if button.kind == "key":
                     if len(self.compose["text"]) < MAX_COMPOSE:
                         self.compose["text"] += button.payload
@@ -1805,17 +1859,16 @@ class Panel:
                         self.send_message(text, queue=button.kind == "compose-queue")
                 return
             return
-        for button in self.tabs:
-            if button.rect.collidepoint(position):
-                self.tab = button.payload
-                return
-        for button in self.actions:
-            if button.rect.collidepoint(position):
-                self.act(button.kind)
-                return
-        for button in self.buttons:
-            if not button.rect.collidepoint(position):
-                continue
+        button = self._hit(position, self.tabs)
+        if button is not None:
+            self.tab = button.payload
+            return
+        button = self._hit(position, self.actions)
+        if button is not None:
+            self.act(button.kind)
+            return
+        button = self._hit(position, self.buttons)
+        if button is not None:
             kind = button.kind
             if kind == "scene":
                 self.apply_scene(button.payload)

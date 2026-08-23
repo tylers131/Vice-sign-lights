@@ -391,6 +391,55 @@ touch does not is fixed by swapping `dtoverlay=vc4-kms-v3d` for
 `dtoverlay=vc4-fkms-v3d` in `/boot/firmware/config.txt`. Try this last: it
 changes how the display comes up as well, so verify the picture again after.
 
+### Tap targets on a small panel
+
+The layout was drawn for a 5-inch panel and now runs on a 4.3-inch one. Same
+800x480, so nothing moved -- but 4.3 inches puts 8.6 pixels in a millimetre
+against the 5-inch panel's 7.3, and a fingertip covers eight to ten
+millimetres. Measured against that, every control on the screen was under 9mm
+across its short side and the tab pills -- the most-tapped thing on it -- were
+3.0mm.
+
+Redrawing everything finger-sized does not fit: the middle of the layout is
+about 230 pixels tall once the sign band, the tab row and the bottom bar have
+taken theirs. So the hit area is separated from the picture. A tap that lands
+outside every control goes to the **nearest** one within 18 pixels, which
+makes a 35-pixel pill behave like a 71-pixel one without looking like one.
+
+Nearest-centre rather than padded rectangles, deliberately: padding two
+neighbours until they overlap makes the winner depend on which was drawn
+first, so a tap between two swatches would pick the left one every time rather
+than the one it was closer to. A direct hit always wins, so a confident tap is
+unchanged.
+
+Two controls also grew, because slop only helps where there is empty screen
+next to a control and these had neighbours: the tab pills (26 to 35 pixels,
+using room the row already reserved) and the target chips on the *Colour* tab,
+which are the only controls that wrap onto a second row.
+
+What a finger gets now, measured per control with its neighbours allowed for:
+
+| Control | Reachable |
+| --- | --- |
+| keyboard backspace | 5.6mm |
+| target chips | 5.9mm |
+| compose buttons | 7.3mm |
+| keyboard keys | 7.4mm |
+| tabs, speed slider | 7.8mm |
+| pattern pills | 8.0mm |
+| colour swatches | 8.9mm |
+| scene shelf | 12.9mm |
+
+The keyboard sets the floor and cannot be fixed by slop: ten columns across
+800 pixels is a 69-pixel key, and keys touch on every side. Typing a long
+message is what the phone is for -- the panel's keyboard is for a quick line
+at the sign.
+
+`touchtest.py` asserts all of this: that a direct hit still wins, that a miss
+up to 18 pixels out lands on the intended control, that a tap 120 pixels away
+still hits nothing, that the nearer of two neighbours wins on both sides of
+the seam, and that no control falls below 5.5mm.
+
 ### If the panel is dark, or ignores touches
 
 Check whether the service is running first: `systemctl status vice-kiosk`. A
