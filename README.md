@@ -24,6 +24,7 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
 | `vicelights/thermometer.py` | DHT11/DHT22 read, on demand. Retries and medians. |
 | `vicelights/schedule.py` | Calendar-driven panel messages: today, tomorrow, temp. |
+| `vicelights/qr.py` | Self-contained QR encoder for the Wi-Fi join code. |
 | `vicelights/matrix.py` | BLE text panel: drivers, fingerprints, 5x7 font. |
 | `vicelights/messages.py` | The message queue and its dwell timer. |
 | `vicelights/web.py` | Flask JSON API. |
@@ -229,6 +230,14 @@ have cleared long before anyone walked over. A marginal supply corrupts data
 silently and announces itself no other way -- it is what turned an apt install
 into a wall of hash mismatches during the build.
 
+The diagnostics row is the verdict; the **System page keeps the log**. A
+sampler on the scheduler thread reads the bits every 20s and records the
+edges -- when under-voltage begins, when it clears -- each with a timestamp
+(the wall clock if it is set, else uptime). `GET /api/pi-power` returns that
+timeline; the phone's System tab and the touchscreen's System tab both show
+it, green when the supply has never dipped, amber once it has, red while it
+is dipping now.
+
 ### Shutting down
 
 **SHUT DOWN PI**, behind a prompt that names the consequence rather than asking
@@ -423,14 +432,16 @@ shows the most urgent fact rather than a hint, in strict order: controllers
 down > rotation hold > the next-scene countdown. Tapping the strip opens
 System.
 
-**System** is the answer to "what is it doing": the job queue with each job's
-state, progress and age -- and the running item's own words, so "unreachable
-4x, skipping for another 112s" finally appears on a screen instead of in a
-JSON array; what is down, with its last error and a TEST DOWN UNITS button;
-the vitals when nothing is wrong; and one row of levers: STOP EVERYTHING,
-CLEAR QUEUE (drops queued jobs, lets the running write finish), RETRY DOWN,
-and POWER… (a reboot/shutdown chooser -- one entry point instead of two
-buttons).
+**System** is the troubleshooting-and-connect tab. Its left is the **Pi power
+log** -- steady/brownout headline plus the timeline of under-voltage events
+(§9) and any controllers not answering. Its right is **Wi-Fi**: the SSID and a
+join QR, tap to enlarge to a full-screen code (§12). One row of levers runs
+along the bottom: STOP EVERYTHING, CLEAR QUEUE (drops queued jobs, lets the
+running write finish), RETRY DOWN, and POWER… (a reboot/shutdown chooser --
+one entry point instead of two buttons). The running job and its progress live
+in the control row on every tab, so the detailed queue list no longer needs a
+home here; the running item's own words -- "unreachable 4x, skipping for
+another 112s" -- ride along there.
 
 **Colour** became four fixed rows -- targets, swatches, patterns, speed --
 that sum to exactly the middle's 228 pixels. The round V/I/C/E chips and Side
@@ -1813,6 +1824,8 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/matrix/clear` | Blank the panel (also stops the cycle) |
 | POST | `/api/matrix/power` | `{on}` |
 | POST | `/api/matrix/brightness` | `{percent}` |
+| GET | `/api/pi-power` | The Pi's under-voltage / throttling log, with timestamps |
+| GET | `/api/wifi` | AP name, passphrase, and a join-QR module matrix |
 | GET/POST | `/api/matrix/messages` | The queue; POST creates or edits one |
 | DELETE | `/api/matrix/messages/<id>` | |
 | POST | `/api/matrix/messages/<id>/send` | Put that one up now |
@@ -2583,3 +2596,48 @@ when there is none or it has gone stale). `POST /api/matrix {"schedule": true}`
 turns the mode on. `tests/test_schedule.py` covers the calendar, the event
 windows, the temperature line and the stable ids -- 25 checks, no clock and no
 hardware.
+
+---
+
+## 12. Joining the Wi-Fi, and the QR encoder
+
+The sign runs its own access point (§4), and until now joining it meant being
+told the name and typing the passphrase. The **System page now shows a QR** --
+point a phone camera at it and the phone joins. It is on both screens: the
+phone's System tab (handy for showing a friend) and, more to the point, the
+**touchscreen's System tab**, so someone standing at the sign with no
+credentials can scan the sign itself. Tapping it there opens a full-screen
+version -- a bigger code reads more reliably across a dark camp, and the
+passphrase is spelled out underneath for a camera that will not focus.
+
+The name and passphrase are read straight from `/etc/hostapd/hostapd.conf` --
+the file the AP is actually serving, so the code can never drift from the real
+network the way a second copy in our own config would. `GET /api/wifi` returns
+the SSID, the passphrase, and the QR as a **module matrix** (rows of 0/1, quiet
+zone included); the touchscreen draws it as pygame rectangles and the phone as
+one SVG, both from that same matrix, so neither re-implements the encoder.
+
+### The encoder
+
+`vicelights/qr.py` is a from-scratch QR encoder -- byte mode, versions 1-10,
+all four error-correction levels, automatic version and mask selection. It is
+pure Python with no dependency, because the playa has no pip and a Wi-Fi join
+code that needs a wheel installed is a join code that does not work. That is
+the same reason the box has its own 5x7 font and its own RTC ioctls.
+
+Writing a QR encoder is a good way to ship something that looks right and does
+not scan, so it is **verified against `segno`** (a spec-compliant library) and
+**decoded with OpenCV** in the tests. The proof that it is not merely
+"approximately a QR code": across hundreds of real Wi-Fi payloads rendered and
+fed back through a decoder, ours and segno's fail at the *identical* rate
+(only where OpenCV's own detector gives up -- a real phone camera does better).
+The core tests -- the Reed-Solomon against the published vector, the payload
+grammar, the fixed matrix structure -- need neither library and run on the Pi;
+the two cross-checks skip cleanly where the libraries are absent, which on the
+sign they are.
+
+Two bugs worth remembering, both caught by the decoder and neither visible to
+the eye: pad codewords must **alternate** `0xEC`/`0x11`, not repeat; and an
+alignment pattern centred on the timing row (versions 7+) must be drawn even
+though the timing modules are already there -- an "already set, skip" guard
+silently dropped them and broke every version from 7 up.

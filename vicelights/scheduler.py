@@ -17,6 +17,7 @@ Two kinds of trigger:
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 import time
 
@@ -253,6 +254,113 @@ class TemperatureSampler:
             self._stop.wait(interval)
 
 
+class PowerMonitor:
+    """A timeline of the Pi's brownouts, kept where a screen can show it.
+
+    The firmware latches under-voltage and throttling bits until reboot, and
+    `/api/diagnostics` already reads them for a one-line "Pi power" verdict.
+    That answers *whether* it happened; it cannot say *when*, or how often. A
+    marginal supply on the playa browns out in gusts -- a dip when the
+    compressor kicks in, a sag at 3am -- and each one risks silent corruption.
+
+    So this samples the bits every SAMPLE_SECONDS and records the edges: the
+    moment under-voltage begins, the moment it clears. The log is what the
+    System page shows. It lives in memory -- the latched bits reset on reboot
+    anyway, so there is nothing older worth persisting -- capped at MAX_EVENTS
+    so a bad night cannot grow it without bound.
+    """
+
+    SAMPLE_SECONDS = 20.0
+    MAX_EVENTS = 40
+
+    # The sticky bits, from `vcgencmd get_throttled`.
+    UNDERVOLT_NOW = 0x1
+    THROTTLED_NOW = 0x4
+    UNDERVOLT_EVER = 0x10000
+    THROTTLED_EVER = 0x40000
+
+    def __init__(self, timekeeper):
+        self.timekeeper = timekeeper
+        self._lock = threading.Lock()
+        self._events = []            # newest last; {kind, at, active}
+        self._active = {}            # kind -> event dict still open
+        self._last_at = 0.0          # monotonic, for the sample interval
+        self._bits = None            # last raw reading, None until first read
+        self._available = None       # is vcgencmd even here?
+
+    @staticmethod
+    def _read_bits():
+        """The throttled bitmask, or None if this is not a Pi."""
+        try:
+            out = subprocess.run(["vcgencmd", "get_throttled"],
+                                 capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            return None
+        if "=" not in out:
+            return None
+        try:
+            return int(out.split("=", 1)[1].strip(), 0)
+        except ValueError:
+            return None
+
+    def _stamp(self):
+        """A human 'when' for an event: the wall clock if set, else uptime."""
+        try:
+            if self.timekeeper.clock_ok():
+                return self.timekeeper.now().strftime("%b %-d %H:%M")
+        except Exception:
+            pass
+        try:
+            with open("/proc/uptime") as handle:
+                secs = int(float(handle.read().split()[0]))
+            h, m = secs // 3600, (secs % 3600) // 60
+            return ("up %dh %02dm" % (h, m)) if h else ("up %dm" % m)
+        except Exception:
+            return "unknown"
+
+    def _log(self, kind):
+        event = {"kind": kind, "at": self._stamp(), "active": True}
+        with self._lock:
+            self._events.append(event)
+            del self._events[:-self.MAX_EVENTS]
+        return event
+
+    def poll(self):
+        """Sample on the scheduler beat; the interval gate keeps it cheap."""
+        now = time.monotonic()
+        if self._bits is not None and now - self._last_at < self.SAMPLE_SECONDS:
+            return
+        self._last_at = now
+        bits = self._read_bits()
+        self._available = bits is not None
+        if bits is None:
+            return
+        for kind, mask in (("under-voltage", self.UNDERVOLT_NOW),
+                           ("throttling", self.THROTTLED_NOW)):
+            on = bool(bits & mask)
+            open_event = self._active.get(kind)
+            if on and open_event is None:
+                self._active[kind] = self._log("%s began" % kind)
+            elif not on and open_event is not None:
+                open_event["active"] = False
+                self._active.pop(kind, None)
+                self._log("%s cleared" % kind)
+        self._bits = bits
+
+    def status(self) -> dict:
+        bits = self._bits or 0
+        with self._lock:
+            events = list(reversed(self._events))   # newest first for a screen
+        return {
+            "available": bool(self._available),
+            "undervoltage_now": bool(bits & self.UNDERVOLT_NOW),
+            "throttled_now": bool(bits & self.THROTTLED_NOW),
+            "undervoltage_ever": bool(bits & self.UNDERVOLT_EVER),
+            "throttled_ever": bool(bits & self.THROTTLED_EVER),
+            "events": events,
+        }
+
+
 class Scheduler:
     def __init__(self, store, worker, timekeeper):
         self.store = store
@@ -271,6 +379,10 @@ class Scheduler:
         # thing" shape, and giving it its own thread would only add a second
         # writer racing for the one radio.
         self.panel = MatrixRunner(store, worker, schedule=self.schedule)
+        # Watches the firmware's under-voltage bits and keeps a timeline of
+        # brownouts for the System page. No thread of its own -- one cheap
+        # sample on the scheduler beat, gated to every 20s.
+        self.power = PowerMonitor(timekeeper)
         self._thread = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -311,6 +423,10 @@ class Scheduler:
             self.panel.tick()
         except Exception:
             log.exception("panel tick failed")
+        try:
+            self.power.poll()
+        except Exception:
+            log.exception("power monitor poll failed")
         if not self.timekeeper.clock_ok():
             return
         self._fire_schedules()

@@ -155,6 +155,8 @@ class Sign:
         self.total = 0
         self.online = False
         self.diagnostics = []
+        self.power = {}               # /api/pi-power on the slow beat
+        self.wifi = {}                # /api/wifi (ssid + qr) on the slow beat
         # The text panel: its settings and queue from /api/matrix on the slow
         # beat, its "showing right now" merged from /api/status on every poll.
         self.panel = {}
@@ -211,6 +213,7 @@ class Sign:
                 "groups": list(self.groups), "devices": list(self.devices),
                 "patterns": list(self.patterns),
                 "diagnostics": list(self.diagnostics),
+                "power": dict(self.power), "wifi": dict(self.wifi),
                 "unreachable": list(self.unreachable),
                 "panel": dict(self.panel), "messages": list(self.messages),
                 "toast": self.toast if time.monotonic() < self.toast_until else "",
@@ -347,6 +350,25 @@ class Sign:
         with self.lock:
             self.diagnostics = data.get("rows") or []
             self.unreachable = data.get("down") or []
+        try:
+            power = _get("/api/pi-power", timeout=6.0)
+            if power.get("ok"):
+                with self.lock:
+                    self.power = power.get("power") or {}
+        except Exception:
+            pass
+        # Wi-Fi is fetched once and kept: the SSID and the QR do not change
+        # while the AP is up, and the QR matrix is the largest thing we poll.
+        with self.lock:
+            have_wifi = bool(self.wifi.get("qr"))
+        if not have_wifi:
+            try:
+                wifi = _get("/api/wifi", timeout=6.0)
+                if wifi.get("ok"):
+                    with self.lock:
+                        self.wifi = wifi
+            except Exception:
+                pass
 
     def _run(self):
         while not self._stop.is_set():
@@ -721,6 +743,8 @@ class Panel:
         # A pending prompt, drawn over the middle third. Nothing that changes
         # the machine happens without one.
         self.confirm = None
+        # The full-screen Wi-Fi join code, when open.
+        self.showing_wifi = False
         # Locked at boot, and again after LOCK_AFTER untouched. Locked means
         # no control writes to the sign. It does NOT mean the screen goes
         # away: reading it without hunting for a phone is the whole reason it
@@ -1348,6 +1372,60 @@ class Panel:
                          (x + width, y + image.get_height() // 2))
         return y + image.get_height() + int(10 * s)
 
+    def draw_qr(self, matrix, rect):
+        """Draw a QR module matrix into `rect`, centred, on a white ground.
+
+        The matrix already carries its own quiet zone, so the only sizing job
+        is picking an integer pixels-per-module that fits -- a fractional one
+        would blur module edges and a phone camera would struggle. White has
+        to be real white and modules real black: a QR reader keys off the
+        contrast, and the sign's dark theme colours would kill it.
+        """
+        if not matrix:
+            return
+        modules = len(matrix)
+        scale = max(1, min(rect.w, rect.h) // modules)
+        side = scale * modules
+        ox = rect.x + (rect.w - side) // 2
+        oy = rect.y + (rect.h - side) // 2
+        pygame.draw.rect(self.screen, (255, 255, 255),
+                         pygame.Rect(ox, oy, side, side))
+        for r, row in enumerate(matrix):
+            for c, bit in enumerate(row):
+                if bit:
+                    pygame.draw.rect(self.screen, (0, 0, 0),
+                                     pygame.Rect(ox + c * scale, oy + r * scale,
+                                                 scale, scale))
+
+    def draw_wifi(self, state):
+        """A full-screen join code: the biggest, most scannable version.
+
+        Opened by tapping the Wi-Fi card. A QR is easier to read the larger it
+        is, and across a dark camp at arm's length the inline one on System is
+        marginal -- this fills the screen. The passphrase is spelled out too,
+        for anyone whose camera will not focus.
+        """
+        s = self.k
+        self.screen.fill(over(WHITE, 0.04))
+        wifi = state.get("wifi") or {}
+        qr = wifi.get("qr") or []
+        side = min(self.h - int(210 * s), self.w // 2)
+        box = pygame.Rect((self.w - side) // 2, int(62 * s), side, side)
+        self.draw_qr(qr, box)
+        self.text(self.screen, self.f_head2, wifi.get("ssid", "") or "Wi-Fi",
+                  INK, center=(self.w // 2, int(40 * s)))
+        pw = wifi.get("password") or ""
+        if pw:
+            self.text(self.screen, self.f_body2, "password:  %s" % pw, CYAN_SOFT,
+                      center=(self.w // 2, box.bottom + int(22 * s)))
+        self.text(self.screen, self.f_small, "point a phone camera at this",
+                  MUTED, center=(self.w // 2, box.bottom + int(44 * s)))
+        close = pygame.Rect(self.w // 2 - int(90 * s), self.h - int(56 * s),
+                            int(180 * s), int(44 * s))
+        self.rounded(self.screen, close, CARD, LINE_SOFT, radius=close.h // 2)
+        self.text(self.screen, self.f_body, "CLOSE", INK, center=close.center)
+        self.buttons.append(Button(close, "CLOSE", "wifi-close"))
+
     def draw_scenes(self, state):
         """One horizontal shelf per group -- animated cards, then solid pills."""
         s = self.k
@@ -1567,109 +1645,94 @@ class Panel:
         right = pygame.Rect(int(500 * s), self.middle.y,
                             self.middle.right - int(500 * s), self.middle.h)
 
-        # -- the queue
-        jobs = state["jobs"]
-        title = "Queue" if len(jobs) <= 3 else "Queue \u00b7 +%d more" % (len(jobs) - 3)
-        y = self.divider(title, left.y, left.w)
-        order = {"running": 0, "queued": 1}
-        jobs = sorted(jobs, key=lambda j: (order.get(j.get("state"), 2),
-                                           j.get("age", 0)))
-        row_h, gap = int(46 * s), int(6 * s)
-        shown = jobs[:3]
-        for job in shown:
-            row = pygame.Rect(left.x, y, left.w, row_h)
-            state_name = job.get("state", "?")
-            dot = {"running": CYAN, "queued": over(INK, 0.4), "done": OLIVE,
-                   "superseded": over(INK, 0.3)}.get(state_name, PINK)
-            self.rounded(self.screen, row,
-                         over(CYAN, 0.07) if state_name == "running" else CARD,
-                         over(CYAN, 0.4) if state_name == "running" else LINE_SOFT,
-                         radius=int(12 * s))
-            pygame.draw.circle(self.screen, dot,
-                               (row.x + int(16 * s), row.centery), int(5 * s))
-            label = (job.get("label") or "?").replace("scene: ", "")
-            while label and self.f_body2.size(label)[0] > row.w - int(170 * s):
-                label = label[:-1]
-            # The running row carries the current item's own words underneath;
-            # everything else centres one line.
-            detail = ""
-            if state_name == "running":
-                for item in job.get("items") or []:
-                    if item.get("status") == "working" and item.get("detail"):
-                        detail = item["detail"]
-                        break
-                    if item.get("status") in ("failed", "skipped") and item.get("detail"):
-                        detail = "%s: %s" % (item.get("name", "?"), item["detail"])
-            if detail:
-                self.text(self.screen, self.f_body2, label, INK,
-                          topleft=(row.x + int(30 * s), row.y + int(6 * s)))
-                while detail and self.f_tiny.size(detail)[0] > row.w - int(44 * s):
-                    detail = detail[:-1]
-                self.text(self.screen, self.f_tiny, detail, MUTED,
-                          topleft=(row.x + int(30 * s), row.y + int(25 * s)))
-            else:
-                self.text(self.screen, self.f_body2, label, INK,
-                          topleft=(row.x + int(30 * s),
-                                   row.centery - self.f_body2.get_height() // 2))
-            done = job.get("done", 0)
-            total = job.get("total", 0)
-            age = int(job.get("age", 0))
-            when = "%dm" % (age // 60) if age >= 60 else "%ds" % age
-            note = "%d/%d \u00b7 %s" % (done, total, when) if total else when
-            failed = job.get("failed", 0)
-            image = self.f_tiny.render(note, True,
-                                       PINK_SOFT if failed else MUTED)
-            self.screen.blit(image, (row.right - int(12 * s) - image.get_width(),
-                                     row.centery - image.get_height() // 2))
-            y = row.bottom + gap
-        if not shown:
-            self.text(self.screen, self.f_small,
-                      "Nothing has run lately.", MUTED,
-                      topleft=(left.x, y + int(6 * s)))
-
-        # -- what is wrong, or the vitals when nothing is
-        down = state["unreachable"]
-        y = self.divider("Not answering" if down else "Vitals", right.y,
-                         right.w, x=right.x)
-        if down:
-            for device in down[:2]:
-                row = pygame.Rect(right.x, y, right.w, int(40 * s))
-                self.rounded(self.screen, row, over(PINK, 0.06),
-                             over(PINK, 0.35), radius=int(10 * s))
-                name = device.get("name", "?").replace("_", " ")
-                self.text(self.screen, self.f_body2, name, PINK_SOFT,
-                          topleft=(row.x + int(12 * s), row.y + int(4 * s)))
-                why = (device.get("error") or "no answer")[:34]
-                self.text(self.screen, self.f_tiny, why, over(PINK_SOFT, 0.7),
-                          topleft=(row.x + int(12 * s), row.y + int(22 * s)))
-                y = row.bottom + int(6 * s)
-            if len(down) > 2:
-                self.text(self.screen, self.f_tiny, "+%d more" % (len(down) - 2),
-                          FAINT, topleft=(right.x + int(4 * s), y))
-                y += int(16 * s)
-            test = pygame.Rect(right.x, y + int(2 * s), right.w, int(48 * s))
-            self.rounded(self.screen, test, over(INK, 0.08), LINE,
-                         radius=test.h // 2)
-            self.text(self.screen, self.f_body, "TEST DOWN UNITS", INK,
-                      center=test.center)
-            self.buttons.append(Button(test, "TEST DOWN UNITS", "retry-down"))
+        # -- left: the Pi's power log, the failure that silently corrupts
+        power = state.get("power") or {}
+        y = self.divider("Pi power", left.y, left.w)
+        now_bad = power.get("undervoltage_now") or power.get("throttled_now")
+        ever = power.get("undervoltage_ever") or power.get("throttled_ever")
+        if not power.get("available"):
+            head, ink = "not a Pi (no vcgencmd)", MUTED
+        elif now_bad:
+            head, ink = "UNDER-VOLTAGE NOW", PINK_SOFT
+        elif ever:
+            head, ink = "brownouts recorded", ORANGE
         else:
-            wanted = ("Bluetooth", "Clock", "Network", "Pi power", "Storage")
-            rows = [r for name in wanted for r in state["diagnostics"]
-                    if r.get("name") == name][:4] or state["diagnostics"][:4]
-            for entry in rows:
-                ok = entry.get("ok")
-                pygame.draw.circle(self.screen, OLIVE if ok else PINK,
-                                   (right.x + int(5 * s), y + int(15 * s)),
-                                   int(4 * s))
-                self.text(self.screen, self.f_small, entry["name"], INK,
-                          topleft=(right.x + int(16 * s), y + int(6 * s)))
-                value = entry.get("value", "")[:22]
-                image = self.f_small.render(value, True,
-                                            INK if ok else PINK_SOFT)
-                self.screen.blit(image, (right.right - image.get_width(),
-                                         y + int(6 * s)))
-                y += int(30 * s)
+            head, ink = "steady — no brownouts", OLIVE
+        card = pygame.Rect(left.x, y, left.w, int(40 * s))
+        fill = (over(PINK, 0.10) if now_bad else
+                over(ORANGE, 0.10) if ever else over(OLIVE, 0.10))
+        edge = (over(PINK, 0.4) if now_bad else
+                over(ORANGE, 0.45) if ever else over(OLIVE, 0.35))
+        self.rounded(self.screen, card, fill, edge, radius=int(10 * s))
+        self.text(self.screen, self.f_body2, head, ink,
+                  topleft=(card.x + int(12 * s),
+                           card.centery - self.f_body2.get_height() // 2))
+        note = "latched until reboot" if ever or now_bad else "checked every 20s"
+        img = self.f_tiny.render(note, True, MUTED)
+        self.screen.blit(img, (card.right - int(12 * s) - img.get_width(),
+                               card.centery - img.get_height() // 2))
+        y = card.bottom + int(8 * s)
+
+        events = power.get("events") or []
+        if events:
+            for event in events[:3]:
+                dot = PINK_SOFT if "began" in event.get("kind", "") else OLIVE
+                pygame.draw.circle(self.screen, dot,
+                                   (left.x + int(5 * s), y + int(9 * s)), int(4 * s))
+                self.text(self.screen, self.f_small, event.get("kind", ""), INK,
+                          topleft=(left.x + int(16 * s), y))
+                when = self.f_tiny.render(event.get("at", ""), True, MUTED)
+                self.screen.blit(when, (left.right - when.get_width(), y + int(2 * s)))
+                y += int(24 * s)
+            if len(events) > 3:
+                self.text(self.screen, self.f_tiny, "+%d earlier" % (len(events) - 3),
+                          FAINT, topleft=(left.x + int(16 * s), y))
+                y += int(18 * s)
+        elif power.get("available"):
+            self.text(self.screen, self.f_small,
+                      "Nothing logged. A dip would show here with its time.",
+                      MUTED, topleft=(left.x, y + int(2 * s)))
+            y += int(24 * s)
+
+        # Controllers that are not answering keep their spot below power -- the
+        # RETRY DOWN lever acts on them.
+        down = state["unreachable"]
+        if down:
+            names = ", ".join(d.get("name", "?").replace("_", " ") for d in down[:3])
+            if len(down) > 3:
+                names += " +%d" % (len(down) - 3)
+            self.text(self.screen, self.f_tiny,
+                      "%d not answering: %s" % (len(down), names),
+                      PINK_SOFT, topleft=(left.x, y + int(6 * s)))
+
+        # -- right: the Wi-Fi name and a join QR, tap to enlarge
+        wifi = state.get("wifi") or {}
+        y = self.divider("Wi-Fi", right.y, right.w, x=right.x)
+        ssid = wifi.get("ssid") or ""
+        if ssid:
+            self.text(self.screen, self.f_head2, ssid[:18], CYAN_SOFT,
+                      topleft=(right.x, y))
+            y += int(26 * s)
+            qr = wifi.get("qr") or []
+            if qr:
+                # Stop short of the lever row (48 tall at the foot) and the
+                # one-line hint under the code.
+                side = min(right.w, self.middle.bottom - int(78 * s) - y)
+                box = pygame.Rect(right.x, y, side, side)
+                self.draw_qr(qr, box)
+                self.buttons.append(Button(box, "wifi", "wifi"))
+                self.text(self.screen, self.f_tiny, "scan to join · tap to enlarge",
+                          MUTED, topleft=(right.x, box.bottom + int(6 * s)))
+            else:
+                self.text(self.screen, self.f_small,
+                          "No passphrase found;", MUTED, topleft=(right.x, y))
+                self.text(self.screen, self.f_small,
+                          "join %s by hand." % ssid[:16], MUTED,
+                          topleft=(right.x, y + int(20 * s)))
+        else:
+            self.text(self.screen, self.f_small, "Wi-Fi name unknown", MUTED,
+                      topleft=(right.x, y))
+
 
         # -- the levers, pinned to the bottom of the middle
         height = int(48 * s)
@@ -2140,6 +2203,12 @@ class Panel:
         self.confirm = None
 
     def tap(self, position):
+        if self.showing_wifi:
+            # The whole screen is the join code; any tap dismisses it. It shows
+            # no secret the sign is not already broadcasting, so this needs no
+            # unlock -- it stays readable while the panel is locked.
+            self.showing_wifi = False
+            return
         if self.locked:
             # Nothing that writes to the sign answers while locked. Two things
             # still do: the unlock bar, and the tabs -- looking is not
@@ -2154,6 +2223,12 @@ class Panel:
             button = self._hit(position, self.tabs)
             if button is not None:
                 self.tab = button.payload
+                return
+            # The Wi-Fi join code is public -- the AP broadcasts the SSID and
+            # the QR is there to be scanned -- so enlarging it needs no unlock.
+            button = self._hit(position, self.buttons, kinds=("wifi",))
+            if button is not None:
+                self.showing_wifi = True
                 return
             # Say why, rather than letting a dead tap read as a dead panel.
             self.sign.say("Locked \u2014 touch UNLOCK first")
@@ -2290,6 +2365,8 @@ class Panel:
                                  "danger": True}]}
             elif kind == "activity":
                 self.tab = "system"
+            elif kind == "wifi":
+                self.showing_wifi = True
             elif kind == "clear-queue":
                 self.act("clear-queue")
             return
@@ -2577,7 +2654,9 @@ class Panel:
             state = self.sign.snapshot()
             self.buttons = []
             self.screen.fill(BG)
-            if state["online"] and (state["scenes"] or state["devices"]):
+            if self.showing_wifi:
+                self.draw_wifi(state)
+            elif state["online"] and (state["scenes"] or state["devices"]):
                 self.draw_preview(state)
                 # Not while the keyboard is up. The compose box covers this
                 # row, and a control drawn under an overlay is still live:

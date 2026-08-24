@@ -20,6 +20,7 @@ from flask import Flask, jsonify, render_template, request
 
 from . import matrix
 from . import protocol
+from . import qr as qr_module
 from .ble import describe_state
 from .config import ConfigError, normalize_address
 
@@ -175,6 +176,40 @@ def _addresses_from_ip_command() -> list:
     return addresses
 
 
+def read_wifi() -> dict:
+    """The access point's SSID and passphrase, for showing a join QR.
+
+    Read straight from hostapd's own config -- that is the file the AP is
+    actually serving, so it cannot drift from reality the way a second copy in
+    our own config would. Falls back to the live SSID from `iw` when hostapd
+    is not the thing running the AP (a NetworkManager setup, say); without the
+    passphrase there is no join code, only the name.
+    """
+    ssid, password, security = "", "", "WPA"
+    try:
+        with open("/etc/hostapd/hostapd.conf", "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if line.startswith("ssid="):
+                    ssid = line[5:]
+                elif line.startswith("wpa_passphrase="):
+                    password = line[15:]
+                elif line.startswith("wpa=") and line[4:] == "0":
+                    security = "nopass"
+    except OSError:
+        pass
+    if not ssid:
+        out = _probe(["iw", "dev", "wlan0", "info"])
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("ssid "):
+                ssid = line[5:].strip()
+                break
+    if not password:
+        security = "nopass"
+    return {"ssid": ssid, "password": password, "security": security}
+
+
 def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
     app = Flask(__name__)
     app.config["JSON_SORT_KEYS"] = False
@@ -281,6 +316,46 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         return jsonify({"ok": True, "action": action,
                         "message": "shutting down" if action == "shutdown"
                         else "rebooting"})
+
+    @app.route("/api/pi-power")
+    def api_pi_power():
+        """The Pi's power timeline: under-voltage and throttling, with when.
+
+        The one-line verdict is on `/api/diagnostics`; this is the log behind
+        it. Sampled on the scheduler thread, so a request here just reads what
+        was already collected -- it never shells out to vcgencmd itself.
+        """
+        return jsonify({"ok": True, "power": scheduler.power.status()})
+
+    @app.route("/api/wifi")
+    def api_wifi():
+        """The AP's name and a join QR, so a phone can hop on by pointing at it.
+
+        The QR is returned as its module matrix -- a list of 0/1 rows, quiet
+        zone included -- so the touchscreen (pygame) and the phone (a grid of
+        divs) draw the same code without either re-implementing the encoder.
+        The passphrase rides along too: it is on a screen bolted to the sign
+        for exactly the people meant to have it, and the QR encodes it anyway.
+        """
+        info = read_wifi()
+        payload = qr_module.wifi_payload(info["ssid"], info["password"],
+                                         info["security"]) if info["ssid"] else ""
+        matrix = []
+        if info["ssid"]:
+            try:
+                matrix = qr_module.wifi_qr(info["ssid"], info["password"],
+                                           info["security"])
+            except Exception as exc:
+                log.warning("could not build the wifi QR: %s", exc)
+        return jsonify({
+            "ok": True,
+            "ssid": info["ssid"],
+            "password": info["password"],
+            "security": info["security"],
+            "joinable": bool(info["ssid"] and matrix),
+            "payload": payload,
+            "qr": matrix,
+        })
 
     @app.route("/healthz")
     def healthz():

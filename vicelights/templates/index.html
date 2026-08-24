@@ -476,6 +476,21 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 <!-- ------------------------------------------------------------- system -->
 <section id="tab-system">
   <div class="card">
+    <h2>Wi-Fi</h2>
+    <p class="muted">The sign's own network. Point a camera at the code to join,
+      or read the name and password below.</p>
+    <div id="wifiBox" class="muted">loading...</div>
+  </div>
+  <div class="card">
+    <h2>Pi power</h2>
+    <p class="muted">Under-voltage and throttling, logged with the time. A
+      marginal supply corrupts data silently; this is the paper trail.</p>
+    <div id="powerBox" class="muted">loading...</div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" onclick="loadPower()">Refresh</button>
+    </div>
+  </div>
+  <div class="card">
     <h2>Checks</h2>
     <p class="muted">The things that used to need a laptop and an SSH session.
       At the sign there is a phone and nothing else.</p>
@@ -545,7 +560,7 @@ Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(b)
       function(x){ x.classList.remove("on"); });
     b.classList.add("on");
     $("tab-"+b.dataset.tab).classList.add("on");
-    if(b.dataset.tab==="system"){ loadLog(); loadConfig(); }
+    if(b.dataset.tab==="system"){ loadLog(); loadConfig(); loadWifi(); loadPower(); }
     if(b.dataset.tab==="message"){ loadState(); previewMessage(); loadScan(); }
     if(b.dataset.tab==="system"){ loadChecks(); }
   };
@@ -1465,6 +1480,68 @@ function addSchedule(){
 function deleteSchedule(id){ del("/api/schedules/"+id).then(loadState); }
 
 /* -------------------------------------------------------------- system */
+
+/* The Wi-Fi join code. The server sends the QR as a module matrix -- the same
+   one the touchscreen draws -- so the phone never re-implements the encoder.
+   Rendered as one SVG of black squares on white: crisp at any size, and a
+   camera reads it straight off the screen (handy for showing a friend). */
+function svgQr(matrix){
+  var n = matrix.length, rects = "";
+  for(var r=0;r<n;r++){ for(var c=0;c<n;c++){ if(matrix[r][c])
+    rects += '<rect x="'+c+'" y="'+r+'" width="1" height="1"/>'; } }
+  return '<svg viewBox="0 0 '+n+' '+n+'" width="220" height="220" '
+    + 'style="background:#fff;border-radius:6px" shape-rendering="crispEdges">'
+    + '<g fill="#000">'+rects+'</g></svg>';
+}
+function loadWifi(){
+  get("/api/wifi").then(function(j){
+    if(!j.ok){ $("wifiBox").textContent = "could not read the Wi-Fi settings"; return; }
+    if(!j.ssid){ $("wifiBox").textContent = "Wi-Fi name unknown (no hostapd config found)"; return; }
+    var html = '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">';
+    if(j.qr && j.qr.length){ html += '<div>'+svgQr(j.qr)+'</div>'; }
+    html += '<div><div style="font-size:20px;font-weight:700">'+esc(j.ssid)+'</div>';
+    if(j.password){ html += '<div class="meta" style="margin-top:4px">password: <b>'
+      + esc(j.password)+'</b></div>'; }
+    else { html += '<div class="meta" style="margin-top:4px">open network</div>'; }
+    html += '<div class="meta" style="margin-top:6px">'+esc(j.security)+'</div></div></div>';
+    $("wifiBox").innerHTML = html;
+  }).catch(function(){ $("wifiBox").textContent = "could not reach the sign"; });
+}
+
+/* The Pi's power log. Green when it has never dipped, amber once it has, red
+   while it is dipping now. The events carry their own timestamps from the
+   server. */
+function loadPower(){
+  get("/api/pi-power").then(function(j){
+    if(!j.ok){ $("powerBox").textContent = "unavailable"; return; }
+    var p = j.power || {};
+    if(!p.available){ $("powerBox").innerHTML =
+      '<span class="pill">n/a</span> not a Pi, or vcgencmd is missing'; return; }
+    var now = p.undervoltage_now || p.throttled_now;
+    var ever = p.undervoltage_ever || p.throttled_ever;
+    var head;
+    if(now) head = '<span class="pill bad">UNDER-VOLTAGE NOW</span> the supply is sagging';
+    else if(ever) head = '<span class="pill warn">brownouts recorded</span> steady right now';
+    else head = '<span class="pill">steady</span> no brownouts since boot';
+    var html = '<div>'+head+'</div>';
+    var events = p.events || [];
+    if(events.length){
+      html += '<div style="margin-top:10px">';
+      events.forEach(function(e){
+        var began = (e.kind||"").indexOf("began") >= 0;
+        html += '<div class="item" style="justify-content:space-between">'
+          + '<span><span class="dot '+(began?"bad":"ok")+'"></span>'+esc(e.kind)+'</span>'
+          + '<span class="meta">'+esc(e.at)+'</span></div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<p class="muted" style="margin:8px 0 0">Nothing logged -- a dip '
+        + 'would appear here with its time.</p>';
+    }
+    $("powerBox").innerHTML = html;
+  }).catch(function(){ $("powerBox").textContent = "could not reach the sign"; });
+}
+
 /* Diagnostics, run on the Pi and read on the phone. The server picks the
    command from a fixed table -- the name is all that crosses the wire. */
 var CHECK_TIMER = null;
