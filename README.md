@@ -22,6 +22,7 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/config.py` | JSON config store (atomic writes). |
 | `vicelights/scheduler.py` | Pure-Python schedules + relative timers. |
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
+| `vicelights/thermometer.py` | DHT11/DHT22 read, on demand. Retries and medians. |
 | `vicelights/matrix.py` | BLE text panel: drivers, fingerprints, 5x7 font. |
 | `vicelights/messages.py` | The message queue and its dwell timer. |
 | `vicelights/web.py` | Flask JSON API. |
@@ -1933,6 +1934,87 @@ Two integrations make it stick:
 `/api/time` reports `rtc: true` when the device is present, the Timing tab's
 clock source reads "hardware clock" after a boot that used it, and
 `preflight.sh` warns when no RTC is fitted.
+
+---
+
+## 9c. Temperature
+
+`vicelights/thermometer.py` reads a DHT11 (or DHT22/AM2302 -- same three
+wires, better resolution) on demand, for putting the temperature on the panel.
+One blocking call, no thread, no history.
+
+```python
+from vicelights.thermometer import Thermometer
+
+probe = Thermometer(pin=13)          # BCM 13 = physical pin 33
+reading = probe.read()               # blocks up to ~10s
+if reading:
+    text = "%.0fF" % reading.fahrenheit
+```
+
+**Wire VCC to 3.3V, not 5V.** The data line idles at whatever VCC is through
+its pull-up, so a 5V-powered sensor puts 5V on a 3.3V-only GPIO. That is the
+ordinary way people kill a Pi header.
+
+```bash
+sudo /opt/vice-sign-lights/venv/bin/pip install adafruit-circuitpython-dht
+```
+
+Not in `requirements.txt`: it pulls in Blinka, which is Pi-only and heavy, for
+a sensor the sign works fine without. The driver is imported inside the read,
+so everything here installs and tests on a machine with no GPIO.
+
+### Why one read is five reads
+
+The DHT protocol is bit-banged microsecond timing on a single wire. On a
+non-realtime kernel any scheduler hiccup mid-frame corrupts the checksum, and
+**losing a fifth of reads is an ordinary day.** That is a footnote when you
+sample every five seconds. It is the whole problem at two samples an hour: one
+unlucky read is a blank panel for thirty minutes.
+
+So a single `read()` tries up to five times, ~2s apart -- the DHT11's own
+sampling period is 1-2s, so retrying faster just fails again -- and stops early
+at three good reads. It returns the **median**, not the first: DHT11 resolution
+is whole degrees Celsius, so consecutive reads dither between two integers, and
+a median of three flattens that as well as outvoting a bad frame that passed
+its checksum by luck. `reading.samples` says how many survived.
+
+### Stale readings
+
+A failed read returns `None`. It never quietly hands back the last value as if
+it were current -- a stale number that looks live is worse than dashes. If the
+display wants to keep showing the previous one, `probe.last` is there with
+`.age()` and `.stale()` so it can be marked as old and blanked once it stops
+being worth showing.
+
+Nothing here raises. A missing driver, an unwired pin or a dead sensor logs
+once -- not twice an hour until the burn ends -- and returns `None`. Nothing
+driving an LED display should die on a thermometer.
+
+### If reads fail on hardware
+
+"Cannot determine SOC peripheral base address" means Blinka fell back to
+RPi.GPIO, which pokes `/dev/mem` and does not work on current kernels. The
+warning says so, with the fix:
+
+```bash
+pip uninstall -y RPi.GPIO && pip install rpi-lgpio
+```
+
+Same import name, same API. (The device is built with `use_pulseio=False`,
+which sidesteps the other trap: the pulseio path wants `/dev/pulseio`, absent
+on stock Bookworm/Trixie, and its absence explodes at construction rather than
+failing a read. That flag also means no libgpiod package is needed.)
+
+### Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+35 tests, no hardware, no sleeping: `Thermometer` takes an injectable reader
+and an injectable sleep, so the retry paths that take ten seconds on a Pi take
+milliseconds here.
 
 ## 10. The text panel
 

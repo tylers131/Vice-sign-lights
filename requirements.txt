@@ -14,3 +14,13 @@
 bleak>=0.22,<4           # BLE client
 Flask>=2.2,<4            # pure Python
 waitress>=2.1,<4         # pure-Python WSGI server, steadier than the dev server
+
+# OPTIONAL, deliberately not listed above: the DHT temperature sensor.
+#
+#   pip install adafruit-circuitpython-dht
+#
+# It pulls in Blinka, which is Pi-only and heavy, for a sensor the sign works
+# perfectly well without -- vicelights/thermometer.py imports the driver inside
+# the read, so everything installs and tests without it. If reads then fail
+# with "Cannot determine SOC peripheral base address", Blinka has fallen back
+# to RPi.GPIO: pip uninstall -y RPi.GPIO && pip install rpi-lgpio. See §9c.

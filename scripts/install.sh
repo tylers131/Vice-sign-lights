@@ -16,7 +16,7 @@ apt-get install -y python3 python3-venv python3-pip bluez
 
 echo "==> copying $SRC_DIR -> $APP_DIR"
 mkdir -p "$APP_DIR" "$CONF_DIR" "$STATE_DIR"
-for item in vicelights elk_scan.py matrix_probe.py requirements.txt config.example.json README.md systemd scripts; do
+for item in vicelights elk_scan.py matrix_probe.py requirements.txt config.example.json README.md systemd scripts tests; do
   [[ -e "$SRC_DIR/$item" ]] && cp -r "$SRC_DIR/$item" "$APP_DIR/"
 done
 
