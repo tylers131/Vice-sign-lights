@@ -131,6 +131,8 @@ class Sign:
         self.playing = ""
         self.rotation = {}
         self.busy = False
+        self.jobs = []                # every live job, newest first
+        self.battery = {}             # the runtime budget, from /api/status
         self.queued = 0
         self.job = None
         self.down = 0
@@ -185,6 +187,7 @@ class Sign:
                 "scenes": list(self.scenes), "playing": self.playing,
                 "rotation": dict(self.rotation), "busy": self.busy,
                 "queued": self.queued, "job": self.job,
+                "jobs": list(self.jobs), "battery": dict(self.battery),
                 "done": self.down, "total": self.total, "online": self.online,
                 "pending": self.pending,
                 "devices_total": self.devices_total, "devices_bad": self.devices_bad,
@@ -259,14 +262,16 @@ class Sign:
         if not status.get("ok"):
             return
         rotation = status.get("rotation") or {}
+        # Everything live, not just the first: the queue view lists the lot,
+        # and a cancel button needs to say how much it is about to throw away.
+        live = [j for j in (status.get("jobs") or [])
+                if j.get("state") in ("running", "queued")]
         job, done, total = None, 0, 0
-        for candidate in status.get("jobs") or []:
-            if candidate.get("state") in ("running", "queued"):
-                job = candidate
-                items = candidate.get("items") or []
-                total = len(items)
-                done = sum(1 for i in items if i.get("status") and i["status"] != "pending")
-                break
+        if live:
+            job = live[0]
+            items = job.get("items") or []
+            total = len(items)
+            done = sum(1 for i in items if i.get("status") and i["status"] != "pending")
         with self.lock:
             self.online = True
             self.rotation = rotation
@@ -274,6 +279,8 @@ class Sign:
             self.busy = bool(status.get("busy"))
             self.queued = int(status.get("queued") or 0)
             self.job, self.down, self.total = job, done, total
+            self.jobs = live
+            self.battery = status.get("battery") or {}
             devices = status.get("devices") or {}
             self.devices_total = len(devices)
             self.devices_bad = sum(1 for d in devices.values() if d.get("reachable") is False)
