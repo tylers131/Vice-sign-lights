@@ -181,7 +181,7 @@ Built from the Claude Design handoff (`VICE Panel.dc.html`, boards 2a-2c), at
 the 800x480 the boards are drawn at. Everything is spaced from that, scaled by
 one factor, so another panel size carries over.
 
-A **fixed shell**: the sign preview, the pill tabs and the bottom bar are
+A **fixed shell**: the sign preview, the control row and the tab row are
 identical on every tab, and only the middle third changes. Nothing scrolls
 vertically -- no control is ever below a fold.
 
@@ -190,9 +190,9 @@ vertically -- no control is ever below a fold.
   zones get a ring, so the sign itself says what the next colour will land on,
   and "colour just the C" needs no chip. Picking a chip clears the shapes and
   vice versa -- they are two views of one choice.
-- **The queue is in the shell**, beside the tabs, so every tab shows what the
-  sign is doing: which job, how far through, and how many are waiting. A sweep
-  is ~30s; without it a tap looks like nothing happened.
+- **The queue is in the shell**, in the control row under the sign, so every
+  tab shows what the sign is doing: which job, how far through, and how many
+  are waiting. A sweep is ~30s; without it a tap looks like nothing happened.
 - **The preview is the sign, not a diagram.** Each letter, cup and straw is
   drawn in the colour that controller is actually showing. That needed a
   backend change: the worker records what it successfully wrote to each device
@@ -204,7 +204,8 @@ vertically -- no control is ever below a fold.
   track, all in one view.
 - **LIGHTS** is a six-across grid; a controller that is not answering gets a
   dashed outline as well as red text, so it reads without relying on hue.
-- The bottom bar is OFF (scoped to the target), SURPRISE ME, and ROTATE.
+- The control row under the sign is OFF (scoped to the target), SURPRISE ME
+  and ROTATE -- or, mid-sweep, the job and a **STOP**.
 
 ### The Status tab
 
@@ -400,7 +401,8 @@ and make it stop*. The second edition reshapes the screen around exactly
 those, after a design review that scored three competing layouts against the
 failures that actually happened at this sign.
 
-**Four tabs, down from five** -- Scenes, Colour, Panel, System. Lights is
+**Four tabs, down from five** -- Scenes, Colour, LED Text Display, System.
+Lights is
 gone: the sign preview in the header *is* the per-device picker (tap a
 letter, a cup, a straw), and device health moved to System next to the queue
 it affects. Status grew into System, the troubleshooting tab.
@@ -470,7 +472,7 @@ next to one:
 
 | Row | Was | Now | Where the pixels came from |
 | --- | --- | --- | --- |
-| Tab row | 46px, 26px pills | 64px, 48px pills | 12 from the sign band, 6 from the middle |
+| Tab row | 46px, 26px pills | 72px full-width pills, 19pt | see "third edition" below |
 | Pattern row (*Colour*) | 34px | 46px | the tab's own spare room |
 | Target chips (*Colour*) | 34px | 42px | as above; they are the only controls that wrap |
 | Status actions | 40px | 48px | the tab's own spare room |
@@ -487,19 +489,19 @@ outside the keyboard answers a tap while it is up, so that row was 64 pixels
 of screen a keyboard could be using, and key size is the whole experience
 there. Keys went from 4.4mm to 6.8mm.
 
-What a finger gets now, measured per control with its neighbours allowed for:
+What a finger gets, measured per control with its neighbours allowed for:
 
 | Control | Reachable |
 | --- | --- |
-| target chips | 6.0mm |
+| speed slider | 6.3mm |
+| ROLL | 7.0mm |
 | keyboard backspace | 7.1mm |
 | compose buttons | 7.3mm |
-| speed slider | 7.8mm |
-| colour swatches | 8.9mm |
+| target chips | 8.4mm |
+| STOP, System actions | 8.4mm |
 | keyboard keys | 9.0mm |
-| pattern pills, ROLL | 9.4mm |
-| tabs | 9.5mm |
-| scene shelf | 12.9mm |
+| colour swatches | 9.0mm |
+| tabs | 12.6mm |
 
 Nothing is below 6mm. The keyboard used to set that floor at 5.6mm and stopped
 once it was given the tab row's height.
@@ -513,6 +515,89 @@ precisely when someone is reaching for **RETRY DOWN**.
 up to 18 pixels out lands on the intended control, that a tap 120 pixels away
 still hits nothing, that the nearer of two neighbours wins on both sides of
 the seam, and that no control falls below 5.5mm.
+
+### The layout, third edition: navigation at the bottom, and a lock
+
+Two more things came out of using it at the sign.
+
+**The tabs and the action row traded places.** The tabs are now the bottom
+row and OFF / SURPRISE ME / ROTATE sit directly under the sign preview. A
+thumb reaches the bottom of a panel this size without the hand covering the
+preview, and every phone in every pocket already puts navigation at the
+bottom, so nobody has to be told which end to look at. The action row also
+ends up next to the thing it talks about.
+
+| | Was | Now |
+| --- | --- | --- |
+| Tab row | top, 64px, 26-48px pills, 13pt | bottom, 72px full-width pills, 19pt |
+| Action row | bottom, 52px | top, 56px |
+| Tab reach | 9.5mm | 12.6mm |
+
+Pills are sized to their own text plus an equal share of the leftover, rather
+than four equal cells. `LED Text Display` is three times the width of
+`Colour`; equal cells would be sized for the longest label and leave that one
+nearly touching its own edges while the other three sat in acres of nothing.
+
+The middle keeps its 228 pixels **to the pixel** -- the Colour tab is four
+fixed rows that come to exactly that -- so the eight pixels the action row
+gives up and the eight the tab row takes come from each other, not from
+content. The last two came from the margin under the tab row, which is now
+2px: a thumb aimed at the bottom edge of a panel wants something there, and
+spending that margin here keeps a full 12 pixels of clearance between the
+tabs and the row above, which is what stops the speed slider's touch target
+from being crowded.
+
+**The control row has three states**, because each wants all 800 pixels:
+
+- *Idle*: OFF, SURPRISE ME, ROTATE.
+- *Mid-sweep*: the job, its progress, and a 150x48 **STOP** -- 56% more
+  button than the old 96x48. The three actions stand down while this is up,
+  deliberately: all three queue more radio work, and mid-sweep that is the
+  wrong answer to every question. STOP sits at the right, where ROTATE was
+  rather than where OFF was, so a finger already travelling toward OFF when a
+  sweep starts lands on dead label instead of throwing the queue away.
+- *Locked*: a single **TOUCH TO UNLOCK** bar, carrying the running job too.
+
+**`Panel` became `LED Text Display`.** On a sign whose other twelve devices
+are panels of a sort, `Panel` named the thing by what the code calls it
+instead of by what you would point at.
+
+### The lock
+
+The screen is bolted to a sign in a crowd at the height of a passing hand,
+and every control on it writes to the lights. It now starts locked and
+relocks after **90 seconds** untouched.
+
+Locked means *no control writes to the sign*. It does not mean the screen
+goes away, and that distinction is the whole design: the sign preview, the
+battery clock, the health chips and **all four tabs stay live**, because the
+failure this panel exists to catch is noticing at 3am that something is
+wrong, and a screen that must be unlocked before it will tell you anything is
+a screen nobody looks at. Moving between tabs changes nothing about the sign,
+so looking is free; only acting costs a tap.
+
+A tap on an inert control says `Locked — touch UNLOCK first` rather than
+doing nothing, because a dead tap reads as a dead panel. Relocking clears a
+half-typed message and any open prompt: unlocking into someone else's
+unfinished business means the first tap lands somewhere it was never aimed.
+
+While a sweep is running, a locked screen still shows the job and its
+progress -- seeing costs nothing. Stopping it costs one unlock first, which
+is the trade.
+
+`locktest.py` covers it: that no control fires while locked, that all four
+tabs still open, that one tap unlocks and the actions come back, that it
+relocks on the timer but not before, that interacting pushes the deadline
+out, and that relocking drops the keyboard and any prompt.
+
+### A live button under an overlay
+
+Found while re-rendering the keyboard, and older than this layout: the
+control row was drawn *underneath* the compose box, and a control drawn under
+an overlay is still live. With a sweep running, STOP sat exactly under the
+text field -- so tapping where you were typing dropped the queue, and a tap
+slightly off hit the activity strip and jumped to System, losing the message.
+The row is no longer drawn at all while the keyboard is up.
 
 ### If the panel is dark, or ignores touches
 
@@ -2448,7 +2533,7 @@ laptop with no radio and no bleak.
   The preview is rendered by the Pi, not the browser: the panel draws our own
   5x7 bitmap font, so a preview in a browser typeface would be a picture of a
   different thing.
-* **Touchscreen** — the *Panel* tab: what is up now, the queue as one-tap chips,
+* **Touchscreen** — the *LED Text Display* tab: what is up now, the queue as one-tap chips,
   and `WRITE` for an on-screen keyboard so a message can be typed at the sign
   with no phone. Upper case only; sign messages are shouty anyway and dropping
   the shift key buys a row of width on an 800-pixel screen.

@@ -22,6 +22,7 @@ import ctypes
 import errno
 import fcntl
 import json
+import math
 import mmap
 import os
 import select
@@ -70,8 +71,18 @@ CHIP_BG  = over(INK, 0.06)
 # Four, down from five. Lights is gone -- the sign preview IS the per-device
 # picker, and device health lives on System with the queue -- and Status grew
 # into System, the troubleshooting tab. Fewer pills also means wider ones.
-TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("panel", "Panel"),
-        ("system", "System"))
+#
+# "LED Text Display" rather than "Panel": on a sign whose other twelve devices
+# are panels of a sort too, "Panel" named the thing by what the code calls it
+# instead of by what you would point at.
+TABS = (("scenes", "Scenes"), ("colour", "Colour"),
+        ("panel", "LED Text Display"), ("system", "System"))
+
+# How long the screen stays unlocked once untouched. It is bolted to a sign in
+# a crowd at the height of a passing hand, and every control on it writes to
+# the lights. Long enough to think between taps, short enough that walking
+# away arms it.
+LOCK_AFTER = 90.0
 
 # The on-screen keyboard. Upper case only, and that is a decision rather than a
 # shortcut: sign messages are shouty anyway, the panel's own font has one case,
@@ -667,6 +678,10 @@ class Panel:
         self.k = scale = self.w / 800.0
         self.f_sign  = load_font(int(56 * scale), bold=True)
         self.f_head2 = load_font(int(17 * scale), bold=True)
+        # The tabs are the most-tapped thing on the screen and were set in
+        # the same 13 points as a chip label. At arm's length on a 4.3-inch
+        # panel, in dust, that is not a label so much as a rumour.
+        self.f_tab   = load_font(int(19 * scale), bold=True)
         self.f_body  = load_font(int(13 * scale), bold=True)
         self.f_body2 = load_font(int(14 * scale), bold=True)
         self.f_small = load_font(int(12 * scale))
@@ -702,6 +717,12 @@ class Panel:
         # A pending prompt, drawn over the middle third. Nothing that changes
         # the machine happens without one.
         self.confirm = None
+        # Locked at boot, and again after LOCK_AFTER untouched. Locked means
+        # no control writes to the sign. It does NOT mean the screen goes
+        # away: reading it without hunting for a phone is the whole reason it
+        # is out there, so everything stays drawn, live and legible.
+        self.locked = True
+        self.touched = time.monotonic()
         # The shelves scroll by the page, via the "›" card at the end.
         self.shelf = {"scenes": 0, "solid": 0}
 
@@ -828,20 +849,36 @@ class Panel:
     # point is that no control ever hides below a fold.
 
     def measure(self):
+        """Where the four bands live. Nothing here scrolls, by design.
+
+        The tabs and the action row traded places. Two reasons, and the second
+        is the one that mattered: a thumb reaches the bottom of a panel this
+        size without the hand covering the sign preview, and every phone in
+        every pocket already puts its navigation there, so nobody has to be
+        told which end to look at.
+
+        The middle keeps its 228 pixels to the pixel. The Colour tab is built
+        from four fixed rows that come to exactly that, so the eight pixels
+        the action row gives up and the eight the tab row takes have to come
+        from each other rather than from the content.
+        """
         s = self.k
-        # The tab row carries the most-tapped controls on the screen and had
-        # 46 pixels; on a 4.3-inch panel that is a 4mm target. It gets 64.
-        # Twelve of the eighteen come from the sign band, which had 100 pixels
-        # of card around 70-pixel cups, and six from the middle -- measured
-        # against the tightest tab (Panel, with a full queue) which had 24 to
-        # give.
         self.band = pygame.Rect(0, 0, self.w, int(110 * s))
-        self.tabrow = pygame.Rect(0, self.band.bottom, self.w, int(64 * s))
-        bar_h = int(52 * s)
-        self.bar = pygame.Rect(0, self.h - bar_h - int(14 * s), self.w, bar_h)
-        self.middle = pygame.Rect(int(16 * s), self.tabrow.bottom,
+        # Was the bottom bar, at 52. Now directly under the sign, so what it
+        # says about the sign sits next to the sign.
+        self.controlrow = pygame.Rect(0, self.band.bottom, self.w, int(56 * s))
+        # Hard against the bottom edge, near enough. A margin under the tab
+        # row buys nothing -- a thumb aimed at the edge of a panel wants
+        # something there -- and spending it here instead keeps a full 12
+        # pixels between the tabs and the last row of the tab above, which is
+        # what stops the Colour tab's speed slider from having the tab row
+        # crowd its touch target.
+        tab_h = int(72 * s)
+        self.tabrow = pygame.Rect(0, self.h - tab_h - int(2 * s), self.w, tab_h)
+        self.middle = pygame.Rect(int(16 * s), self.controlrow.bottom,
                                   self.w - int(32 * s),
-                                  self.bar.top - int(12 * s) - self.tabrow.bottom)
+                                  self.tabrow.y - int(12 * s)
+                                  - self.controlrow.bottom)
 
     # -- the sign itself ------------------------------------------------------
 
@@ -1067,135 +1104,72 @@ class Panel:
     # -- shell ----------------------------------------------------------------
 
     def draw_tabs(self, state):
-        s = self.k
-        group_w = 0
-        for _key, label in TABS:
-            group_w += self.f_body.size(label)[0] + int(40 * s)
-        # The row is 46 tall and the pills used 34 of it. On a 4.3-inch panel
-        # the leftover was costing the most-tapped control on the screen.
-        group = pygame.Rect(int(16 * s), self.tabrow.y + int(4 * s),
-                            group_w + int(8 * s), int(56 * s))
-        self.rounded(self.screen, group, CARD, radius=group.h // 2)
-        x = group.x + int(4 * s)
-        self.tabs = []
-        for key, label in TABS:
-            width = self.f_body.size(label)[0] + int(40 * s)
-            pill = pygame.Rect(x, group.y + int(4 * s), width, group.h - int(8 * s))
-            if key == self.tab:
-                self.rounded(self.screen, pill, INK, radius=pill.h // 2)
-            self.text(self.screen, self.f_body, label,
-                      BG if key == self.tab else over(INK, 0.6), center=pill.center)
-            self.tabs.append(Button(pill, label, "tab", key))
-            x = pill.right
+        """The four tabs, along the bottom.
 
-        self.draw_queue(state, group.right + int(12 * s), group.centery)
+        They were pills at the top set in 13 points: a 26-pixel target for the
+        most-tapped control on the screen. Now they are 72 tall in 19 points,
+        and they share the full width proportionally rather than hugging their
+        own text -- which turns 240 pixels of leftover background into target.
 
-    def draw_queue(self, state, left, centre):
-        """The ACTIVITY strip: what the radio is doing, on every tab.
+        Proportional rather than four equal cells on purpose: "LED Text
+        Display" is three times the width of "Colour", and equal cells would
+        have to be sized for the longest label, leaving that one nearly
+        touching its own edges while the other three sat in acres of nothing.
 
-        This used to be a passive progress readout with decorative hints. Now
-        it is the seeing-and-stopping surface the owner asked for: while
-        anything is running or queued it shows the job and carries a STOP that
-        kills the in-flight write and drops the queue -- one tap from any tab.
-        Idle, it surfaces the most urgent fact instead of filler, in strict
-        order: a tripped battery outranks a battery warning outranks dead
-        controllers outranks the rotation countdown. A dead battery hiding
-        behind "next scene in 4m" is how problems stay unnoticed until 3am.
-
-        Tapping anywhere else on the strip opens the System tab, which is the
-        full answer to "what is it doing".
+        Tabs stay live when the screen is locked. Moving between them changes
+        nothing about the sign, and being able to read the System tab without
+        unlocking is most of what this panel is for.
         """
         s = self.k
-        strip = pygame.Rect(left, self.tabrow.y + int(8 * s),
-                            self.w - int(16 * s) - left, int(48 * s))
+        row, pad, gap = self.tabrow, int(16 * s), int(8 * s)
+        bite = int(28 * s)
+        texts = [self.f_tab.size(label)[0] for _key, label in TABS]
+        room = row.w - pad * 2 - gap * (len(TABS) - 1)
+        share = max(0, (room - sum(texts) - bite * len(TABS))) // len(TABS)
 
-        busy = state["busy"] or state["queued"] or state["job"]
-        if busy:
-            # STOP lives at the right edge, and deliberately takes no slop
-            # (see NEVER_SLOP): a near miss aimed at the queue readout must
-            # never cancel the queue.
-            stop = pygame.Rect(strip.right - int(96 * s), strip.y,
-                               int(96 * s), strip.h)
-            self.rounded(self.screen, stop, over(PINK, 0.16), PINK,
-                         radius=stop.h // 2)
-            self.text(self.screen, self.f_body, "STOP", PINK_SOFT,
-                      center=stop.center)
-            self.buttons.append(Button(stop, "STOP", "stop-all"))
+        x = pad
+        self.tabs = []
+        for (key, label), text_w in zip(TABS, texts):
+            pill = pygame.Rect(x, row.y, text_w + bite + share, row.h)
+            live = key == self.tab
+            self.rounded(self.screen, pill, INK if live else CARD,
+                         None if live else LINE_SOFT, radius=int(16 * s))
+            self.text(self.screen, self.f_tab, label,
+                      BG if live else over(INK, 0.72), center=pill.center)
+            self.tabs.append(Button(pill, label, "tab", key))
+            x = pill.right + gap
 
-            job = state["job"] or {}
-            label = (job.get("label") or "working").replace("scene: ", "")
-            total = max(1, state["total"])
-            count = "%d/%d" % (state["done"], total)
-            if state["queued"]:
-                count += "  +%d" % state["queued"]
-            info = pygame.Rect(strip.x, strip.y,
-                               stop.x - int(12 * s) - strip.x, strip.h)
-            counted = self.f_tiny.render(count, True, CYAN_SOFT)
-            track_w = int(110 * s)
-            track = pygame.Rect(info.right - counted.get_width() - int(8 * s)
-                                - track_w, info.centery - int(3 * s),
-                                track_w, int(6 * s))
-            self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(3 * s))
-            filled = int(track.w * state["done"] / float(total))
-            if filled:
-                self.rounded(self.screen,
-                             pygame.Rect(track.x, track.y, filled, track.h),
-                             CYAN, radius=int(3 * s))
-            self.screen.blit(counted, (info.right - counted.get_width(),
-                                       info.centery - counted.get_height() // 2))
-            room = track.x - int(10 * s) - info.x
-            if room > int(50 * s):
-                while label and self.f_tiny.size(label)[0] > room:
-                    label = label[:-1]
-                image = self.f_tiny.render(label, True, MUTED)
-                self.screen.blit(image, (track.x - int(10 * s) - image.get_width(),
-                                         info.centery - image.get_height() // 2))
-            self.buttons.append(Button(info, "activity", "activity"))
-            return
+    # -- the control row ------------------------------------------------------
 
-        battery = state.get("battery") or {}
-        rotation = state["rotation"] or {}
-        if battery.get("tripped_at"):
-            said, ink = "battery guard TRIPPED · tap to re-arm", PINK_SOFT
-        elif battery.get("warning") and battery.get("seconds_left") is not None:
-            said = "battery: %dm left" % max(0, int(battery["seconds_left"]) // 60)
-            ink = ORANGE
-        elif state.get("devices_bad"):
-            said = "%d controller%s not answering · tap" % (
-                state["devices_bad"], "" if state["devices_bad"] == 1 else "s")
-            ink = PINK_SOFT
-        elif rotation.get("holding"):
-            said = "held %dm · %s" % (
-                max(1, round(rotation.get("hold_remaining_seconds", 0) / 60)),
-                rotation.get("current") or "")
-            ink = over(INK, 0.5)
-        elif rotation.get("enabled"):
-            seconds = rotation.get("next_in_seconds")
-            when = "soon" if seconds is None else (
-                "%dm" % max(1, round(seconds / 60)) if seconds >= 60
-                else "%ds" % max(0, int(seconds)))
-            said = "next scene in %s · %s" % (when, rotation.get("current") or "")
-            ink = over(INK, 0.5)
-        else:
-            said, ink = "idle", over(INK, 0.35)
-        image = self.f_small.render(said, True, ink)
-        self.screen.blit(image, (strip.right - image.get_width(),
-                                 strip.centery - image.get_height() // 2))
-        self.buttons.append(Button(strip, "activity", "activity"))
+    def draw_control(self, state):
+        """The row under the sign: what you can do, or what is being done.
 
-    def draw_bottom(self, state):
+        Three states, and only ever one at a time, because each of them wants
+        the whole 800 pixels rather than a third of it.
+        """
         s = self.k
         self.actions = []
-        pad = int(16 * s)
+        bar = pygame.Rect(int(16 * s), self.controlrow.y + int(2 * s),
+                          self.w - int(32 * s), self.controlrow.h - int(8 * s))
+        if self.locked:
+            self.draw_unlock(state, bar)
+        elif state["busy"] or state["queued"] or state["job"]:
+            self.draw_working(state, bar)
+        else:
+            self.draw_actions(state, bar)
+
+    def draw_actions(self, state, bar):
+        """Idle: the three things worth doing without opening a tab."""
+        s = self.k
         rotation = state["rotation"] or {}
-        off = pygame.Rect(pad, self.bar.y, int(190 * s), self.bar.h)
+        off = pygame.Rect(bar.x, bar.y, int(190 * s), bar.h)
         self.rounded(self.screen, off, over(PINK, 0.10), over(PINK, 0.35),
                      radius=off.h // 2)
         self.stack(off, "OFF", PINK_SOFT, self.where_name(), over(PINK_SOFT, 0.65))
         self.actions.append(Button(off, "OFF", "off"))
 
         rot_w = int(210 * s)
-        rot = pygame.Rect(self.w - pad - rot_w, self.bar.y, rot_w, self.bar.h)
+        rot = pygame.Rect(bar.right - rot_w, bar.y, rot_w, bar.h)
         on = bool(rotation.get("enabled"))
         self.rounded(self.screen, rot,
                      over(OLIVE, 0.12) if on else CARD,
@@ -1206,11 +1180,134 @@ class Panel:
                    over(OLIVE_SOFT, 0.7) if on else MUTED)
         self.actions.append(Button(rot, "ROTATE", "rotate"))
 
-        mid = pygame.Rect(off.right + int(10 * s), self.bar.y,
-                          rot.x - off.right - int(20 * s), self.bar.h)
+        mid = pygame.Rect(off.right + int(10 * s), bar.y,
+                          rot.x - off.right - int(20 * s), bar.h)
         self.rounded(self.screen, mid, CARD, over(WHITE, 0.08), radius=mid.h // 2)
         self.stack(mid, "SURPRISE ME", INK, "new scene", MUTED)
         self.actions.append(Button(mid, "SURPRISE ME", "next"))
+
+    def draw_working(self, state, bar):
+        """A sweep is running, so the row becomes the thing that watches it.
+
+        The three actions are gone while this is up, deliberately. All three
+        queue more radio work, and mid-sweep that is the wrong answer to every
+        question; the right one is seeing how far along it is and being able
+        to kill it. A sweep takes ~30s across twelve controllers, which is
+        long enough that "is it stuck?" is the question actually being asked.
+
+        STOP sits at the right, where ROTATE was rather than where OFF was. A
+        finger already travelling towards OFF when a sweep starts then lands
+        on dead label instead of throwing the queue away -- and STOP takes no
+        touch slop either (see NEVER_SLOP), so only a direct hit counts.
+        """
+        s = self.k
+        self.rounded(self.screen, bar, CARD_ALT, over(CYAN, 0.22),
+                     radius=int(16 * s))
+        # Full bar height, not inset: the control row is 56 pixels and cannot
+        # grow without taking them off the Colour tab, so 48 is the ceiling
+        # here and STOP gets all of it. 150x48 against the old strip's 96x48.
+        stop = pygame.Rect(bar.right - int(154 * s), bar.y,
+                           int(150 * s), bar.h)
+        self.rounded(self.screen, stop, over(PINK, 0.18), PINK,
+                     radius=stop.h // 2)
+        self.text(self.screen, self.f_head2, "STOP", PINK_SOFT,
+                  center=stop.center)
+        self.buttons.append(Button(stop, "STOP", "stop-all"))
+
+        job = state["job"] or {}
+        label = (job.get("label") or "working").replace("scene: ", "")
+        total = max(1, state["total"])
+        count = "%d/%d" % (state["done"], total)
+        if state["queued"]:
+            count += "  +%d" % state["queued"]
+        info = pygame.Rect(bar.x + int(14 * s), bar.y,
+                           stop.x - int(12 * s) - bar.x - int(14 * s), bar.h)
+
+        counted = self.f_body.render(count, True, CYAN_SOFT)
+        track_w = int(120 * s)
+        track = pygame.Rect(info.right - counted.get_width() - int(10 * s)
+                            - track_w, info.centery - int(3 * s),
+                            track_w, int(7 * s))
+        self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(3 * s))
+        filled = int(track.w * state["done"] / float(total))
+        if filled:
+            self.rounded(self.screen,
+                         pygame.Rect(track.x, track.y, filled, track.h),
+                         CYAN, radius=int(3 * s))
+        self.screen.blit(counted, (info.right - counted.get_width(),
+                                   info.centery - counted.get_height() // 2))
+        room = track.x - int(12 * s) - info.x
+        if room > int(50 * s):
+            while label and self.f_body2.size(label)[0] > room:
+                label = label[:-1]
+            self.text(self.screen, self.f_body2, label, INK,
+                      topleft=(info.x,
+                               info.centery - self.f_body2.get_height() // 2))
+        # Appended last so a tap on STOP finds STOP: _hit returns the first
+        # rectangle it lands in, and this one contains that one.
+        self.buttons.append(Button(info, "activity", "activity"))
+
+    def draw_unlock(self, state, bar):
+        """Locked. One tap here and the sign can be changed again.
+
+        Only the writing controls go away. The sign preview, the battery
+        clock, the health chips and all four tabs stay live, because the
+        failure this panel exists to catch is noticing at 3am that something
+        is wrong -- and a screen that has to be unlocked before it will tell
+        you anything is a screen nobody looks at.
+
+        When a sweep is running the job shows here too. Seeing it costs
+        nothing; stopping it costs one tap first, which is the trade.
+        """
+        s = self.k
+        self.rounded(self.screen, bar, over(CYAN, 0.10), over(CYAN, 0.40),
+                     radius=int(16 * s))
+        busy = state["busy"] or state["queued"] or state["job"]
+
+        said = "TOUCH TO UNLOCK"
+        width = self.f_head2.size(said)[0]
+        lock_h = int(22 * s)
+        # Centred as a unit, padlock and words together, unless a job is
+        # showing on the right -- then it sits left so the two do not collide.
+        block = width + int(14 * s) + int(lock_h * 0.8)
+        left = bar.x + int(18 * s) if busy else bar.centerx - block // 2
+        self.padlock((left + int(lock_h * 0.4), bar.centery), lock_h, CYAN)
+        self.text(self.screen, self.f_head2, said, CYAN_SOFT,
+                  topleft=(left + int(lock_h * 0.8) + int(14 * s),
+                           bar.centery - self.f_head2.get_height() // 2))
+
+        if busy:
+            job = state["job"] or {}
+            label = (job.get("label") or "working").replace("scene: ", "")
+            total = max(1, state["total"])
+            note = "%s  %d/%d" % (label, state["done"], total)
+            room = bar.right - int(18 * s) - (left + block + int(20 * s))
+            while note and self.f_body2.size(note)[0] > room:
+                note = note[:-1]
+            image = self.f_body2.render(note, True, MUTED)
+            self.screen.blit(image, (bar.right - int(18 * s) - image.get_width(),
+                                     bar.centery - image.get_height() // 2))
+        self.actions.append(Button(bar, "UNLOCK", "unlock"))
+
+    def padlock(self, centre, height, colour):
+        """A padlock, drawn rather than typed.
+
+        The fallback DejaVu has no lock glyph, and a tofu box on the one
+        control that explains why nothing else is responding would be the
+        worst possible place for a missing character.
+        """
+        s = self.k
+        thick = max(2, int(3 * s))
+        body = pygame.Rect(0, 0, int(height * 0.80), int(height * 0.56))
+        body.midbottom = (centre[0], centre[1] + height // 2)
+        self.rounded(self.screen, body, colour, radius=max(2, int(3 * s)))
+        arc = pygame.Rect(0, 0, int(body.w * 0.62), int(body.w * 0.62))
+        arc.midtop = (centre[0], centre[1] - height // 2)
+        pygame.draw.arc(self.screen, colour, arc, 0, math.pi, thick)
+        for side in (arc.left, arc.right - thick):
+            pygame.draw.rect(self.screen, colour,
+                             pygame.Rect(side, arc.centery, thick,
+                                         max(1, body.top - arc.centery)))
 
     @staticmethod
     def rotation_note(rotation):
@@ -1753,7 +1850,7 @@ class Panel:
         # the row was sixty-four pixels of screen a keyboard could be using,
         # and it is the one part of this UI where key size is the whole
         # experience.
-        top = self.tabrow.y + int(4 * s)
+        top = self.controlrow.y + int(4 * s)
         box = pygame.Rect(self.middle.x, top, self.middle.w,
                           self.h - int(14 * s) - top)
         self.rounded(self.screen, box, CARD_ALT, over(CYAN, 0.3), radius=int(16 * s))
@@ -1946,7 +2043,7 @@ class Panel:
         box = image.get_rect()
         box.inflate_ip(int(28 * s), int(18 * s))
         box.centerx = self.w // 2
-        box.bottom = self.bar.y - int(8 * s)
+        box.bottom = self.tabrow.y - int(8 * s)
         self.rounded(self.screen, box, CARD_ALT, LINE_SOFT, radius=int(10 * s))
         self.screen.blit(image, image.get_rect(center=box.center))
 
@@ -1955,7 +2052,9 @@ class Panel:
     # A 4.3-inch panel at 800x480 puts about 8.6 pixels in a millimetre, and a
     # fingertip covers eight to ten of those millimetres. Measured against
     # that, every control on this screen was under 9mm across its short side
-    # and the tab pills were 3mm -- which is why they are hard to hit.
+    # and the tab pills were 3mm -- which is why they were hard to hit. The
+    # tabs are now 72 pixels of bottom row, about 8.4mm, so they no longer
+    # depend on any of this; the swatches and chips still do.
     #
     # Redrawing everything finger-sized would not fit: the middle of the layout
     # is only ~230 pixels tall once the sign band, the tab row and the bottom
@@ -2001,7 +2100,37 @@ class Panel:
                 best, best_gap = button, gap
         return best
 
+    def relock(self):
+        """Lock, and drop anything half-finished on the way.
+
+        A half-typed message or an open prompt left behind a lock is a trap:
+        the next person unlocks into someone else\'s unfinished business and
+        the first tap lands somewhere they never chose.
+        """
+        self.locked = True
+        self.compose = None
+        self.confirm = None
+
     def tap(self, position):
+        if self.locked:
+            # Nothing that writes to the sign answers while locked. Two things
+            # still do: the unlock bar, and the tabs -- looking is not
+            # changing, and a locked screen you cannot read is useless.
+            button = self._hit(position, self.actions, kinds=("unlock",))
+            if button is not None:
+                self.locked = False
+                self.touched = time.monotonic()
+                self.sign.say("Unlocked \u00b7 locks itself again in %ds"
+                              % int(LOCK_AFTER))
+                return
+            button = self._hit(position, self.tabs)
+            if button is not None:
+                self.tab = button.payload
+                return
+            # Say why, rather than letting a dead tap read as a dead panel.
+            self.sign.say("Locked \u2014 touch UNLOCK first")
+            return
+        self.touched = time.monotonic()
         if self.confirm:
             # While a prompt is up nothing else is live, so a stray finger on
             # the tab row cannot dismiss it by navigating away.
@@ -2424,12 +2553,24 @@ class Panel:
                         self.tap((x, y))
                     self.drag_from, self.dragging = None, False
 
+            # Relock on a timer rather than only on a tap: the risk this
+            # guards against is the panel nobody is standing at.
+            if not self.locked and time.monotonic() - self.touched > LOCK_AFTER:
+                self.relock()
+
             state = self.sign.snapshot()
             self.buttons = []
             self.screen.fill(BG)
             if state["online"] and (state["scenes"] or state["devices"]):
                 self.draw_preview(state)
-                self.draw_tabs(state)
+                # Not while the keyboard is up. The compose box covers this
+                # row, and a control drawn under an overlay is still live:
+                # with a sweep running, STOP sat exactly under the text field,
+                # so tapping where you were typing threw away the queue.
+                if self.compose is None:
+                    self.draw_control(state)
+                else:
+                    self.actions = []
                 if self.confirm:
                     self.draw_confirm()
                 elif self.compose is not None:
@@ -2442,10 +2583,10 @@ class Panel:
                     self.draw_panel(state)
                 else:
                     self.draw_system(state)
-                # The keyboard covers the bottom bar; drawing it underneath
+                # The keyboard covers the tab row; drawing it underneath
                 # would put live buttons behind an overlay.
                 if self.compose is None:
-                    self.draw_bottom(state)
+                    self.draw_tabs(state)
             else:
                 self.text(self.screen, self.f_head2,
                           "Waiting for the sign\u2026" if state["online"]
@@ -2477,6 +2618,8 @@ class Panel:
         """
         if self.tab != "scenes":
             return
+        if not self.locked:
+            self.touched = time.monotonic()
         boundary = self.middle.y + int(136 * self.k)   # divider+cards end
         which = "solid" if (at_y is not None and at_y > boundary) else "scenes"
         page = 5
