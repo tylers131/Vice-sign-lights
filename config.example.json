@@ -1001,6 +1001,7 @@
     "height": 16,
     "brightness": 100,
     "playlist": false,
+    "schedule": false,
     "default_dwell": 20.0,
     "chunk": 20,
     "frame_delay": 0.02,
@@ -1010,5 +1011,11 @@
     "png_opt": 0,
     "png_buffer": 0
   },
-  "messages": []
+  "messages": [],
+  "temperature": {
+    "enabled": false,
+    "pin": 13,
+    "model": "DHT11",
+    "interval_minutes": 20.0
+  }
 }

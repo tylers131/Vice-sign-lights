@@ -9,7 +9,7 @@ assumed.  This tool gathers the evidence:
     ./matrix_probe.py info AA:BB:..         connect, dump the GATT tree
     ./matrix_probe.py send AA:BB:.. -t HI   try a family's text encoding
     ./matrix_probe.py raw AA:BB:.. -c UUID -x 05000701 01
-    ./matrix_probe.py render "BAR IS OPEN"  what our font makes of it
+    ./matrix_probe.py render "ICED COFFEE"  what our font makes of it
     ./matrix_probe.py btsnoop capture.log   read the vendor app's protocol
 
 The last one is the way out of a dead end.  If no driver fits, run the panel's
@@ -448,12 +448,12 @@ async def do_confirm(args):
     # Ends on the large message on purpose. A long message drops to 1x to fit,
     # so finishing with one leaves the panel showing the smallest thing this
     # can draw -- which reads as "scaling does nothing" when it is the opposite.
-    long_message = M.normalize_message({"text": "BAR IS OPEN", "mode": "scroll",
+    long_message = M.normalize_message({"text": "ICED COFFEE HERE", "mode": "scroll",
                                         "color": "#22d3ee"})
     big = M.normalize_message({"text": "VICE", "mode": "static",
                                "color": "#ff2f6e"})
     steps += [
-        ("long text", "BAR IS OPEN, small -- 11 letters only fit at 1x",
+        ("long text", "ICED COFFEE HERE, small -- only a few letters fit at 1x",
          driver.text_frames(long_message), 7.0),
         ("short text", "VICE, twice the height -- it fits, so it goes bigger",
          driver.text_frames(big, previous=long_message), 8.0),

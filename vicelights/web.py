@@ -740,7 +740,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if request.method == "POST":
             body = _body()
             allowed = ("enabled", "address", "name", "family", "char_uuid",
-                       "playlist", "width", "height", "default_dwell",
+                       "playlist", "schedule", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
                        "pixel_layout", "scale", "write_response", "stretch",
@@ -848,6 +848,43 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if not scheduler.panel.brightness(percent):
             return _json_error("this panel has no brightness command", 503)
         return jsonify({"ok": True, "percent": percent})
+
+    @app.route("/api/temperature", methods=["GET", "POST"])
+    def api_temperature():
+        """The sensor the schedule shows on the panel: read it, or set it up.
+
+        GET returns the config and the current reading (null when there is no
+        sensor, no reading yet, or the last one has gone stale -- the panel
+        would rather show nothing than a number that looks live and is not).
+        POST changes the config; the sampler picks the change up on its next
+        pass, and enabling it starts the thread.
+        """
+        if request.method == "POST":
+            body = _body()
+            allowed = ("enabled", "pin", "model", "interval_minutes")
+            changes = {k: body[k] for k in allowed if k in body}
+            if not changes:
+                return _json_error("nothing to change")
+            try:
+                store.update_temperature(changes)
+            except ConfigError as exc:
+                return _json_error(exc)
+            # Enabling while the scheduler runs should start sampling now, not
+            # at the next restart.
+            scheduler.temperature.start()
+            log.info("temperature settings changed: %s", ", ".join(sorted(changes)))
+        reading = scheduler.temperature.current()
+        return jsonify({
+            "ok": True,
+            "temperature": store.temperature(),
+            "reading": None if reading is None else {
+                "celsius": round(reading.celsius, 1),
+                "fahrenheit": reading.fahrenheit,
+                "humidity": reading.humidity,
+                "samples": reading.samples,
+                "age_seconds": int(reading.age()),
+            },
+        })
 
     # -- the queue itself
 

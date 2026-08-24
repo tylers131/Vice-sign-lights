@@ -192,6 +192,19 @@ DEFAULT_MATRIX = {
     "commands": {},
 }
 
+# The DHT temperature sensor, shown on the panel by the event schedule. Off
+# by default: it needs a sensor wired to the GPIO and a driver that is not a
+# base dependency, so a sign without one should see nothing and log nothing.
+# BCM 13 is physical pin 33; VCC must be 3.3V, never 5V (see thermometer.py).
+DEFAULT_TEMPERATURE = {
+    "enabled": False,
+    "pin": 13,
+    "model": "DHT11",           # or DHT22 / AM2302 -- same three wires
+    # A few times an hour is plenty for a number on a sign, and reading the
+    # DHT blocks for up to ten seconds, so this is not tight.
+    "interval_minutes": 20.0,
+}
+
 DEFAULT_CONFIG = {
     "settings": dict(DEFAULT_SETTINGS),
     "rotation": dict(DEFAULT_ROTATION),
@@ -207,6 +220,7 @@ DEFAULT_CONFIG = {
     "matrix": dict(DEFAULT_MATRIX),
     "messages": [],
     "battery": dict(DEFAULT_BATTERY),
+    "temperature": dict(DEFAULT_TEMPERATURE),
 }
 
 
@@ -295,6 +309,24 @@ def _battery(raw) -> dict:
     return value
 
 
+def _temperature(raw) -> dict:
+    """Validate the temperature block."""
+    value = dict(DEFAULT_TEMPERATURE)
+    value.update(raw or {})
+    value["enabled"] = bool(value.get("enabled"))
+    value["model"] = str(value.get("model") or "DHT11").strip().upper()
+    try:
+        value["pin"] = max(0, min(40, int(value.get("pin", 13))))
+    except (TypeError, ValueError):
+        value["pin"] = 13
+    try:
+        value["interval_minutes"] = max(1.0, min(180.0,
+                                                 float(value.get("interval_minutes", 20.0))))
+    except (TypeError, ValueError):
+        value["interval_minutes"] = 20.0
+    return value
+
+
 def _matrix(raw) -> dict:
     """Validate the panel block, clamping anything a bad client could send."""
     from .matrix import FAMILIES, DEFAULT_FAMILY
@@ -302,6 +334,10 @@ def _matrix(raw) -> dict:
     value.update(raw or {})
     value["enabled"] = bool(value.get("enabled"))
     value["playlist"] = bool(value.get("playlist"))
+    # Cycle the calendar-driven messages (schedule.py) instead of the
+    # hand-typed queue. Independent of "playlist": schedule on means the
+    # panel plays the schedule whether or not the saved queue is used.
+    value["schedule"] = bool(value.get("schedule"))
     address = str(value.get("address") or "").strip()
     if address:
         try:
@@ -573,6 +609,7 @@ class ConfigStore:
         data["mode_names"] = _mode_names(raw.get("mode_names"))
         data["matrix"] = _matrix(raw.get("matrix"))
         data["battery"] = _battery(raw.get("battery"))
+        data["temperature"] = _temperature(raw.get("temperature"))
 
         from .matrix import normalize_message, MAX_MESSAGES
         dwell = data["matrix"]["default_dwell"]
@@ -974,6 +1011,19 @@ class ConfigStore:
     def battery(self) -> dict:
         with self._lock:
             return dict(self._data.get("battery") or DEFAULT_BATTERY)
+
+    def temperature(self) -> dict:
+        with self._lock:
+            return dict(self._data.get("temperature") or DEFAULT_TEMPERATURE)
+
+    def update_temperature(self, changes: dict) -> dict:
+        def apply(data):
+            merged = dict(data.get("temperature") or DEFAULT_TEMPERATURE)
+            merged.update(changes or {})
+            data["temperature"] = _temperature(merged)
+            return data["temperature"]
+
+        return self.mutate(apply)
 
     def update_battery(self, changes: dict) -> dict:
         def apply(data):

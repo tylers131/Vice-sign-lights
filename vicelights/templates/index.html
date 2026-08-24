@@ -341,7 +341,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   <div id="panelBody" style="display:none">
     <div class="card">
       <h2>Say something</h2>
-      <input id="msgText" placeholder="BAR IS OPEN" maxlength="240"
+      <input id="msgText" placeholder="VIETNAMESE ICED COFFEE" maxlength="240"
              oninput="previewMessage()">
       <div id="msgPreview" class="pixels" style="margin-top:10px"></div>
       <div id="msgFit" class="muted" style="margin-top:6px"></div>
@@ -368,6 +368,21 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <div class="row" style="margin-top:10px">
         <button class="btn primary" onclick="sendMessage()">Send now</button>
         <button class="btn" onclick="queueMessage()">Add to queue</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Event schedule</h2>
+      <p class="muted">Shows the day's offerings, tomorrow's hours, the
+        temperature and VICE, and shouts each event while it is on -- all built
+        from the calendar and the clock, updating on its own as the week goes
+        on. Turning this on takes over the panel from the saved queue below.</p>
+      <div class="item" style="border-top:0">
+        <div class="grow">
+          <div class="name">Run the event schedule</div>
+          <div class="meta" id="panelSchedMeta">off</div>
+        </div>
+        <button class="btn sm" id="panelSchedBtn" onclick="toggleSchedule()">Start</button>
       </div>
     </div>
 
@@ -878,7 +893,7 @@ function refreshStatus(){
       var changed = (PANEL.playlist !== j.panel.playlist)
                  || (PANEL.queued !== j.panel.queued)
                  || ((PANEL.current||{}).id !== (j.panel.current||{}).id);
-      ["playlist","queued","current","next_in","last_error","brightness",
+      ["playlist","schedule","queued","current","next_in","last_error","brightness",
        "pages","page"]
         .forEach(function(k){ PANEL[k] = j.panel[k]; });
       if(changed) renderPanel(PANEL);
@@ -1246,6 +1261,12 @@ function renderPanel(p){
     $("panelBrightVal").textContent = p.brightness + "%";
   }
 
+  if($("panelSchedBtn")){
+    $("panelSchedBtn").textContent = p.schedule ? "Stop" : "Start";
+    $("panelSchedMeta").textContent = p.schedule
+      ? (panelShowing(p) + (p.next_in!=null ? " \u00b7 next in "+p.next_in+"s" : ""))
+      : "off -- the panel plays the saved queue";
+  }
   $("panelCycleBtn").textContent = p.playlist ? "Stop" : "Start";
   $("panelCycleMeta").textContent = p.playlist
     ? (panelShowing(p)
@@ -1383,6 +1404,15 @@ function togglePlaylist(){
   if(!PANEL) return;
   var on = !PANEL.playlist;
   post("/api/matrix", {playlist:on}).then(function(j){
+    if(j.ok){ loadState(); if(on) post("/api/matrix/next").then(refreshStatus); }
+  });
+}
+function toggleSchedule(){
+  if(!PANEL) return;
+  var on = !PANEL.schedule;
+  post("/api/matrix", {schedule:on}).then(function(j){
+    /* Show the first schedule message right away rather than waiting a whole
+       dwell for the next tick to notice. */
     if(j.ok){ loadState(); if(on) post("/api/matrix/next").then(refreshStatus); }
   });
 }

@@ -23,6 +23,7 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/scheduler.py` | Pure-Python schedules + relative timers. |
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
 | `vicelights/thermometer.py` | DHT11/DHT22 read, on demand. Retries and medians. |
+| `vicelights/schedule.py` | Calendar-driven panel messages: today, tomorrow, temp. |
 | `vicelights/matrix.py` | BLE text panel: drivers, fingerprints, 5x7 font. |
 | `vicelights/messages.py` | The message queue and its dwell timer. |
 | `vicelights/web.py` | Flask JSON API. |
@@ -2239,7 +2240,7 @@ an animation number and a speed. The panel scrolls, flashes or fades it on its
 own, with no further radio at all, and can store it in one of a hundred slots
 and cycle those by itself.
 
-The difference for "WELCOME TO CAMP VICE AND THE BAR IS OPEN":
+The difference for "WELCOME TO CAMP VICE, ICED COFFEE ALL DAY":
 
 | | packets | bytes | after that |
 | --- | --- | --- | --- |
@@ -2436,7 +2437,7 @@ erase-diff as any other message change, so a page turn writes only the pixels
 that differ between the two pages.
 
 Pages are cut at word boundaries. **A message that fits is never paged**,
-however small it had to be set to fit: shrinking "BAR IS OPEN" onto one screen
+however small it had to be set to fit: shrinking "ICED COFFEE" onto one screen
 reads better than flipping it across two. When it will not fit at any size the
 scale is chosen for the message as a whole -- fewest pages first, ties to the
 larger text -- and every page is drawn at that one size, so the panel does not
@@ -2555,7 +2556,7 @@ laptop with no radio and no bleak.
   "commands": {}             // hex, for family "raw"
 },
 "messages": [
-  {"text": "BAR IS OPEN", "color": "#22d3ee", "mode": "static", "dwell": 30}
+  {"text": "ICED COFFEE HERE", "color": "#22d3ee", "mode": "static", "dwell": 30}
 ]
 ```
 
@@ -2568,3 +2569,54 @@ set in `/api/battery` while the sign remains dark after a cut, clearing when
 the sign is deliberately relit (the budget restarts) or on `rearm`. The
 internal re-cut machinery still stands down the moment the sign is seen dark,
 so a morning relight is never re-cut by a stale trip.
+
+---
+
+## 11. The event schedule
+
+The panel can drive itself from the week's calendar instead of a hand-typed
+queue. Turn it on -- **LED Text Display &rarr; SCHEDULE** on the touchscreen,
+or **Event schedule &rarr; Start** on the phone -- and it rotates:
+
+* **VICE**
+* **today's offerings** -- "TODAY 830A BLOODY MARYS / 1P BEARD SPA / 2P COFFEE
+  / 2P TAROT / NAIL SPA 24/7"
+* **tomorrow's** -- same shape, next day
+* **the temperature** -- "NOW 75F / 22C", when a sensor is fitted (§9c)
+
+and while an event is actually happening it adds its shouts -- the coffee's
+two by name ("NOW SERVING VIETNAMESE ICED COFFEE!", "GET YOUR GAY ICED COFFEE
+HERE!") and a "NOW: ..." line naming everything on at once. A quiet hour is
+calm; a live event is loud. It updates on its own as the week goes on, off the
+clock -- **so the clock has to be set** (§9b). The RTC handles that now.
+
+It lives in `vicelights/schedule.py`. Nothing there talks to the panel: it
+only decides the *text*, and hands back the same message dicts the runner
+already cycles, so a schedule message and a hand-typed one travel the identical
+road -- paging, colour, rotation, all unchanged. Each rotation slot has a
+**stable id** (`sched-today` is always `sched-today`), so the list can be
+rebuilt every few seconds to stay current with the clock and the thermometer
+while the rotation still advances cleanly.
+
+**The calendar is data, in `EVENTS`.** It is this camp's Burning Man 2026 week,
+transcribed from the schedule sheet and keyed by date (Aug 30 – Sep 6). Outside
+those dates there is no "today", so the panel shows only VICE and the
+temperature -- correct, not broken. To fix a time, add an event or change how
+long one runs, edit that table; the end times in it are assumptions (the sheet
+gave only start times) and only decide when an event stops shouting "NOW".
+
+**No bar anywhere.** The camp has no bar, so nothing here mentions one -- a test
+walks every hour of every day and asserts it, and the old "BAR IS OPEN"
+placeholders elsewhere are gone.
+
+**What it never does** is show a stale number as if it were live. A missing or
+old temperature reading drops the temperature line rather than showing the last
+one; an unset clock drops today and tomorrow rather than guessing. `°` is
+avoided on purpose -- the panel font is ASCII only, so a degree sign would come
+out a hollow box.
+
+`GET /api/temperature` reports the sensor config and the current reading (null
+when there is none or it has gone stale). `POST /api/matrix {"schedule": true}`
+turns the mode on. `tests/test_schedule.py` covers the calendar, the event
+windows, the temperature line and the stable ids -- 25 checks, no clock and no
+hardware.

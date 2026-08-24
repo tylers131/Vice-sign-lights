@@ -463,7 +463,7 @@ def paginate(config: dict, text: str, max_pages: int = 20) -> dict:
             pass
 
     # A message that fits is never paged, however small it had to go to fit.
-    # Shrinking "BAR IS OPEN" to one screenful reads better than flipping it
+    # Shrinking "ICED COFFEE" to one screenful reads better than flipping it
     # across two, and this is the same answer the panel gave before there was
     # any paging at all.
     whole = layout_for(config, text)
@@ -612,7 +612,7 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
     """One message, cleaned up enough that no driver has to defend itself.
 
     Dwell is how long the panel holds this message before the playlist moves
-    on, and it is per message rather than one global interval: "BAR IS OPEN"
+    on, and it is per message rather than one global interval: a long line
     wants longer on screen than a three-letter shout.
     """
     from .config import new_id
@@ -640,7 +640,7 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
         "id": raw.get("id") or new_id(),
         "text": text,
         # 0 is one solid colour; the panel's gradients are 2-4. Per message
-        # rather than per panel: "BAR IS OPEN" in one colour and a rainbow
+        # rather than per panel: one line in a single colour and a rainbow
         # "GOOD MORNING" is the point of having it.
         "color_mode": color_mode,
         "color": format_color(parse_color(raw.get("color"), (255, 47, 110))),

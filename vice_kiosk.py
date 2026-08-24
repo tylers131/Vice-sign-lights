@@ -1808,30 +1808,52 @@ class Panel:
                                        "msg-show", message["id"]))
         y += (chip_h + gap) * min(2, max(1, (len(messages) + per_row - 1) // per_row))
 
-        # -- the controls
+        # -- the controls: five buttons across the foot of the tab, sized to
+        # fill the width evenly rather than at a fixed 140 that no longer added
+        # up once SCHEDULE joined them.
         height = int(48 * s)
         y = max(y, self.middle.bottom - height)
-        wide = int(140 * s)
-        write = pygame.Rect(self.middle.x, y, wide, height)
-        self.rounded(self.screen, write, over(CYAN, 0.14), CYAN, radius=height // 2)
-        self.text(self.screen, self.f_small, "WRITE", CYAN, center=write.center)
+        wide = (self.middle.w - gap * 4) // 5
+        x = self.middle.x
+
+        # SCHEDULE first, and highlighted, because it is the mode this panel is
+        # meant to run at the sign: the calendar, the temperature and VICE,
+        # cycling on their own. On, it owns the panel; the saved-queue CYCLE
+        # below is the manual alternative.
+        scheduled = panel.get("schedule")
+        sched = pygame.Rect(x, y, wide, height)
+        self.rounded(self.screen, sched,
+                     over(CYAN, 0.20) if scheduled else over(CYAN, 0.10),
+                     CYAN if scheduled else over(CYAN, 0.45), radius=height // 2)
+        self.text(self.screen, self.f_small,
+                  "SCHEDULE✓" if scheduled else "SCHEDULE",
+                  CYAN if scheduled else CYAN_SOFT, center=sched.center)
+        self.buttons.append(Button(sched, "SCHEDULE", "panel-schedule"))
+        x = sched.right + gap
+
+        write = pygame.Rect(x, y, wide, height)
+        self.rounded(self.screen, write, CARD, LINE_SOFT, radius=height // 2)
+        self.text(self.screen, self.f_small, "WRITE", INK, center=write.center)
         self.buttons.append(Button(write, "WRITE", "compose"))
+        x = write.right + gap
 
         cycling = panel.get("playlist")
-        cycle = pygame.Rect(write.right + gap, y, wide, height)
+        cycle = pygame.Rect(x, y, wide, height)
         self.rounded(self.screen, cycle,
                      over(OLIVE, 0.16) if cycling else CARD,
                      OLIVE if cycling else LINE, radius=height // 2)
-        self.text(self.screen, self.f_small, "STOP CYCLE" if cycling else "CYCLE",
+        self.text(self.screen, self.f_small, "STOP" if cycling else "CYCLE",
                   OLIVE if cycling else INK, center=cycle.center)
         self.buttons.append(Button(cycle, "CYCLE", "panel-cycle"))
+        x = cycle.right + gap
 
-        nxt = pygame.Rect(cycle.right + gap, y, wide, height)
+        nxt = pygame.Rect(x, y, wide, height)
         self.rounded(self.screen, nxt, CARD, LINE, radius=height // 2)
         self.text(self.screen, self.f_small, "NEXT", INK, center=nxt.center)
         self.buttons.append(Button(nxt, "NEXT", "panel-next"))
+        x = nxt.right + gap
 
-        blank = pygame.Rect(nxt.right + gap, y, wide, height)
+        blank = pygame.Rect(x, y, wide, height)
         self.rounded(self.screen, blank, CARD, over(PINK, 0.4), radius=height // 2)
         self.text(self.screen, self.f_small, "BLANK", PINK_SOFT, center=blank.center)
         self.buttons.append(Button(blank, "BLANK", "panel-blank"))
@@ -2195,7 +2217,8 @@ class Panel:
                 self.compose = {"text": ""}
             elif kind == "msg-show":
                 self.show_message(button.payload, button.label)
-            elif kind in ("panel-cycle", "panel-next", "panel-blank"):
+            elif kind in ("panel-cycle", "panel-next", "panel-blank",
+                          "panel-schedule"):
                 self.act(kind)
             elif kind == "device":
                 device = button.payload
@@ -2447,6 +2470,16 @@ class Panel:
                 else:
                     _post("/api/matrix/next", {})
                     self.sign.say("Panel cycling the queue")
+                self.sign.refresh_panel()
+            elif kind == "panel-schedule":
+                with self.sign.lock:
+                    on = bool((self.sign.panel or {}).get("schedule"))
+                _post("/api/matrix", {"schedule": not on})
+                if on:
+                    self.sign.say("Event schedule stopped")
+                else:
+                    _post("/api/matrix/next", {})
+                    self.sign.say("Panel showing the event schedule")
                 self.sign.refresh_panel()
             elif kind == "panel-next":
                 result = _post("/api/matrix/next", {})

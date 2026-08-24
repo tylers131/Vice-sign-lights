@@ -24,6 +24,8 @@ import random
 
 from .config import new_id
 from .messages import MatrixRunner
+from .schedule import Schedule
+from .thermometer import Thermometer
 
 log = logging.getLogger("vicelights.scheduler")
 
@@ -352,17 +354,84 @@ class BatteryGuard:
             log.exception("battery guard could not turn the lights off")
 
 
+class TemperatureSampler:
+    """Reads the DHT on its own slow thread and hands out the last reading.
+
+    The sensor read blocks for up to ten seconds with retries, which is fine
+    for a thermometer and fatal for the scheduler thread that paces the radio
+    -- so it gets a thread of its own. Everything else asks ``current()``,
+    which returns the last reading or None, never blocks, and never hands back
+    a value old enough to mislead (``Reading.stale``).
+
+    Off unless the config turns it on: no sensor, no thread, no log noise.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self._thread = None
+        self._stop = threading.Event()
+        self._probe = None
+        self._reading = None
+        self._lock = threading.Lock()
+
+    def _config(self):
+        return self.store.temperature()
+
+    def start(self):
+        if self._thread or not self._config().get("enabled"):
+            return
+        self._thread = threading.Thread(target=self._run, name="temperature",
+                                        daemon=True)
+        self._thread.start()
+        log.info("temperature sampler started")
+
+    def stop(self):
+        self._stop.set()
+
+    def current(self):
+        """The last reading, or None if there is none or it has gone stale."""
+        with self._lock:
+            reading = self._reading
+        if reading is None or reading.stale():
+            return None
+        return reading
+
+    def _run(self):
+        while not self._stop.is_set():
+            config = self._config()
+            if not config.get("enabled"):
+                # Turned off from the UI while running: drop the sensor and
+                # idle. A later on-tick starts a fresh thread.
+                return
+            if self._probe is None:
+                self._probe = Thermometer(pin=config.get("pin", 13),
+                                          model=config.get("model", "DHT11"))
+            reading = self._probe.read()
+            if reading is not None:
+                with self._lock:
+                    self._reading = reading
+            interval = max(60.0, float(config.get("interval_minutes", 20.0)) * 60.0)
+            self._stop.wait(interval)
+
+
 class Scheduler:
     def __init__(self, store, worker, timekeeper):
         self.store = store
         self.worker = worker
         self.timekeeper = timekeeper
         self.rotation = Rotation(store, worker)
+        # The temperature the schedule shows, sampled on its own thread so a
+        # ten-second sensor read never stalls the radio pacing here.
+        self.temperature = TemperatureSampler(store)
+        # What the panel should say, built from the clock, the calendar and
+        # that sampler. It only decides text; the runner still does the
+        # sending and cycling.
+        self.schedule = Schedule(timekeeper, temperature=self.temperature.current)
         # The text panel cycles on this same thread. It is a different device
         # on a different protocol, but it is the same "wait, then send one
         # thing" shape, and giving it its own thread would only add a second
         # writer racing for the one radio.
-        self.panel = MatrixRunner(store, worker)
+        self.panel = MatrixRunner(store, worker, schedule=self.schedule)
         # Same thread again, and for the same reason: one writer for one radio.
         self.battery = BatteryGuard(store, worker, panel=self.panel)
         self._thread = None
@@ -378,10 +447,12 @@ class Scheduler:
             return
         self._thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
         self._thread.start()
+        self.temperature.start()
         log.info("scheduler started (tick %.0fs)", TICK)
 
     def stop(self):
         self._stop.set()
+        self.temperature.stop()
 
     def _run(self):
         while not self._stop.wait(TICK):

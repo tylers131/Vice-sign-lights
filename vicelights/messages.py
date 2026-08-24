@@ -30,9 +30,13 @@ HOLD = 0.0
 class MatrixRunner:
     """Cycle queued messages across the panel, one at a time."""
 
-    def __init__(self, store, worker):
+    def __init__(self, store, worker, schedule=None):
         self.store = store
         self.worker = worker
+        # When schedule mode is on (matrix.schedule), the queue is built by
+        # this instead of read from the saved messages. None on a runner
+        # created without one -- then schedule mode simply has no effect.
+        self.schedule = schedule
         self._lock = threading.Lock()
         self._next_at = None          # monotonic
         self._current = None          # the message the panel is showing
@@ -54,6 +58,26 @@ class MatrixRunner:
     def configured(self) -> bool:
         matrix = self.store.matrix()
         return bool(matrix.get("enabled") and matrix.get("address"))
+
+    def _scheduled(self) -> bool:
+        """Is the panel driven by the event calendar right now?"""
+        return bool(self.schedule and self.store.matrix().get("schedule"))
+
+    def _queue(self):
+        """What to rotate: the calendar's messages, or the saved queue.
+
+        Both are lists of the same message dicts, so the rest of the runner
+        cannot tell which it got. The schedule rebuilds its list every call so
+        it stays current with the clock and the temperature; the slot ids are
+        stable, so advancing by id still works across rebuilds.
+        """
+        if self._scheduled():
+            try:
+                return self.schedule.messages()
+            except Exception:
+                log.exception("building the schedule failed; panel idle")
+                return []
+        return self.store.messages(enabled_only=True)
 
     def unusable(self) -> str:
         """Why the panel cannot be driven, or "" if it can.
@@ -79,7 +103,10 @@ class MatrixRunner:
     def status(self) -> dict:
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)
-        queue = self.store.messages()
+        # The queue as it will actually play: the calendar's when scheduled,
+        # the saved messages otherwise, so the UI's count and preview match
+        # what the panel is doing.
+        queue = self._queue() if self._scheduled() else self.store.messages()
         with self._lock:
             # The whole message, not the page fragment on the glass. Someone
             # reading "now showing" wants to know which of their messages is
@@ -119,6 +146,7 @@ class MatrixRunner:
             "modes": list(driver.modes),
             "brightness": matrix.get("brightness", 100),
             "playlist": bool(matrix.get("playlist")),
+            "schedule": self._scheduled(),
             "default_dwell": matrix.get("default_dwell", 20.0),
             "size": {"width": matrix.get("width", 32), "height": matrix.get("height", 16)},
             "queue": queue,
@@ -345,7 +373,7 @@ class MatrixRunner:
 
     def play_next(self, force: bool = False) -> dict:
         """Advance to the next enabled message in the queue."""
-        queue = self.store.messages(enabled_only=True)
+        queue = self._queue()
         if not queue:
             with self._lock:
                 self._next_at = None
@@ -517,7 +545,9 @@ class MatrixRunner:
         # message as the first one.  But the playlist wins when the dwell is
         # up, or a paged message would wrap forever and nothing else would ever
         # get a turn.
-        playing = bool(matrix.get("playlist"))
+        # Schedule mode cycles the panel whether or not the saved-message
+        # playlist is on -- it is its own reason to be playing.
+        playing = bool(matrix.get("playlist")) or self._scheduled()
         with self._lock:
             dwell_up = self._next_at is not None and time.monotonic() >= self._next_at
         if self._page_due() and not (playing and dwell_up):
@@ -532,10 +562,10 @@ class MatrixRunner:
             return
         if not playing:
             return
-        queue = self.store.messages(enabled_only=True)
+        queue = self._queue()
         if not queue:
             if not self._warned_unconfigured:
-                log.info("panel playlist is on but the queue is empty")
+                log.info("panel is set to play but has nothing to show")
                 self._warned_unconfigured = True
             return
         self._warned_unconfigured = False
