@@ -44,11 +44,29 @@ modprobe i2c-dev 2>/dev/null || true
 # Live-load so this works without a reboot; harmless if already up.
 command -v dtparam >/dev/null && dtparam i2c_arm=on 2>/dev/null || true
 
+# A bounded attempt: on the playa there is no mirror to reach and apt will sit
+# there retrying one for minutes before it admits it. Neither package below is
+# required, so a timeout is the right answer, not a wait.
+apt_try() { timeout 60 apt-get install -y "$1" >/dev/null 2>&1; }
+
 if ! command -v i2cdetect >/dev/null; then
-  if apt-get install -y i2c-tools >/dev/null 2>&1; then
+  if apt_try i2c-tools; then
     ok "installed i2c-tools"
   else
     note "no i2c-tools and no network to install it; skipping the bus scan"
+  fi
+fi
+# hwclock(8) is a convenience here, not a dependency: Debian Trixie moved it
+# into util-linux-extra, and this sign is destined for a week with no network
+# to install it from. The clock is read and written through the kernel's own
+# ioctls instead (vicelights/timekeeper.py). Install it anyway if we can --
+# "sudo hwclock -r" is a nice thing to have when standing at the sign.
+if ! command -v hwclock >/dev/null; then
+  if apt_try util-linux-extra; then
+    ok "installed util-linux-extra (hwclock)"
+  else
+    note "no hwclock and could not install it -- not needed; the service uses"
+    note "the kernel directly. 'sudo apt install util-linux-extra' adds it."
   fi
 fi
 
@@ -104,27 +122,77 @@ fi
 
 if [[ -e /dev/rtc0 ]]; then
   echo "== syncing the two clocks"
-  RTC_YEAR="$(hwclock -r 2>/dev/null | grep -Eo '^[0-9]{4}' || echo 0)"
-  SYS_YEAR="$(date +%Y)"
-  if [[ "$SYS_YEAR" -ge 2024 && "$RTC_YEAR" -lt 2024 ]]; then
-    hwclock -w && ok "RTC set from the system clock ($(date '+%F %T'))"
-  elif [[ "$RTC_YEAR" -ge 2024 && "$SYS_YEAR" -lt 2024 ]]; then
-    hwclock -s && ok "system clock set from the RTC ($(date '+%F %T'))"
-  elif [[ "$RTC_YEAR" -ge 2024 ]]; then
-    ok "both clocks look sane (RTC: $(hwclock -r 2>/dev/null | cut -c1-19))"
-  else
-    bad "neither clock knows the time yet" \
-        "set it from the phone (Timing tab) -- the service now writes it to the RTC"
-  fi
+  # Through the project's own code, so the script and the service agree about
+  # what the RTC says -- and so this works with no hwclock installed.
+  SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  # stdout carries the verdict and nothing else: the timekeeper logs to
+  # stderr, and folding that in with 2>&1 would put a WARNING line where the
+  # case statement expects "OK".
+  SYNC="$(python3 - "$SRC_DIR" <<'PYEOF'
+import logging, sys, time, datetime as dt
+logging.disable(logging.CRITICAL)          # this script speaks for itself
+sys.path.insert(0, sys.argv[1])
+try:
+    from vicelights.timekeeper import TimeKeeper, SANE_AFTER
+except Exception as exc:
+    print("ERR could not import the timekeeper: %s" % exc)
+    raise SystemExit(0)
+
+keeper = TimeKeeper("/tmp/rtc-setup.stamp")
+rtc = keeper.read_rtc()
+system_ok = dt.datetime.now() >= SANE_AFTER
+rtc_ok = rtc is not None and dt.datetime.fromtimestamp(rtc) >= SANE_AFTER
+now = lambda: time.strftime("%Y-%m-%d %H:%M:%S")
+
+if rtc is None:
+    print("ERR the clock chip did not answer a read")
+elif system_ok and not rtc_ok:
+    if keeper.write_rtc():
+        print("OK RTC set from the system clock (%s)" % now())
+    else:
+        print("ERR could not write the clock chip")
+elif rtc_ok and not system_ok:
+    if keeper.sync_from_rtc():
+        print("OK system clock set from the RTC (%s)" % now())
+    else:
+        print("ERR could not set the system clock from the RTC")
+elif rtc_ok:
+    drift = abs(rtc - time.time())
+    if drift > 120:
+        if keeper.write_rtc():
+            print("OK RTC was %.0fs out; rewritten from the system clock" % drift)
+        else:
+            print("ERR the RTC is %.0fs out and would not take a write" % drift)
+    else:
+        print("OK both clocks agree (RTC: %s UTC)"
+              % time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(rtc)))
+else:
+    print("NOTIME neither clock knows the time yet")
+PYEOF
+)"
+  case "$SYNC" in
+    OK*)     ok "${SYNC#OK }" ;;
+    NOTIME*) bad "neither clock knows the time yet" \
+                 "set it from the phone (Timing tab) -- that writes the RTC too" ;;
+    *)       bad "${SYNC#ERR }" "check the wiring and the chip name, then re-run" ;;
+  esac
+else
+  bad "no clock to sync" "fix the overlay above first"
 fi
 
 echo
 echo "-------------------------------------------------------------"
 echo "  $PASS passed, $FAIL failed"
+# The summary reports the clock actually being set, not just the steps that
+# ran. An earlier version printed "0 failed / keeps real time now" while the
+# one step that mattered had died on a missing hwclock, which is worse than
+# failing: it sends you away believing the sign is fixed.
 if [[ $FAIL -eq 0 && -e /dev/rtc0 ]]; then
   echo "  The sign keeps real time across power cuts now."
   echo "  Wall-clock schedules stop pausing once the time is set."
+  echo "  Restart the service so it reads the new clock:"
+  echo "      sudo systemctl restart vice-lights"
 else
-  echo "  Fix the failures above and run this again."
+  echo "  NOT DONE. Fix the failures above and run this again."
 fi
 exit $((FAIL > 0))

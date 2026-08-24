@@ -1908,15 +1908,27 @@ fake-hwclock, unblocks the udev hwclock script, and syncs whichever clock
 knows the time into the one that does not. If the chip name is wrong it says
 so from the bus scan rather than leaving a silent dead overlay.
 
+**The RTC is read and written through the kernel directly, not `hwclock`.**
+`timekeeper.py` opens `/dev/rtc0` and issues the `RTC_RD_TIME` /
+`RTC_SET_TIME` ioctls itself. That is not purity -- Debian Trixie moved
+`hwclock` out of `util-linux` into `util-linux-extra`, which is not installed
+on this sign, and the discovery that it was missing came from a Pi that is
+bound for a week in the desert with no uplink to `apt install` it from. The
+ioctl interface is in the kernel, so it is there whether or not any package
+is. The RTC holds UTC, the same convention `hwclock` uses.
+
 Two integrations make it stick:
 
-* The service runs `hwclock -s` at start (a `-` prefix, so a Pi without an
-  RTC starts exactly as before). If the RTC ever holds garbage, the
-  timekeeper's forward-only stamp restore still corrects it.
-* **Setting the time from the phone now writes the RTC too** (`hwclock -w`
-  after `date -s`). Nothing auto-syncs system time into an RTC on a box with
-  no NTP, so without this the module would keep serving whatever time it
-  shipped with, and a set time would die with the next power cut.
+* **The service pulls the RTC forward at start.** `restore()` reads the
+  hardware clock before it looks at the on-disk stamp, and credits the source
+  as "hardware clock". A Pi with no RTC takes exactly the old path -- every
+  RTC call is a no-op that returns `None` when the device is absent. If the
+  RTC ever holds garbage (anything before 2024), it is ignored and the
+  forward-only stamp restore still corrects it.
+* **Setting the time from the phone now writes the RTC too.** Nothing
+  auto-syncs system time into an RTC on a box with no NTP, so without this
+  the module would keep serving whatever time it shipped with, and a set time
+  would die with the next power cut.
 
 `/api/time` reports `rtc: true` when the device is present, the Timing tab's
 clock source reads "hardware clock" after a boot that used it, and
