@@ -76,7 +76,7 @@ CHIP_BG  = over(INK, 0.06)
 # "LED Text Display" rather than "Panel": on a sign whose other twelve devices
 # are panels of a sort too, "Panel" named the thing by what the code calls it
 # instead of by what you would point at.
-TABS = (("scenes", "Scenes"), ("colour", "Colour"),
+TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("devices", "Devices"),
         ("panel", "LED Text Display"), ("system", "System"))
 
 # How long the screen stays unlocked once untouched. It is bolted to a sign in
@@ -311,6 +311,9 @@ class Sign:
                 if runtime:
                     device["reachable"] = runtime.get("reachable")
                     device["showing"] = runtime.get("showing")
+                    device["last_error"] = runtime.get("last_error") or ""
+                    device["last_ms"] = runtime.get("last_ms")
+                    device["last_ok"] = runtime.get("last_ok")
             # Drop the tapped highlight once the sign confirms, or after 45s so
             # a scene that never lands cannot leave the button stuck lit.
             if self.pending and (self.playing == self.pending
@@ -745,6 +748,10 @@ class Panel:
         self.confirm = None
         # The full-screen Wi-Fi join code, when open.
         self.showing_wifi = False
+        # The Devices tab scrolls -- the only tab that does. Offset in pixels,
+        # and the most it can be, set by the list's own height on each draw.
+        self.dev_scroll = 0
+        self.dev_scroll_max = 0
         # Locked at boot, and again after LOCK_AFTER untouched. Locked means
         # no control writes to the sign. It does NOT mean the screen goes
         # away: reading it without hunting for a phone is the whole reason it
@@ -1765,6 +1772,124 @@ class Panel:
                   center=power.center)
         self.buttons.append(Button(power, "POWER", "ask-power"))
 
+    def draw_devices(self, state):
+        """Every controller, its status, and a test -- the one scrolling tab.
+
+        Twelve controllers do not fit a screen that refuses to scroll, and this
+        is exactly the list you want to run a finger down when something is
+        dark: which ones are answering, what each is showing, and a TEST that
+        pokes one on its own so you can watch for the blink. Drag to scroll --
+        the list is the only thing on this screen that moves. Reading it is
+        free; TEST writes to a light, so it waits for an unlock like any other
+        action.
+        """
+        s = self.k
+        devices = state["devices"]
+
+        # -- header: the count, and a test-them-all
+        down = sum(1 for d in devices if d.get("reachable") is False)
+        label = ("%d controllers \u00b7 %d not answering" % (len(devices), down)
+                 if down else "%d controllers" % len(devices))
+        self.text(self.screen, self.f_tiny, label.upper(),
+                  PINK_SOFT if down else FAINT,
+                  topleft=(self.middle.x, self.middle.y + int(4 * s)))
+        testall = pygame.Rect(self.middle.right - int(150 * s), self.middle.y,
+                              int(150 * s), int(30 * s))
+        self.rounded(self.screen, testall, over(INK, 0.08), LINE,
+                     radius=testall.h // 2)
+        self.text(self.screen, self.f_small, "TEST ALL", INK, center=testall.center)
+        self.buttons.append(Button(testall, "TEST ALL", "test-all-devices"))
+
+        # -- the scrolling list
+        view = pygame.Rect(self.middle.x, self.middle.y + int(38 * s),
+                           self.middle.w,
+                           self.middle.bottom - self.middle.y - int(38 * s))
+        row_h, gap = int(56 * s), int(6 * s)
+        content_h = len(devices) * (row_h + gap)
+        self.dev_scroll_max = max(0, content_h - view.h)
+        self.dev_scroll = max(0, min(self.dev_scroll, self.dev_scroll_max))
+
+        if not devices:
+            self.text(self.screen, self.f_small,
+                      "No controllers configured.", MUTED,
+                      topleft=(view.x, view.y + int(6 * s)))
+            return
+
+        self.screen.set_clip(view)
+        y = view.y - self.dev_scroll
+        test_w = int(92 * s)
+        for d in devices:
+            row = pygame.Rect(view.x, y, view.w, row_h)
+            if row.bottom > view.y and row.top < view.bottom:
+                reach = d.get("reachable")
+                edge = (over(OLIVE, 0.4) if reach is True else
+                        over(PINK, 0.4) if reach is False else LINE)
+                self.rounded(self.screen, row, CARD, edge, radius=int(12 * s))
+                dot = (OLIVE if reach is True else
+                       PINK if reach is False else over(INK, 0.35))
+                pygame.draw.circle(self.screen, dot,
+                                   (row.x + int(16 * s), row.centery), int(5 * s))
+
+                name = d.get("name", "?").replace("_", " ")
+                self.text(self.screen, self.f_body2, name, INK,
+                          topleft=(row.x + int(30 * s), row.y + int(8 * s)))
+                # A swatch of what it is showing, right after the name.
+                showing = d.get("showing") or {}
+                sw = pygame.Rect(row.x + int(30 * s) + self.f_body2.size(name)[0]
+                                 + int(10 * s), row.y + int(10 * s),
+                                 int(22 * s), int(14 * s))
+                if showing.get("power") is False:
+                    self.rounded(self.screen, sw, CARD_ALT, LINE, radius=int(4 * s))
+                elif showing.get("mode") is not None:
+                    self.rounded(self.screen, sw, over(CYAN, 0.5), CYAN_SOFT,
+                                 radius=int(4 * s))
+                elif showing.get("color"):
+                    self.rounded(self.screen, sw, self._lit(showing["color"]),
+                                 None, radius=int(4 * s))
+
+                sub = d.get("address", "")
+                groups = d.get("groups") or []
+                if groups:
+                    sub += "  \u00b7  " + ", ".join(groups)
+                self.text(self.screen, self.f_tiny, sub[:40], MUTED,
+                          topleft=(row.x + int(30 * s), row.y + int(32 * s)))
+
+                # Status detail, left of the TEST button.
+                if reach is False:
+                    detail = (d.get("last_error") or "no answer")[:22]
+                    dcol = PINK_SOFT
+                elif reach is True:
+                    detail = ("ok \u00b7 %dms" % d["last_ms"]) if d.get("last_ms") else "ok"
+                    dcol = OLIVE_SOFT
+                else:
+                    detail = "not tried yet"
+                    dcol = MUTED
+                test = pygame.Rect(row.right - int(12 * s) - test_w,
+                                   row.centery - int(18 * s), test_w, int(36 * s))
+                image = self.f_tiny.render(detail, True, dcol)
+                self.screen.blit(image, (test.x - int(10 * s) - image.get_width(),
+                                         row.centery - image.get_height() // 2))
+                self.rounded(self.screen, test, over(CYAN, 0.12), CYAN,
+                             radius=test.h // 2)
+                self.text(self.screen, self.f_small, "TEST", CYAN,
+                          center=test.center)
+                # Only tappable when the whole row is inside the view -- a
+                # button half in the tab row below must not steal a tap.
+                if row.top >= view.y and row.bottom <= view.bottom:
+                    self.buttons.append(Button(test, "TEST", "device-test", d))
+            y += row_h + gap
+        self.screen.set_clip(None)
+
+        # -- scrollbar, when there is more than fits
+        if self.dev_scroll_max > 0:
+            knob_h = max(int(28 * s), int(view.h * view.h / content_h))
+            knob_y = view.y + int((view.h - knob_h) * self.dev_scroll
+                                  / self.dev_scroll_max)
+            self.rounded(self.screen,
+                         pygame.Rect(view.right - int(4 * s), knob_y,
+                                     int(3 * s), knob_h),
+                         over(INK, 0.3), radius=int(2 * s))
+
     def draw_panel(self, state):
         """The text panel: what it is saying, and what else it could say.
 
@@ -2308,6 +2433,15 @@ class Panel:
                 self.target_name = device["name"].replace("_", " ")
                 self.tab = "colour"
                 self.sign.say("Now colouring %s only" % self.target_name)
+            elif kind == "device-test":
+                device = button.payload
+                threading.Thread(target=self._retry_one, args=(device,),
+                                 daemon=True).start()
+                self.sign.say("Testing %s…" % device["name"].replace("_", " "))
+            elif kind == "test-all-devices":
+                snap = self.sign.snapshot()
+                self.retry([{"name": d["name"], "address": d["address"]}
+                            for d in snap["devices"]])
             elif kind == "swatch":
                 self.chosen_colour, self.chosen_pattern = button.payload, None
                 self.apply_state({"color": button.payload, "brightness": 100,
@@ -2635,7 +2769,17 @@ class Panel:
                     self.drag_from, self.last_point = (x, y), (x, y)
                     self.dragging = False
                 elif kind == "move" and self.drag_from:
-                    if abs(x - self.drag_from[0]) > 24:
+                    if (self.tab == "devices" and not self.showing_wifi
+                            and self.middle.collidepoint(self.drag_from)):
+                        # The device list is the one thing that scrolls, and it
+                        # follows the finger directly -- drag up, list goes up.
+                        # A few pixels of slop before it counts as a drag so a
+                        # tap on a TEST button is not read as a tiny scroll.
+                        if abs(y - self.drag_from[1]) > 6:
+                            self.dragging = True
+                        self.dev_scroll = max(0, min(self.dev_scroll_max,
+                                              self.dev_scroll - (y - self.last_point[1])))
+                    elif abs(x - self.drag_from[0]) > 24:
                         self.dragging = True      # the shelf is swiped sideways
                     self.last_point = (x, y)
                 elif kind == "up":
@@ -2674,6 +2818,8 @@ class Panel:
                     self.draw_scenes(state)
                 elif self.tab == "colour":
                     self.draw_colour(state)
+                elif self.tab == "devices":
+                    self.draw_devices(state)
                 elif self.tab == "panel":
                     self.draw_panel(state)
                 else:

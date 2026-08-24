@@ -185,7 +185,8 @@ one factor, so another panel size carries over.
 
 A **fixed shell**: the sign preview, the control row and the tab row are
 identical on every tab, and only the middle third changes. Nothing scrolls
-vertically -- no control is ever below a fold.
+vertically -- no control is ever below a fold, with one deliberate exception,
+the Devices tab, whose whole point is a list too long to fit (see below).
 
 - **The preview is the sign, and you tap it.** Every letter, cup and straw is
   a target: tap to add it to the selection, tap again to drop it. Selected
@@ -411,11 +412,17 @@ and make it stop*. The second edition reshapes the screen around exactly
 those, after a design review that scored three competing layouts against the
 failures that actually happened at this sign.
 
-**Four tabs, down from five** -- Scenes, Colour, LED Text Display, System.
-Lights is
-gone: the sign preview in the header *is* the per-device picker (tap a
-letter, a cup, a straw), and device health moved to System next to the queue
-it affects. Status grew into System, the troubleshooting tab.
+**Five tabs** -- Scenes, Colour, Devices, LED Text Display, System. The old
+per-device *Lights* grid is still gone as a colour picker -- the sign preview
+in the header *is* that (tap a letter, a cup, a straw). What came back, by
+request, is **Devices** as a troubleshooting list: every controller, whether
+it is answering, what colour it is showing, its address and group and last
+round-trip time, and a **TEST** that pokes one on its own so you can watch for
+the blink. It is the one tab that scrolls -- twelve controllers do not fit a
+no-scroll screen, and this is exactly the list you run a finger down when
+something is dark. Drag to scroll (a real drag, distinct from a tap on TEST);
+reading it needs no unlock, but TEST writes to a light, so it waits for one
+like any other action. TEST ALL pokes the whole set.
 
 **The clock tile** sits in that top-right corner (it once held the battery
 budget, before a hardware low-voltage disconnect took that job over). It shows
