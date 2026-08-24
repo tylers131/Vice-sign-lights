@@ -111,25 +111,6 @@ print(len(d.get("devices") or []), len(d.get("scenes") or []),
   [[ "$BOOT" != "none" ]] && ok "boot scene" "$BOOT" \
     || warn "boot scene" "none -- the sign comes up dark after a power cut"
 
-  # The check that would have caught the night this sign flattened its
-  # battery: nothing turns the lights off on their own, and nobody does it at
-  # four in the morning either.
-  read -r GUARD HOURS <<<"$(api /api/battery | python3 -c '
-import json, sys
-try:
-    b = json.load(sys.stdin)["battery"]
-except Exception:
-    print("unknown 0"); raise SystemExit
-print("on" if b.get("enabled") else "off",
-      "%.1f" % ((b.get("run_minutes") or 0) / 60.0))
-')"
-  case "$GUARD" in
-    on)  ok "runtime limit" "everything off after ${HOURS}h" ;;
-    off) bad "runtime limit" "off -- nothing will stop the lights running the battery flat" \
-           "set one on the Control tab, or: curl -X POST http://localhost/api/battery -H 'content-type: application/json' -d '{\"enabled\":true,\"run_minutes\":360}'" ;;
-    *)   warn "runtime limit" "could not read it" ;;
-  esac
-
   # Reachability, which is the whole point of being at the sign to run this.
   read -r TOTAL DOWN NAMES <<<"$(api /api/status | python3 -c '
 import json, sys

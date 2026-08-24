@@ -408,23 +408,20 @@ gone: the sign preview in the header *is* the per-device picker (tap a
 letter, a cup, a straw), and device health moved to System next to the queue
 it affects. Status grew into System, the troubleshooting tab.
 
-**The battery tile** sits where SAVE THIS used to apologise ("saving needs a
-name -- use the phone"). It shows the runtime budget always -- `5h 59m left`,
-amber on the warning, solid pink `TRIPPED · tap to re-arm` after a cut. The
-re-arm chooser also offers **+ ROTATE**, because re-arming alone leaves
-rotation off and the sign dark, which reads as a second failure. A trip is
-now remembered server-side until the sign is deliberately relit or re-armed
--- it used to clear the moment the lights were seen dark, which meant the
-morning-after screen said "dark" instead of "the guard did this".
+**The clock tile** sits in that top-right corner (it once held the battery
+budget, before a hardware low-voltage disconnect took that job over). It shows
+the time the sign keeps and, in amber, `CLOCK NOT SET` -- which is exactly when
+a wall-clock schedule and the event calendar quietly do nothing, surfaced up
+here rather than only on the System tab.
 
 **The ACTIVITY strip** replaces the passive progress readout beside the tabs.
 While anything is running or queued it shows the job, its progress, and a
 pink **STOP** that kills the in-flight write and drops the queue -- one tap,
 from any tab. STOP takes no touch slop: a near miss aimed at the readout
 beside it lands nowhere rather than cancelling the queue. Idle, the strip
-shows the most urgent fact rather than a hint, in strict order: battery
-tripped > battery warning > controllers down > rotation hold > the next-scene
-countdown. Tapping the strip opens System.
+shows the most urgent fact rather than a hint, in strict order: controllers
+down > rotation hold > the next-scene countdown. Tapping the strip opens
+System.
 
 **System** is the answer to "what is it doing": the job queue with each job's
 state, progress and age -- and the running item's own words, so "unreachable
@@ -571,7 +568,7 @@ relocks after **90 seconds** untouched.
 
 Locked means *no control writes to the sign*. It does not mean the screen
 goes away, and that distinction is the whole design: the sign preview, the
-battery clock, the health chips and **all four tabs stay live**, because the
+clock tile, the health chips and **all four tabs stay live**, because the
 failure this panel exists to catch is noticing at 3am that something is
 wrong, and a screen that must be unlocked before it will tell you anything is
 a screen nobody looks at. Moving between tabs changes nothing about the sign,
@@ -636,8 +633,8 @@ touchscreen, which runs its own copy of `vice_kiosk.py` in its own process. It
 used to restart only the first, so a change to the touchscreen looked like an
 update that did nothing.
 
-`/etc/vice-lights/config.json` is never touched: scenes, devices, panel
-settings and the runtime budget all survive an update.
+`/etc/vice-lights/config.json` is never touched: scenes, devices and panel
+settings all survive an update.
 
 ### Diagnostics without a laptop
 
@@ -647,7 +644,7 @@ that needs SSH is a check that does not get run. The *System* tab has a
 
 | Button | What it runs |
 | --- | --- |
-| Go / no-go | `scripts/preflight.sh` -- services, AP band, radio, controllers, panel, runtime limit, disk, clock |
+| Go / no-go | `scripts/preflight.sh` -- services, AP band, radio, controllers, panel, disk, clock |
 | Bluetooth and system | `scripts/diagnose.sh` -- adapter state, throttling, temperature, what is advertising |
 | Service journal | the last 300 lines systemd holds, including whatever killed the service before it could log |
 
@@ -1503,54 +1500,28 @@ So drive a group while you're playing with colours and save `all` for scenes you
 apply and walk away from. Live apply on a two-device group feels immediate;
 live apply on all 12 does not.
 
-### The battery, and the thing that actually protects it
+### The battery
 
 The sign runs off a battery on a solar charge controller. The controllers do
-not switch themselves off, and neither does anyone at four in the morning: left
-lit overnight, this sign took its battery below the voltage the controller will
-begin charging at. That is worse than a dark sign. It is a sign that cannot
-come back the next day without mains power, and on the playa there is none.
+not switch themselves off, and neither does anyone at four in the morning:
+left lit overnight, this sign once took its battery below the voltage the
+controller will begin charging at -- worse than a dark sign, because it is a
+sign that cannot come back the next day without mains power, and on the playa
+there is none.
 
-**The real safeguard is the charge controller's own load output.** Wire the
-lights (and the Pi) to the controller's LOAD terminals rather than straight to
-the battery, and its low-voltage disconnect cuts them in hardware at a set
-voltage, with nothing running and nothing to go wrong. Nothing in this
-repository can do that job, because the Pi is on the same battery: by the time
-the voltage is low enough to matter, the thing that was supposed to react is
-browning out too. Do the wiring.
+**The safeguard is a hardware low-voltage disconnect.** The lights (and the
+Pi) run through a module that cuts them at a set voltage, in hardware, with
+nothing running and nothing to go wrong. That is the right place for this job:
+the Pi is on the same battery, so any software cutoff is browning out at
+exactly the moment it would need to act. Nothing in this repository tries to do
+it any more.
 
-**The software half is a runtime budget**, and it handles the ordinary case --
-nobody remembering. The sign gets N minutes of being lit; when they are spent
-everything is switched off, the panel included, and rotation is stopped so the
-next tick cannot light it all again.
-
-```
-POST /api/battery        {"enabled": true, "run_minutes": 360}
-POST /api/battery/rearm  another full budget, for a night that runs long
-```
-
-Counted on `time.monotonic`, like everything else timed here, because the Pi
-has no RTC and comes up on the playa knowing nothing about the date -- a
-wall-clock "off at 3am" is exactly the thing that cannot be relied on there.
-
-The clock runs only while something is actually lit, read from what the worker
-recorded after each successful write rather than from what was asked for: a
-controller that never answered is not drawing anything, and counting it would
-spend the budget on lights that are not on. A warning goes in the log and on
-the Control tab before the cut, so someone who wants another hour can press
-**Give it another**.
-
-Defaults to six hours. `"enabled": false` turns it off entirely, and the
-Control tab says `no limit` in that state rather than saying nothing -- the
-failure this exists to prevent is silent. `preflight.sh` fails on it being
-off, which is the check that would have caught the night it happened.
-
-Two things it deliberately does not do. It does not turn anything back on:
-without an RTC there is no "at sunset" to schedule against, and the lights
-coming on by themselves at four in the morning is the same bug in the other
-direction. And a cut that did not take -- controllers out of range, a write
-that failed -- is re-sent every five minutes rather than left at one attempt,
-because the battery does not care that we tried.
+There used to be a software runtime budget here -- N minutes of light, then
+everything off -- as a second line for the ordinary case of nobody
+remembering. It was removed once the hardware disconnect was wired in: two
+mechanisms guarding one battery, one of them the wrong layer for the job, is
+one more than earns its keep. The config, the `/api/battery` routes, the
+Control-tab card and the preflight check are all gone with it.
 
 ### One dead controller used to cost a minute
 
@@ -1822,8 +1793,6 @@ Everything the UI does, curl can do. All BLE endpoints return a job id at once.
 | POST | `/api/scene/apply` | `{scene}` |
 | POST | `/api/queue/clear` | Drop everything still queued |
 | POST | `/api/stop` | Stop now: drops the queue *and* cancels the write in flight |
-| GET/POST | `/api/battery` | The runtime budget: `{enabled, run_minutes, warn_minutes, include_panel}` |
-| POST | `/api/battery/rearm` | Another full budget |
 | POST | `/api/devices` | Create/update `{address, name, groups, enabled}` |
 | DELETE | `/api/devices/<addr>` | |
 | POST | `/api/devices/<addr>/test` | Blink it green |
@@ -1978,7 +1947,7 @@ VICELIGHTS_FAKE_BLE=1 python3 -m vicelights --config ./config.example.json \
 Everything time-shaped in this project was built around the Pi having no RTC:
 the timekeeper persists a stamp to disk every minute and pulls the clock
 forward on boot, wall-clock schedules pause whenever the clock is suspect,
-and the battery guard counts monotonic minutes because "off at 3am" cannot be
+and scene rotation counts monotonic minutes because "off at 3am" cannot be
 trusted. All of that still works -- but with a battery-backed RTC module on
 the I2C pins, it stops being load-bearing.
 
@@ -2563,12 +2532,6 @@ laptop with no radio and no bleak.
 A `dwell` of `0` means *hold until something replaces it*. In a cycling
 playlist that would stall forever, so the playlist substitutes `default_dwell`;
 a message sent by hand keeps the literal meaning.
-
-A battery-guard trip is reported until it is dealt with: `tripped_at` stays
-set in `/api/battery` while the sign remains dark after a cut, clearing when
-the sign is deliberately relit (the budget restarts) or on `rearm`. The
-internal re-cut machinery still stands down the moment the sign is seen dark,
-so a morning relight is never re-cut by a stale trip.
 
 ---
 

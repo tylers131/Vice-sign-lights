@@ -19,6 +19,7 @@ the system interpreter with no venv.
 from __future__ import annotations
 
 import ctypes
+import datetime as dt
 import errno
 import fcntl
 import json
@@ -146,7 +147,8 @@ class Sign:
         self.rotation = {}
         self.busy = False
         self.jobs = []                # recent jobs, live and finished
-        self.battery = {}             # the runtime budget, from /api/status
+        self.now = ""                 # the sign's clock, from /api/status
+        self.clock_ok = False         # is that clock trustworthy?
         self.queued = 0
         self.job = None
         self.down = 0
@@ -201,7 +203,8 @@ class Sign:
                 "scenes": list(self.scenes), "playing": self.playing,
                 "rotation": dict(self.rotation), "busy": self.busy,
                 "queued": self.queued, "job": self.job,
-                "jobs": list(self.jobs), "battery": dict(self.battery),
+                "jobs": list(self.jobs),
+                "now": self.now, "clock_ok": self.clock_ok,
                 "done": self.down, "total": self.total, "online": self.online,
                 "pending": self.pending,
                 "devices_total": self.devices_total, "devices_bad": self.devices_bad,
@@ -295,7 +298,8 @@ class Sign:
             self.queued = int(status.get("queued") or 0)
             self.job, self.down, self.total = job, done, total
             self.jobs = jobs
-            self.battery = status.get("battery") or {}
+            self.now = status.get("now") or ""
+            self.clock_ok = bool(status.get("clock_ok"))
             devices = status.get("devices") or {}
             self.devices_total = len(devices)
             self.devices_bad = sum(1 for d in devices.values() if d.get("reachable") is False)
@@ -1053,47 +1057,49 @@ class Panel:
             self.text(self.screen, self.f_tiny, label, ink, center=chip.center)
             cx = chip.x - int(6 * s)
 
-        # The battery tile, where SAVE THIS used to apologise. Saving a scene
-        # needs a name and names need the phone; the battery flattening is the
-        # failure that nearly ended the sign, so its clock gets the corner.
-        self.draw_battery(state, pygame.Rect(rect.right + int(14 * s), rect.y,
-                                             self.w - pad - rect.right - int(14 * s),
-                                             rect.h))
+        # The clock tile. The battery guard used to live here; a hardware
+        # low-voltage disconnect handles that now, so the corner shows the one
+        # thing worth a glance from across the camp -- the time the sign keeps,
+        # and whether it can be trusted, which is what the event schedule runs
+        # on.
+        self.draw_clock(state, pygame.Rect(rect.right + int(14 * s), rect.y,
+                                           self.w - pad - rect.right - int(14 * s),
+                                           rect.h))
 
-    def draw_battery(self, state, tile):
+    def draw_clock(self, state, tile):
+        """The time the sign keeps, and whether the schedule can trust it.
+
+        Not a button: reading is all it is for. An unset clock is called out
+        in amber, because that is exactly when a wall-clock schedule quietly
+        does nothing -- the same fact the System tab spells out, up here where
+        it is seen without looking for it.
+        """
         s = self.k
-        battery = state.get("battery") or {}
-        tripped = battery.get("tripped_at")
-        warning = battery.get("warning")
-        seconds = battery.get("seconds_left")
+        now = state.get("now") or ""
+        ok = bool(state.get("clock_ok"))
+        # "2026-08-24T19:47:18" -> "7:47 PM" and "Aug 24". No seconds: they
+        # only flicker at a glance distance and cost the space the date wants.
+        clock, date = "--:--", ""
+        try:
+            stamp = dt.datetime.fromisoformat(now)
+            hour = stamp.hour % 12 or 12
+            clock = "%d:%02d %s" % (hour, stamp.minute,
+                                    "AM" if stamp.hour < 12 else "PM")
+            date = stamp.strftime("%b %-d")
+        except (ValueError, TypeError):
+            pass
 
-        if tripped:
-            fill, edge, ink = over(PINK, 0.18), PINK, PINK_SOFT
-        elif warning:
-            fill, edge, ink = over(ORANGE, 0.14), over(ORANGE, 0.6), ORANGE
-        else:
-            fill, edge, ink = CARD, LINE, INK
+        fill, edge = (CARD, LINE) if ok else (over(ORANGE, 0.14), over(ORANGE, 0.6))
         self.rounded(self.screen, tile, fill, edge, radius=int(16 * s))
-
-        if not battery.get("enabled"):
-            big, note, ink = "no limit", "set one on the phone", MUTED
-        elif tripped:
-            big, note = "TRIPPED", "tap to re-arm"
-        elif seconds is None:
-            big, note, ink = "dark", "budget paused", MUTED
-        else:
-            minutes = max(0, int(seconds)) // 60
-            big = "%dh %02dm" % (minutes // 60, minutes % 60) if minutes >= 60 \
-                else "%dm" % minutes
-            note = "left · WARNING" if warning else "left on the battery"
-        self.text(self.screen, self.f_tiny, "BATTERY", FAINT,
+        self.text(self.screen, self.f_tiny, "TIME" if ok else "CLOCK NOT SET",
+                  FAINT if ok else ORANGE,
                   center=(tile.centerx, tile.y + int(16 * s)))
-        self.text(self.screen, self.f_head2, big, ink,
+        self.text(self.screen, self.f_head2, clock if ok else "not set",
+                  INK if ok else ORANGE,
                   center=(tile.centerx, tile.centery + int(2 * s)))
-        self.text(self.screen, self.f_tiny, note,
-                  ink if (tripped or warning) else MUTED,
-                  center=(tile.centerx, tile.bottom - int(15 * s)))
-        self.buttons.append(Button(tile, "BATTERY", "battery"))
+        self.text(self.screen, self.f_tiny,
+                  date if ok else "set it from a phone",
+                  MUTED, center=(tile.centerx, tile.bottom - int(15 * s)))
 
     def zone_chrome(self, rect, token):
         """Mark a preview shape as picked. Drawn behind the shape itself."""
@@ -1250,8 +1256,8 @@ class Panel:
     def draw_unlock(self, state, bar):
         """Locked. One tap here and the sign can be changed again.
 
-        Only the writing controls go away. The sign preview, the battery
-        clock, the health chips and all four tabs stay live, because the
+        Only the writing controls go away. The sign preview, the clock tile,
+        the health chips and all four tabs stay live, because the
         failure this panel exists to catch is noticing at 3am that something
         is wrong -- and a screen that has to be unlocked before it will tell
         you anything is a screen nobody looks at.
@@ -2282,22 +2288,6 @@ class Panel:
                     "options": [{"label": "REBOOT", "action": "reboot"},
                                 {"label": "SHUT DOWN", "action": "shutdown",
                                  "danger": True}]}
-            elif kind == "battery":
-                snap = self.sign.snapshot()
-                if (snap.get("battery") or {}).get("tripped_at"):
-                    self.confirm = {
-                        "title": "The battery guard cut the lights",
-                        "body": ["The runtime budget ran out, so everything was",
-                                 "switched off -- rotation too, or it would have",
-                                 "relit the sign minutes later.",
-                                 "",
-                                 "Re-arm starts a fresh budget. With rotation, the",
-                                 "sign also starts changing scenes again."],
-                        "options": [
-                            {"label": "RE-ARM", "action": "rearm"},
-                            {"label": "+ ROTATE", "action": "rearm-rotate"}]}
-                else:
-                    self.tab = "system"
             elif kind == "activity":
                 self.tab = "system"
             elif kind == "clear-queue":
@@ -2497,13 +2487,6 @@ class Panel:
                 result = _post("/api/rotation/next", {})
                 self.sign.say(("Now playing " + result["scene"]) if result.get("ok")
                               else (result.get("error") or "nothing to play"))
-            elif kind == "rearm":
-                _post("/api/battery/rearm", {})
-                self.sign.say("Battery budget restarted")
-            elif kind == "rearm-rotate":
-                _post("/api/battery/rearm", {})
-                _post("/api/rotation", {"enabled": True})
-                self.sign.say("Re-armed \u00b7 rotation back on")
             elif kind == "clear-queue":
                 result = _post("/api/queue/clear", {})
                 cleared = result.get("cleared", 0)

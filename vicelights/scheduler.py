@@ -193,167 +193,6 @@ class Rotation:
         self.play_next()
 
 
-# How long to leave a cut alone before sending it again. A cut that did not
-# take -- controllers out of range, a write that failed -- must not be left at
-# one attempt, because the battery does not care that we tried. Slow enough not
-# to hammer the shared radio, fast enough to matter.
-RECUT_SECONDS = 300.0
-
-
-class BatteryGuard:
-    """Turn the sign off before it flattens the battery.
-
-    The lights do not switch themselves off, and neither does anyone at four in
-    the morning. Left lit overnight they took this sign's battery below the
-    voltage its solar controller will begin charging at, which is worse than a
-    dark sign: it is a sign that cannot come back the next day without mains
-    power, and on the playa there is none.
-
-    So the sign gets a runtime budget. Counted on ``time.monotonic`` because
-    the Pi has no RTC and comes up on the playa knowing nothing about the date
-    -- a wall-clock "off at 3am" cannot be relied on there, and this can.
-
-    What it cannot do is save a battery once the Pi is browning out on that
-    same battery. The real cutoff is the charge controller's own load output,
-    which disconnects in hardware with nothing running. This is the layer above
-    that: it stops the ordinary case of nobody remembering.
-    """
-
-    def __init__(self, store, worker, panel=None):
-        self.store = store
-        self.worker = worker
-        # The text panel is on the same battery, so "off" has to include it.
-        self.panel = panel
-        self._lock = threading.Lock()
-        self._lit_since = None        # monotonic, or None when the sign is dark
-        self._tripped_at = None       # wall clock, for the UI
-        self._cut_at = None           # monotonic: when the last cut was sent
-        # The trip, remembered PAST the moment the sign goes dark. _tripped_at
-        # has to clear once the sign is seen dark -- a morning relight would
-        # otherwise be re-cut five minutes later -- but the person walking up
-        # the next day still deserves "the guard cut this" on the screen, not
-        # "sign is dark". Cleared when the lights come back on, or on re-arm.
-        self._last_trip = None
-        self._warned = False
-
-    def lit(self) -> bool:
-        """Is anything believed to be on?
-
-        Read from what the worker recorded after each successful write rather
-        than from what was asked for: a device that never answered is not
-        drawing anything, and counting it would spend the budget on lights that
-        are not lit.
-        """
-        for state in self.worker.device_state.values():
-            if (state.get("showing") or {}).get("power"):
-                return True
-        return False
-
-    def status(self) -> dict:
-        battery = self.store.battery()
-        with self._lock:
-            lit_since, warned = self._lit_since, self._warned
-            tripped = self._tripped_at or self._last_trip
-        remaining = None
-        if lit_since is not None:
-            spent = time.monotonic() - lit_since
-            remaining = max(0, int(battery["run_minutes"] * 60 - spent))
-        return {
-            "enabled": bool(battery["enabled"]),
-            "run_minutes": battery["run_minutes"],
-            "warn_minutes": battery["warn_minutes"],
-            "include_panel": bool(battery["include_panel"]),
-            "lit": lit_since is not None,
-            "seconds_left": remaining,
-            "warning": bool(warned and remaining),
-            "tripped_at": tripped,
-        }
-
-    def rearm(self) -> dict:
-        """Start the budget again, for someone who wants the rest of the night."""
-        with self._lock:
-            self._lit_since = time.monotonic() if self.lit() else None
-            self._tripped_at = None
-            self._last_trip = None
-            self._cut_at = None
-            self._warned = False
-        log.info("battery guard re-armed")
-        return self.status()
-
-    def tick(self):
-        battery = self.store.battery()
-        if not battery["enabled"]:
-            with self._lock:
-                self._lit_since = None
-                self._warned = False
-            return
-        lit = self.lit()
-        now = time.monotonic()
-        cut = False
-        with self._lock:
-            if not lit:
-                # Dark: nothing is being spent, and the re-cut machinery can
-                # stand down -- but the memory of the trip stays (see above).
-                self._lit_since = None
-                self._warned = False
-                self._tripped_at = None
-                self._cut_at = None
-            elif self._tripped_at is not None:
-                # Already cut, and the sign still reads as lit. Usually that is
-                # just the off still being written -- seen in a live run as a
-                # second "counting" line five seconds after the first cut, which
-                # would have started a whole fresh budget. So the clock does not
-                # restart until the sign is actually seen dark.
-                #
-                # But a cut that did not take is not a cut, and the battery does
-                # not care that we tried, so it goes again on a slow beat.
-                if now - (self._cut_at or 0) >= RECUT_SECONDS:
-                    self._cut_at = now
-                    cut = True
-            elif self._lit_since is None:
-                self._lit_since = now
-                # Someone lit the sign on purpose; the old trip is history.
-                self._last_trip = None
-                log.info("battery guard: counting %.0f minutes of light",
-                         battery["run_minutes"])
-            else:
-                left = battery["run_minutes"] * 60.0 - (now - self._lit_since)
-                warn_at = battery["warn_minutes"] * 60.0
-                if left > 0:
-                    if warn_at and left <= warn_at and not self._warned:
-                        self._warned = True
-                        log.warning("battery guard: lights out in %.0f minutes",
-                                    left / 60.0)
-                else:
-                    self._lit_since = None
-                    self._tripped_at = time.time()
-                    self._last_trip = self._tripped_at
-                    self._cut_at = now
-                    self._warned = False
-                    cut = True
-        if cut:
-            self._cut(battery)
-
-    def _cut(self, battery: dict):
-        """Everything off, and nothing left running that would turn it back on."""
-        log.warning("battery guard: %.0f minutes spent -- turning the sign off",
-                    battery["run_minutes"])
-        try:
-            if self.store.rotation().get("enabled"):
-                # Otherwise the next rotation tick lights it all again a few
-                # minutes later and the budget buys nothing.
-                self.store.update_rotation({"enabled": False})
-                log.info("battery guard: rotation stopped")
-            self.worker.submit_state("all", {"power": False},
-                                     label="battery guard: lights out")
-            if battery.get("include_panel") and self.panel is not None:
-                self.panel.clear()
-                self.panel.power(False)
-                log.info("battery guard: panel off as well")
-        except Exception:
-            log.exception("battery guard could not turn the lights off")
-
-
 class TemperatureSampler:
     """Reads the DHT on its own slow thread and hands out the last reading.
 
@@ -432,8 +271,6 @@ class Scheduler:
         # thing" shape, and giving it its own thread would only add a second
         # writer racing for the one radio.
         self.panel = MatrixRunner(store, worker, schedule=self.schedule)
-        # Same thread again, and for the same reason: one writer for one radio.
-        self.battery = BatteryGuard(store, worker, panel=self.panel)
         self._thread = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -474,10 +311,6 @@ class Scheduler:
             self.panel.tick()
         except Exception:
             log.exception("panel tick failed")
-        try:
-            self.battery.tick()
-        except Exception:
-            log.exception("battery guard tick failed")
         if not self.timekeeper.clock_ok():
             return
         self._fire_schedules()

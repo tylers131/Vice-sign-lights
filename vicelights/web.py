@@ -339,7 +339,6 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             "timers": scheduler.timers(),
             "rotation": scheduler.rotation.status(),
             "panel": _slim_panel(scheduler.panel.status()),
-            "battery": scheduler.battery.status(),
         })
 
     @app.route("/api/job/<job_id>")
@@ -578,27 +577,6 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         state = _check_state(name)
         return jsonify({"ok": True, "name": name,
                         "label": CHECKS[name]["label"], **state})
-
-    @app.route("/api/battery", methods=["GET", "POST"])
-    def api_battery():
-        """The runtime budget that stops the sign flattening its battery."""
-        if request.method == "POST":
-            body = _body()
-            allowed = ("enabled", "run_minutes", "warn_minutes", "include_panel")
-            changes = {k: body[k] for k in allowed if k in body}
-            if not changes:
-                return _json_error("nothing to change")
-            try:
-                store.update_battery(changes)
-            except ConfigError as exc:
-                return _json_error(exc)
-            log.info("battery guard settings changed: %s", ", ".join(sorted(changes)))
-        return jsonify({"ok": True, "battery": scheduler.battery.status()})
-
-    @app.route("/api/battery/rearm", methods=["POST"])
-    def api_battery_rearm():
-        """Give the sign the budget again, for someone who wants another night."""
-        return jsonify({"ok": True, "battery": scheduler.battery.rearm()})
 
     @app.route("/api/scan", methods=["POST"])
     def api_scan():

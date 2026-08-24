@@ -186,29 +186,6 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <p class="muted" id="modeHint" style="margin-bottom:0"></p>
   </div>
 
-  <div class="card">
-    <h2>Battery</h2>
-    <p class="muted" style="margin-top:0">The lights do not switch themselves
-      off. Left on overnight they took this sign's battery below the voltage
-      its solar controller will start charging at.</p>
-    <div id="batteryLine" class="meta"></div>
-    <div class="row" style="margin-top:10px">
-      <div>
-        <label>Turn everything off after</label>
-        <select id="batteryHours" onchange="setBattery()">
-          <option value="0">never (no limit)</option>
-          <option value="120">2 hours</option>
-          <option value="240">4 hours</option>
-          <option value="360">6 hours</option>
-          <option value="480">8 hours</option>
-          <option value="720">12 hours</option>
-        </select>
-      </div>
-      <div style="display:flex;align-items:flex-end">
-        <button class="btn sm" onclick="rearmBattery()">Give it another</button>
-      </div>
-    </div>
-  </div>
 
   <div class="card">
     <h2>Queue</h2>
@@ -917,8 +894,7 @@ function refreshStatus(){
     });
     if(changed) renderDevices();
     renderJobs(j.jobs||[]);
-    renderBattery(j.battery);
-    if($("logAuto") && $("logAuto").checked
+      if($("logAuto") && $("logAuto").checked
        && $("tab-system").classList.contains("on")) loadLog();
   }).catch(function(){ $("hdrQueue").textContent="offline";
                        $("hdrQueue").className="pill bad"; });
@@ -941,57 +917,6 @@ function stopEverything(){
     else if(j.playlist) said += " — the message cycle is still on";
     toast(said);
     refreshStatus();
-  });
-}
-/* The sign's runtime budget. Shown on the Control tab rather than buried in
-   settings: it is the one number here whose being wrong costs a battery. */
-function renderBattery(b){
-  if(!b) return;
-  var sel = $("batteryHours");
-  if(sel && document.activeElement !== sel){
-    var want = b.enabled ? String(Math.round(b.run_minutes)) : "0";
-    /* A value set from the API need not be one of the presets, and a select
-       with no matching option renders blank -- which reads as "no limit" when
-       it is in fact five minutes. Give the real value an option of its own. */
-    if(!Array.prototype.some.call(sel.options, function(o){ return o.value === want; })){
-      var mins = Math.round(b.run_minutes), option = document.createElement("option");
-      option.value = want;
-      option.textContent = mins >= 60
-        ? (Math.round(mins / 6) / 10) + " hours" : mins + " minutes";
-      sel.insertBefore(option, sel.options[1] || null);
-    }
-    sel.value = want;
-  }
-  var line;
-  if(!b.enabled){
-    line = '<span class="pill warn">no limit</span> nothing will turn the'
-         + ' lights off on their own';
-  } else if(b.tripped_at){
-    line = '<span class="pill bad">turned off</span> the budget ran out —'
-         + ' "Give it another" starts it again';
-  } else if(b.seconds_left == null){
-    line = 'lights are off; the clock starts when they come on';
-  } else {
-    var mins = Math.round(b.seconds_left / 60);
-    var text = mins >= 60 ? (Math.floor(mins/60) + "h " + (mins%60) + "m")
-                          : (mins + "m");
-    line = (b.warning ? '<span class="pill warn">' + esc(text) + ' left</span>'
-                      : '<b>' + esc(text) + '</b> left')
-         + ' before everything switches off';
-  }
-  $("batteryLine").innerHTML = line;
-}
-function setBattery(){
-  var minutes = parseInt($("batteryHours").value, 10);
-  var body = minutes > 0 ? {enabled:true, run_minutes:minutes} : {enabled:false};
-  post("/api/battery", body).then(function(j){
-    if(j.ok){ renderBattery(j.battery); toast(minutes > 0
-        ? "Off after " + (minutes/60) + "h" : "Runtime limit off"); }
-  });
-}
-function rearmBattery(){
-  post("/api/battery/rearm").then(function(j){
-    if(j.ok){ renderBattery(j.battery); toast("Clock restarted"); }
   });
 }
 
