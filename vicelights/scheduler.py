@@ -226,6 +226,12 @@ class BatteryGuard:
         self._lit_since = None        # monotonic, or None when the sign is dark
         self._tripped_at = None       # wall clock, for the UI
         self._cut_at = None           # monotonic: when the last cut was sent
+        # The trip, remembered PAST the moment the sign goes dark. _tripped_at
+        # has to clear once the sign is seen dark -- a morning relight would
+        # otherwise be re-cut five minutes later -- but the person walking up
+        # the next day still deserves "the guard cut this" on the screen, not
+        # "sign is dark". Cleared when the lights come back on, or on re-arm.
+        self._last_trip = None
         self._warned = False
 
     def lit(self) -> bool:
@@ -244,7 +250,8 @@ class BatteryGuard:
     def status(self) -> dict:
         battery = self.store.battery()
         with self._lock:
-            lit_since, tripped, warned = self._lit_since, self._tripped_at, self._warned
+            lit_since, warned = self._lit_since, self._warned
+            tripped = self._tripped_at or self._last_trip
         remaining = None
         if lit_since is not None:
             spent = time.monotonic() - lit_since
@@ -265,6 +272,7 @@ class BatteryGuard:
         with self._lock:
             self._lit_since = time.monotonic() if self.lit() else None
             self._tripped_at = None
+            self._last_trip = None
             self._cut_at = None
             self._warned = False
         log.info("battery guard re-armed")
@@ -282,7 +290,8 @@ class BatteryGuard:
         cut = False
         with self._lock:
             if not lit:
-                # Dark: nothing is being spent, and whatever tripped is done.
+                # Dark: nothing is being spent, and the re-cut machinery can
+                # stand down -- but the memory of the trip stays (see above).
                 self._lit_since = None
                 self._warned = False
                 self._tripped_at = None
@@ -301,6 +310,8 @@ class BatteryGuard:
                     cut = True
             elif self._lit_since is None:
                 self._lit_since = now
+                # Someone lit the sign on purpose; the old trip is history.
+                self._last_trip = None
                 log.info("battery guard: counting %.0f minutes of light",
                          battery["run_minutes"])
             else:
@@ -314,6 +325,7 @@ class BatteryGuard:
                 else:
                     self._lit_since = None
                     self._tripped_at = time.time()
+                    self._last_trip = self._tripped_at
                     self._cut_at = now
                     self._warned = False
                     cut = True

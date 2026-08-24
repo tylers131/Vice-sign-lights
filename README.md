@@ -391,6 +391,58 @@ touch does not is fixed by swapping `dtoverlay=vc4-kms-v3d` for
 `dtoverlay=vc4-fkms-v3d` in `/boot/firmware/config.txt`. Try this last: it
 changes how the display comes up as well, so verify the picture again after.
 
+### The layout, second edition: built for the two jobs
+
+The touchscreen is the interface when the phone is not around, and its two
+jobs are *change what the lights are doing* and *see what the system is doing
+and make it stop*. The second edition reshapes the screen around exactly
+those, after a design review that scored three competing layouts against the
+failures that actually happened at this sign.
+
+**Four tabs, down from five** -- Scenes, Colour, Panel, System. Lights is
+gone: the sign preview in the header *is* the per-device picker (tap a
+letter, a cup, a straw), and device health moved to System next to the queue
+it affects. Status grew into System, the troubleshooting tab.
+
+**The battery tile** sits where SAVE THIS used to apologise ("saving needs a
+name -- use the phone"). It shows the runtime budget always -- `5h 59m left`,
+amber on the warning, solid pink `TRIPPED · tap to re-arm` after a cut. The
+re-arm chooser also offers **+ ROTATE**, because re-arming alone leaves
+rotation off and the sign dark, which reads as a second failure. A trip is
+now remembered server-side until the sign is deliberately relit or re-armed
+-- it used to clear the moment the lights were seen dark, which meant the
+morning-after screen said "dark" instead of "the guard did this".
+
+**The ACTIVITY strip** replaces the passive progress readout beside the tabs.
+While anything is running or queued it shows the job, its progress, and a
+pink **STOP** that kills the in-flight write and drops the queue -- one tap,
+from any tab. STOP takes no touch slop: a near miss aimed at the readout
+beside it lands nowhere rather than cancelling the queue. Idle, the strip
+shows the most urgent fact rather than a hint, in strict order: battery
+tripped > battery warning > controllers down > rotation hold > the next-scene
+countdown. Tapping the strip opens System.
+
+**System** is the answer to "what is it doing": the job queue with each job's
+state, progress and age -- and the running item's own words, so "unreachable
+4x, skipping for another 112s" finally appears on a screen instead of in a
+JSON array; what is down, with its last error and a TEST DOWN UNITS button;
+the vitals when nothing is wrong; and one row of levers: STOP EVERYTHING,
+CLEAR QUEUE (drops queued jobs, lets the running write finish), RETRY DOWN,
+and POWER… (a reboot/shutdown chooser -- one entry point instead of two
+buttons).
+
+**Colour** became four fixed rows -- targets, swatches, patterns, speed --
+that sum to exactly the middle's 228 pixels. The round V/I/C/E chips and Side
+A/B are gone (the preview letters are the picker; per-side stays on the
+phone), which is what buys a single un-wrapped 48-pixel target row. The speed
+slider now says "pick a pattern first" and dims when it would do nothing,
+instead of silently storing a value.
+
+Dropped entirely: SAVE THIS and PUT IT BACK (phone jobs), the Lights tab, the
+idle hint strings, and a handful of dead code. Scenes' shelf arrows now only
+appear when there is somewhere to page to, swiping the solid row pages the
+solid row, and stale page offsets clamp when scenes are deleted.
+
 ### Tap targets on a small panel
 
 The layout was drawn for a 5-inch panel and now runs on a 4.3-inch one. Same
@@ -2295,3 +2347,9 @@ laptop with no radio and no bleak.
 A `dwell` of `0` means *hold until something replaces it*. In a cycling
 playlist that would stall forever, so the playlist substitutes `default_dwell`;
 a message sent by hand keeps the literal meaning.
+
+A battery-guard trip is reported until it is dealt with: `tripped_at` stays
+set in `/api/battery` while the sign remains dark after a cut, clearing when
+the sign is deliberately relit (the budget restarts) or on `rearm`. The
+internal re-cut machinery still stands down the moment the sign is seen dark,
+so a morning relight is never re-cut by a stale trip.

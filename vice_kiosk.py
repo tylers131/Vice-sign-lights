@@ -67,8 +67,11 @@ MUTED    = over(INK, 0.45)
 FAINT    = over(INK, 0.40)
 DIM      = over(INK, 0.30)
 CHIP_BG  = over(INK, 0.06)
-TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("lights", "Lights"),
-        ("panel", "Panel"), ("status", "Status"))
+# Four, down from five. Lights is gone -- the sign preview IS the per-device
+# picker, and device health lives on System with the queue -- and Status grew
+# into System, the troubleshooting tab. Fewer pills also means wider ones.
+TABS = (("scenes", "Scenes"), ("colour", "Colour"), ("panel", "Panel"),
+        ("system", "System"))
 
 # The on-screen keyboard. Upper case only, and that is a decision rather than a
 # shortcut: sign messages are shouty anyway, the panel's own font has one case,
@@ -131,7 +134,7 @@ class Sign:
         self.playing = ""
         self.rotation = {}
         self.busy = False
-        self.jobs = []                # every live job, newest first
+        self.jobs = []                # recent jobs, live and finished
         self.battery = {}             # the runtime budget, from /api/status
         self.queued = 0
         self.job = None
@@ -262,10 +265,11 @@ class Sign:
         if not status.get("ok"):
             return
         rotation = status.get("rotation") or {}
-        # Everything live, not just the first: the queue view lists the lot,
-        # and a cancel button needs to say how much it is about to throw away.
-        live = [j for j in (status.get("jobs") or [])
-                if j.get("state") in ("running", "queued")]
+        # Everything recent, not just the first live one: the System tab lists
+        # the queue, and finished jobs answer "did my tap earlier actually
+        # run", which a live-only list cannot.
+        jobs = list(status.get("jobs") or [])
+        live = [j for j in jobs if j.get("state") in ("running", "queued")]
         job, done, total = None, 0, 0
         if live:
             job = live[0]
@@ -279,7 +283,7 @@ class Sign:
             self.busy = bool(status.get("busy"))
             self.queued = int(status.get("queued") or 0)
             self.job, self.down, self.total = job, done, total
-            self.jobs = live
+            self.jobs = jobs
             self.battery = status.get("battery") or {}
             devices = status.get("devices") or {}
             self.devices_total = len(devices)
@@ -667,18 +671,14 @@ class Panel:
         self.f_body2 = load_font(int(14 * scale), bold=True)
         self.f_small = load_font(int(12 * scale))
         self.f_tiny  = load_font(int(10 * scale), bold=True)
-        self.f_head = self.f_tiny
 
         self.sign = Sign()
-        self.scroll = 0.0
-        self.scroll_max = 0.0
         self.buttons = []
         self.actions = []
         self.tabs = []
         self.drag_from = None
         self.dragging = False
         self.last_point = (0, 0)
-        self.content_h = 0
         self.tab = "scenes"
         # None, or the message being typed on the on-screen keyboard.
         self.compose = None
@@ -931,7 +931,7 @@ class Panel:
     def draw_preview(self, state):
         s = self.k
         pad = int(16 * s)
-        rect = pygame.Rect(pad, int(12 * s), self.w - pad * 2 - int(146 * s),
+        rect = pygame.Rect(pad, int(12 * s), self.w - pad * 2 - int(208 * s),
                            self.band.h - int(22 * s))
         self.rounded(self.screen, rect, CARD, LINE, radius=int(16 * s))
         zones = self.zone_colours(state)
@@ -969,7 +969,10 @@ class Panel:
             if not ok:
                 colour = over(INK, 0.14, CARD)
             device = by_address.get(name)
-            token = "device:" + device if device else "name:" + name
+            # A shape with no configured device draws but does not tap: the
+            # "name:" token it used to send was never a target the server
+            # validates, so the tap silently did nothing anyway.
+            token = ("device:" + device) if device else None
             if kind == "cup":
                 shape = pygame.Rect(x, baseline - int(35 * s),
                                     int(54 * s), int(70 * s))
@@ -989,7 +992,8 @@ class Panel:
                 self.rounded(self.screen, shape, colour, radius=int(5 * s))
                 if ok and value:
                     self.glow_rect(shape, colour)
-            self.buttons.append(Button(hit, name, "zone", token))
+            if token:
+                self.buttons.append(Button(hit, name, "zone", token))
             x = hit.right + int(4 * s)
 
         # Now playing, and the health chips.
@@ -1012,21 +1016,47 @@ class Panel:
             self.text(self.screen, self.f_tiny, label, ink, center=chip.center)
             cx = chip.x - int(6 * s)
 
-        # SAVE THIS / PUT IT BACK.
-        col = pygame.Rect(rect.right + int(14 * s), rect.y,
-                          int(132 * s), rect.h)
-        save = pygame.Rect(col.x, col.y, col.w, col.h - int(42 * s))
-        self.rounded(self.screen, save, ORANGE, radius=int(16 * s))
-        self.text(self.screen, self.f_head2, "SAVE THIS", ORANGE_INK,
-                  center=(save.centerx, save.centery - int(9 * s)))
-        self.text(self.screen, self.f_tiny, "as a scene", over(ORANGE_INK, 0.72, ORANGE),
-                  center=(save.centerx, save.centery + int(10 * s)))
-        self.buttons.append(Button(save, "SAVE THIS", "save"))
-        back = pygame.Rect(col.x, save.bottom + int(8 * s), col.w, int(34 * s))
-        self.rounded(self.screen, back, BG, over(INK, 0.18), radius=int(17 * s))
-        self.text(self.screen, self.f_small, "PUT IT BACK", over(INK, 0.7),
-                  center=back.center)
-        self.buttons.append(Button(back, "PUT IT BACK", "revert"))
+        # The battery tile, where SAVE THIS used to apologise. Saving a scene
+        # needs a name and names need the phone; the battery flattening is the
+        # failure that nearly ended the sign, so its clock gets the corner.
+        self.draw_battery(state, pygame.Rect(rect.right + int(14 * s), rect.y,
+                                             self.w - pad - rect.right - int(14 * s),
+                                             rect.h))
+
+    def draw_battery(self, state, tile):
+        s = self.k
+        battery = state.get("battery") or {}
+        tripped = battery.get("tripped_at")
+        warning = battery.get("warning")
+        seconds = battery.get("seconds_left")
+
+        if tripped:
+            fill, edge, ink = over(PINK, 0.18), PINK, PINK_SOFT
+        elif warning:
+            fill, edge, ink = over(ORANGE, 0.14), over(ORANGE, 0.6), ORANGE
+        else:
+            fill, edge, ink = CARD, LINE, INK
+        self.rounded(self.screen, tile, fill, edge, radius=int(16 * s))
+
+        if not battery.get("enabled"):
+            big, note, ink = "no limit", "set one on the phone", MUTED
+        elif tripped:
+            big, note = "TRIPPED", "tap to re-arm"
+        elif seconds is None:
+            big, note, ink = "dark", "budget paused", MUTED
+        else:
+            minutes = max(0, int(seconds)) // 60
+            big = "%dh %02dm" % (minutes // 60, minutes % 60) if minutes >= 60 \
+                else "%dm" % minutes
+            note = "left · WARNING" if warning else "left on the battery"
+        self.text(self.screen, self.f_tiny, "BATTERY", FAINT,
+                  center=(tile.centerx, tile.y + int(16 * s)))
+        self.text(self.screen, self.f_head2, big, ink,
+                  center=(tile.centerx, tile.centery + int(2 * s)))
+        self.text(self.screen, self.f_tiny, note,
+                  ink if (tripped or warning) else MUTED,
+                  center=(tile.centerx, tile.bottom - int(15 * s)))
+        self.buttons.append(Button(tile, "BATTERY", "battery"))
 
     def zone_chrome(self, rect, token):
         """Mark a preview shape as picked. Drawn behind the shape itself."""
@@ -1061,55 +1091,97 @@ class Panel:
         self.draw_queue(state, group.right + int(12 * s), group.centery)
 
     def draw_queue(self, state, left, centre):
-        """What the sign is doing, in the shell so every tab shows it.
+        """The ACTIVITY strip: what the radio is doing, on every tab.
 
-        The same thing the phone's queue card says: which job, how far through,
-        and how many are waiting. A sweep is ~30s, so without it a tap looks
-        like nothing happened.
+        This used to be a passive progress readout with decorative hints. Now
+        it is the seeing-and-stopping surface the owner asked for: while
+        anything is running or queued it shows the job and carries a STOP that
+        kills the in-flight write and drops the queue -- one tap from any tab.
+        Idle, it surfaces the most urgent fact instead of filler, in strict
+        order: a tripped battery outranks a battery warning outranks dead
+        controllers outranks the rotation countdown. A dead battery hiding
+        behind "next scene in 4m" is how problems stay unnoticed until 3am.
+
+        Tapping anywhere else on the strip opens the System tab, which is the
+        full answer to "what is it doing".
         """
         s = self.k
-        right = self.w - int(16 * s)
-        if not (state["busy"] or state["queued"] or state["job"]):
-            hint = {"scenes": "\u25c0  swipe the shelf  \u25b6",
-                    "colour": "tap the sign above to pick zones",
-                    "lights": "tap one to colour just it",
-                    "panel": ("tap a message to put it up"
-                              if (state["panel"] or {}).get("configured")
-                              else "no text panel paired yet"),
-                    "status": "alerts \u00b7 diagnostics \u00b7 power"}[self.tab]
-            image = self.f_tiny.render(hint, True, over(INK, 0.35))
-            self.screen.blit(image, (right - image.get_width(),
-                                     centre - image.get_height() // 2))
+        strip = pygame.Rect(left, self.tabrow.y + int(8 * s),
+                            self.w - int(16 * s) - left, int(48 * s))
+
+        busy = state["busy"] or state["queued"] or state["job"]
+        if busy:
+            # STOP lives at the right edge, and deliberately takes no slop
+            # (see NEVER_SLOP): a near miss aimed at the queue readout must
+            # never cancel the queue.
+            stop = pygame.Rect(strip.right - int(96 * s), strip.y,
+                               int(96 * s), strip.h)
+            self.rounded(self.screen, stop, over(PINK, 0.16), PINK,
+                         radius=stop.h // 2)
+            self.text(self.screen, self.f_body, "STOP", PINK_SOFT,
+                      center=stop.center)
+            self.buttons.append(Button(stop, "STOP", "stop-all"))
+
+            job = state["job"] or {}
+            label = (job.get("label") or "working").replace("scene: ", "")
+            total = max(1, state["total"])
+            count = "%d/%d" % (state["done"], total)
+            if state["queued"]:
+                count += "  +%d" % state["queued"]
+            info = pygame.Rect(strip.x, strip.y,
+                               stop.x - int(12 * s) - strip.x, strip.h)
+            counted = self.f_tiny.render(count, True, CYAN_SOFT)
+            track_w = int(110 * s)
+            track = pygame.Rect(info.right - counted.get_width() - int(8 * s)
+                                - track_w, info.centery - int(3 * s),
+                                track_w, int(6 * s))
+            self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(3 * s))
+            filled = int(track.w * state["done"] / float(total))
+            if filled:
+                self.rounded(self.screen,
+                             pygame.Rect(track.x, track.y, filled, track.h),
+                             CYAN, radius=int(3 * s))
+            self.screen.blit(counted, (info.right - counted.get_width(),
+                                       info.centery - counted.get_height() // 2))
+            room = track.x - int(10 * s) - info.x
+            if room > int(50 * s):
+                while label and self.f_tiny.size(label)[0] > room:
+                    label = label[:-1]
+                image = self.f_tiny.render(label, True, MUTED)
+                self.screen.blit(image, (track.x - int(10 * s) - image.get_width(),
+                                         info.centery - image.get_height() // 2))
+            self.buttons.append(Button(info, "activity", "activity"))
             return
 
-        job = state["job"] or {}
-        label = (job.get("label") or "working").replace("scene: ", "")
-        total = max(1, state["total"])
-        count = "%d/%d" % (state["done"], total)
-        if state["queued"]:
-            count += "  +%d" % state["queued"]
-
-        counted = self.f_tiny.render(count, True, CYAN_SOFT)
-        track_w = int(120 * s)
-        track = pygame.Rect(right - counted.get_width() - int(8 * s) - track_w,
-                            centre - int(3 * s), track_w, int(6 * s))
-        self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(3 * s))
-        filled = int(track.w * state["done"] / float(total))
-        if filled:
-            self.rounded(self.screen, pygame.Rect(track.x, track.y, filled, track.h),
-                         CYAN, radius=int(3 * s))
-        self.screen.blit(counted, (right - counted.get_width(),
-                                   centre - counted.get_height() // 2))
-
-        # The label gets whatever room is left, and is clipped rather than
-        # allowed to run under the progress bar.
-        room = track.x - int(10 * s) - left
-        if room > int(60 * s):
-            while label and self.f_tiny.size(label)[0] > room:
-                label = label[:-1]
-            image = self.f_tiny.render(label, True, MUTED)
-            self.screen.blit(image, (track.x - int(10 * s) - image.get_width(),
-                                     centre - image.get_height() // 2))
+        battery = state.get("battery") or {}
+        rotation = state["rotation"] or {}
+        if battery.get("tripped_at"):
+            said, ink = "battery guard TRIPPED · tap to re-arm", PINK_SOFT
+        elif battery.get("warning") and battery.get("seconds_left") is not None:
+            said = "battery: %dm left" % max(0, int(battery["seconds_left"]) // 60)
+            ink = ORANGE
+        elif state.get("devices_bad"):
+            said = "%d controller%s not answering · tap" % (
+                state["devices_bad"], "" if state["devices_bad"] == 1 else "s")
+            ink = PINK_SOFT
+        elif rotation.get("holding"):
+            said = "held %dm · %s" % (
+                max(1, round(rotation.get("hold_remaining_seconds", 0) / 60)),
+                rotation.get("current") or "")
+            ink = over(INK, 0.5)
+        elif rotation.get("enabled"):
+            seconds = rotation.get("next_in_seconds")
+            when = "soon" if seconds is None else (
+                "%dm" % max(1, round(seconds / 60)) if seconds >= 60
+                else "%ds" % max(0, int(seconds)))
+            said = "next scene in %s · %s" % (when, rotation.get("current") or "")
+            ink = over(INK, 0.5)
+        else:
+            said, ink = "idle", over(INK, 0.35)
+        image = self.f_small.render(said, True, ink)
+        self.screen.blit(image, (strip.right - image.get_width(),
+                                 strip.centery - image.get_height() // 2))
+        self.buttons.append(Button(strip, "activity", "activity"))
 
     def draw_bottom(self, state):
         s = self.k
@@ -1163,13 +1235,14 @@ class Panel:
 
     # -- tabs -----------------------------------------------------------------
 
-    def divider(self, label, y, width):
+    def divider(self, label, y, width, x=None):
         s = self.k
+        x = self.middle.x if x is None else x
         image = self.f_tiny.render(label.upper(), True, FAINT)
-        self.screen.blit(image, (self.middle.x, y))
-        line_x = self.middle.x + image.get_width() + int(10 * s)
+        self.screen.blit(image, (x, y))
+        line_x = x + image.get_width() + int(10 * s)
         pygame.draw.line(self.screen, LINE, (line_x, y + image.get_height() // 2),
-                         (self.middle.x + width, y + image.get_height() // 2))
+                         (x + width, y + image.get_height() // 2))
         return y + image.get_height() + int(10 * s)
 
     def draw_scenes(self, state):
@@ -1177,29 +1250,43 @@ class Panel:
         s = self.k
         animated = [x for x in state["scenes"] if x["animated"]]
         solid = [x for x in state["scenes"] if not x["animated"]]
+        # A stale page offset -- scenes deleted on the phone mid-session --
+        # must not strand the shelf on an empty page.
+        for name, total in (("scenes", len(animated)), ("solid", len(solid))):
+            if self.shelf[name] >= total:
+                self.shelf[name] = 0
         y = self.middle.y
-        card_w, card_h = int(126 * s), int(88 * s)
+        card_w, card_h = int(126 * s), int(100 * s)
 
         y = self.divider("Animated", y, self.middle.w)
         x = self.middle.x
+        shown = 0
         for scene in animated[self.shelf["scenes"]:]:
             if x + card_w > self.middle.right - int(80 * s):
                 break
             self.scene_card(pygame.Rect(x, y, card_w, card_h), scene, state)
             x += card_w + int(10 * s)
-        self.more_card(pygame.Rect(x, y, int(74 * s), card_h), "scenes",
-                       len(animated))
-        y += card_h + int(12 * s)
+            shown += 1
+        # The paging card only when there is somewhere to page to: a "more"
+        # arrow beside a shelf that already fits is a button that lies.
+        if self.shelf["scenes"] or shown < len(animated):
+            self.more_card(pygame.Rect(x, y, int(74 * s), card_h), "scenes",
+                           len(animated))
+        y += card_h + int(14 * s)
 
         y = self.divider("Solid", y, self.middle.w)
         x = self.middle.x
-        pill_h = int(44 * s)
+        pill_h = int(48 * s)
+        shown = 0
         for scene in solid[self.shelf["solid"]:]:
             if x + card_w > self.middle.right - int(80 * s):
                 break
             self.solid_pill(pygame.Rect(x, y, card_w, pill_h), scene, state)
             x += card_w + int(10 * s)
-        self.more_card(pygame.Rect(x, y, int(74 * s), pill_h), "solid", len(solid))
+            shown += 1
+        if self.shelf["solid"] or shown < len(solid):
+            self.more_card(pygame.Rect(x, y, int(74 * s), pill_h), "solid",
+                           len(solid))
 
     def scene_card(self, rect, scene, state):
         s = self.k
@@ -1270,50 +1357,55 @@ class Panel:
         self.screen.blit(strip, rect.topleft)
 
     def draw_colour(self, state):
+        """Four fixed rows: targets, swatches, patterns, speed.
+
+        Fixed on purpose. The old version flowed and wrapped, which meant its
+        height depended on the data and it quietly overflowed the middle once
+        the chips grew to finger size. Budget: 48 + 12 + 54 + 12 + 48 + 12
+        + 42 = 228 -- exactly the middle, ending flush at its bottom edge.
+
+        The round V/I/C/E chips and the Side A/B chips are gone: the sign
+        preview above is the per-letter picker (tap the letters themselves),
+        and per-side targeting has never once been wanted from the kiosk.
+        Dropping them is what buys a single un-wrapped 48-pixel target row.
+        """
         s = self.k
-        y = self.middle.y
-        x = self.middle.x
-        # Taller than the pills elsewhere, and a wider gap between wrapped
-        # rows: these chips are the only control on the screen that stacks, so
-        # a neighbour sits directly below and takes the room a near miss would
-        # otherwise use.
-        chip_h = int(42 * s)
+        x, y = self.middle.x, self.middle.y
+
+        chip_h = int(48 * s)
         for target, label in self.target_options(state):
-            round_chip = len(label) == 1
-            width = chip_h if round_chip else self.f_small.size(label)[0] + int(30 * s)
+            width = self.f_small.size(label)[0] + int(30 * s)
             if x + width > self.middle.right:
-                x, y = self.middle.x, y + chip_h + int(12 * s)
+                break                 # one row; the rest stay on the phone
             chip = pygame.Rect(x, y, width, chip_h)
             on = target == self.target
             self.rounded(self.screen, chip, over(CYAN, 0.16) if on else CHIP_BG,
                          over(CYAN, 0.6) if on else None, radius=chip_h // 2)
-            self.text(self.screen, self.f_body2 if round_chip else self.f_small,
-                      label, CYAN_SOFT if on else over(INK, 0.62), center=chip.center)
+            self.text(self.screen, self.f_small, label,
+                      CYAN_SOFT if on else over(INK, 0.62), center=chip.center)
             self.buttons.append(Button(chip, label, "target", (target, label)))
-            x = chip.right + int(7 * s)
-        y += chip_h + int(11 * s)
+            x = chip.right + int(8 * s)
+        y += chip_h + int(12 * s)
 
         size = int(54 * s)
-        x = self.middle.x
-        for hexcode, name in SWATCHES:
-            spot = pygame.Rect(x, y, size, size)
+        step = (self.middle.w - size) / float(len(SWATCHES) - 1)
+        for index, (hexcode, name) in enumerate(SWATCHES):
+            spot = pygame.Rect(int(self.middle.x + index * step), y, size, size)
             colour = pygame.Color(hexcode)
             pygame.draw.circle(self.screen, (colour.r, colour.g, colour.b),
                                spot.center, size // 2)
             if hexcode == self.chosen_colour:
-                pygame.draw.circle(self.screen, BG, spot.center, size // 2 + int(3 * s),
-                                   width=int(3 * s))
-                pygame.draw.circle(self.screen, INK, spot.center, size // 2 + int(5 * s),
-                                   width=int(2 * s))
+                pygame.draw.circle(self.screen, BG, spot.center,
+                                   size // 2 + int(3 * s), width=int(3 * s))
+                pygame.draw.circle(self.screen, INK, spot.center,
+                                   size // 2 + int(5 * s), width=int(2 * s))
             self.buttons.append(Button(spot, name, "swatch", hexcode))
-            x = spot.right + int(10 * s)
-        y += size + int(11 * s)
+        y += size + int(12 * s)
 
-        y = self.divider("Pattern", y, self.middle.w)
         x = self.middle.x
-        pattern_h = int(46 * s)
+        pattern_h = int(48 * s)
         for pattern in self.pattern_choices(state):
-            width = self.f_small.size(pattern["label"])[0] + int(28 * s)
+            width = self.f_small.size(pattern["label"])[0] + int(34 * s)
             pill = pygame.Rect(x, y, width, pattern_h)
             on = pattern["value"] == self.chosen_pattern
             self.rounded(self.screen, pill, over(CYAN, 0.14) if on else CARD,
@@ -1324,7 +1416,8 @@ class Panel:
                                        pattern["value"]))
             x = pill.right + int(8 * s)
 
-        roll = pygame.Rect(x + int(4 * s), y, int(96 * s), pattern_h)
+        roll = pygame.Rect(self.middle.right - int(96 * s), y, int(96 * s),
+                           pattern_h)
         on = self.roll > 0
         self.rounded(self.screen, roll, over(ORANGE, 0.14) if on else CARD,
                      ORANGE if on else over(WHITE, 0.08), radius=pattern_h // 2)
@@ -1332,148 +1425,179 @@ class Panel:
                   "ROLL %.1fs" % self.roll if on else "ROLL off",
                   ORANGE if on else over(INK, 0.6), center=roll.center)
         self.buttons.append(Button(roll, "roll", "roll"))
-        x = roll.right + int(8 * s)
+        y += pattern_h + int(12 * s)
 
-        label = self.f_tiny.render("SPEED", True, FAINT)
-        self.screen.blit(label, (x + int(8 * s),
-                                 y + int(17 * s) - label.get_height() // 2))
-        track = pygame.Rect(x + int(8 * s) + label.get_width() + int(10 * s),
-                            y + int(13 * s),
-                            self.middle.right - (x + int(8 * s) + label.get_width()
-                                                 + int(10 * s)), int(8 * s))
-        if track.w > int(40 * s):
-            self.rounded(self.screen, track, over(WHITE, 0.08), radius=int(4 * s))
-            filled = pygame.Rect(track.x, track.y,
-                                 int(track.w * self.speed / 100.0), track.h)
-            self.rounded(self.screen, filled, ORANGE, radius=int(4 * s))
-            self.buttons.append(Button(track.inflate(0, int(24 * s)), "speed", "speed"))
+        # Speed, its own full-width row -- and honest about when it applies.
+        # It only means anything while a pattern is chosen; the old version
+        # silently stored the value, which read as a broken slider.
+        active = self.chosen_pattern is not None
+        label_text = "SPEED" if active else "SPEED  (pick a pattern first)"
+        label = self.f_tiny.render(label_text, True,
+                                   FAINT if active else over(INK, 0.25))
+        self.screen.blit(label, (self.middle.x,
+                                 y + int(21 * s) - label.get_height() // 2))
+        track_x = self.middle.x + label.get_width() + int(14 * s)
+        track = pygame.Rect(track_x, y + int(17 * s),
+                            self.middle.right - track_x, int(8 * s))
+        self.rounded(self.screen, track, over(WHITE, 0.08 if active else 0.04),
+                     radius=int(4 * s))
+        filled = pygame.Rect(track.x, track.y,
+                             int(track.w * self.speed / 100.0), track.h)
+        self.rounded(self.screen, filled,
+                     ORANGE if active else over(ORANGE, 0.25),
+                     radius=int(4 * s))
+        self.buttons.append(Button(track.inflate(0, int(34 * s)), "speed",
+                                   "speed"))
 
-    def draw_lights(self, state):
+    def draw_system(self, state):
+        """The troubleshooting tab: the queue, what is down, and the big levers.
+
+        This is where the ACTIVITY strip lands when tapped. Left: the job
+        queue, with the running item's own words -- "unreachable 4x, skipping
+        for another 112s" was always in the API and never on a screen. Right:
+        whatever is wrong (down devices) or, when nothing is, the vital signs.
+        Bottom: stop, clear, retry, power -- every recovery action, one row.
+        """
         s = self.k
-        columns, gap = 6, int(9 * s)
-        cell_w = (self.middle.w - gap * (columns - 1)) // columns
-        cell_h = int(56 * s)
-        down = []
-        for index, device in enumerate(state["devices"]):
-            col, row = index % columns, index // columns
-            rect = pygame.Rect(self.middle.x + col * (cell_w + gap),
-                               self.middle.y + row * (cell_h + gap), cell_w, cell_h)
-            reach = device.get("reachable")
-            chosen = self.target == "device:" + device["address"]
-            if reach is False:
-                down.append(device)
-                self.rounded(self.screen, rect, over(PINK, 0.06), over(PINK, 0.55),
-                             radius=int(14 * s), dashed=True)
-            else:
-                self.rounded(self.screen, rect,
-                             over(CYAN, 0.14) if chosen else CARD,
-                             CYAN if chosen else LINE, radius=int(14 * s),
-                             width=max(1, int(1.5 * s)) if chosen else 1)
-            pretty = device["name"].replace("_", " ")
-            self.text(self.screen, self.f_body2, pretty,
-                      over(INK, 0.55) if reach is False else INK,
-                      topleft=(rect.x + int(12 * s), rect.y + int(10 * s)))
-            note, ink = ("not answering", PINK_SOFT) if reach is False else \
-                        (("lit", OLIVE) if reach else ("unknown", FAINT))
-            self.text(self.screen, self.f_tiny, note, ink,
-                      topleft=(rect.x + int(12 * s), rect.bottom - int(20 * s)))
-            self.buttons.append(Button(rect, device["name"], "device", device))
+        left = pygame.Rect(self.middle.x, self.middle.y, int(470 * s),
+                           self.middle.h)
+        right = pygame.Rect(int(500 * s), self.middle.y,
+                            self.middle.right - int(500 * s), self.middle.h)
 
-        if down:
-            rows = (len(state["devices"]) + columns - 1) // columns
-            y = self.middle.y + rows * (cell_h + gap)
-            rect = pygame.Rect(self.middle.x, y, cell_w * 3 + gap * 2, int(56 * s))
-            self.rounded(self.screen, rect, over(PINK, 0.06), over(PINK, 0.22),
-                         radius=int(14 * s))
-            names = ", ".join(d["name"].replace("_", " ") for d in down[:2])
-            if len(down) > 2:
-                names += " +%d" % (len(down) - 2)
-            self.text(self.screen, self.f_small, "%s not answering" % names, PINK_SOFT,
-                      topleft=(rect.x + int(14 * s),
-                               rect.centery - self.f_small.get_height() // 2))
-            retry = pygame.Rect(rect.right - int(90 * s), rect.centery - int(15 * s),
-                                int(76 * s), int(30 * s))
-            self.rounded(self.screen, retry, over(INK, 0.08), radius=int(15 * s))
-            self.text(self.screen, self.f_small, "RETRY", INK, center=retry.center)
-            self.buttons.append(Button(retry, "RETRY", "retry", down))
-
-    def draw_status(self, state):
-        """Alerts and diagnostics, and the way to shut the Pi down cleanly."""
-        s = self.k
-        rows = state["diagnostics"]
-        if not rows:
-            self.text(self.screen, self.f_small, "Reading the sign\u2026", MUTED,
-                      topleft=(self.middle.x, self.middle.y + int(8 * s)))
-            return
-
-        # Two columns, so nine rows fit without scrolling.
-        column_w = (self.middle.w - int(14 * s)) // 2
-        row_h = int(30 * s)
-        per_column = (len(rows) + 1) // 2
-        for index, entry in enumerate(rows):
-            col, line = index // per_column, index % per_column
-            x = self.middle.x + col * (column_w + int(14 * s))
-            y = self.middle.y + line * row_h
-            ok = entry.get("ok")
-            pygame.draw.circle(self.screen, OLIVE if ok else PINK,
-                               (x + int(5 * s), y + row_h // 2), int(4 * s))
-            self.text(self.screen, self.f_small, entry["name"], INK,
-                      topleft=(x + int(16 * s),
-                               y + row_h // 2 - self.f_small.get_height() // 2))
-            value = entry["value"]
-            image = self.f_small.render(value, True, INK if ok else PINK_SOFT)
-            # Values sit hard right so the verdicts read down the edge.
-            self.screen.blit(image, (x + column_w - image.get_width(),
-                                     y + row_h // 2 - image.get_height() // 2))
-
-        y = self.middle.y + per_column * row_h + int(6 * s)
-        note = state["unreachable"]
-        if note:
-            first = note[0]
-            text = "%s: %s" % (first["name"], (first.get("error") or "not answering")[:52])
-            if len(note) > 1:
-                text += "   +%d more" % (len(note) - 1)
-            strip = pygame.Rect(self.middle.x, y, self.middle.w, int(28 * s))
-            self.rounded(self.screen, strip, over(PINK, 0.06), over(PINK, 0.22),
+        # -- the queue
+        jobs = state["jobs"]
+        title = "Queue" if len(jobs) <= 3 else "Queue \u00b7 +%d more" % (len(jobs) - 3)
+        y = self.divider(title, left.y, left.w)
+        order = {"running": 0, "queued": 1}
+        jobs = sorted(jobs, key=lambda j: (order.get(j.get("state"), 2),
+                                           j.get("age", 0)))
+        row_h, gap = int(46 * s), int(6 * s)
+        shown = jobs[:3]
+        for job in shown:
+            row = pygame.Rect(left.x, y, left.w, row_h)
+            state_name = job.get("state", "?")
+            dot = {"running": CYAN, "queued": over(INK, 0.4), "done": OLIVE,
+                   "superseded": over(INK, 0.3)}.get(state_name, PINK)
+            self.rounded(self.screen, row,
+                         over(CYAN, 0.07) if state_name == "running" else CARD,
+                         over(CYAN, 0.4) if state_name == "running" else LINE_SOFT,
                          radius=int(12 * s))
-            self.text(self.screen, self.f_tiny, text, PINK_SOFT,
-                      topleft=(strip.x + int(12 * s),
-                               strip.centery - self.f_tiny.get_height() // 2))
-            y = strip.bottom + int(8 * s)
+            pygame.draw.circle(self.screen, dot,
+                               (row.x + int(16 * s), row.centery), int(5 * s))
+            label = (job.get("label") or "?").replace("scene: ", "")
+            while label and self.f_body2.size(label)[0] > row.w - int(170 * s):
+                label = label[:-1]
+            # The running row carries the current item's own words underneath;
+            # everything else centres one line.
+            detail = ""
+            if state_name == "running":
+                for item in job.get("items") or []:
+                    if item.get("status") == "working" and item.get("detail"):
+                        detail = item["detail"]
+                        break
+                    if item.get("status") in ("failed", "skipped") and item.get("detail"):
+                        detail = "%s: %s" % (item.get("name", "?"), item["detail"])
+            if detail:
+                self.text(self.screen, self.f_body2, label, INK,
+                          topleft=(row.x + int(30 * s), row.y + int(6 * s)))
+                while detail and self.f_tiny.size(detail)[0] > row.w - int(44 * s):
+                    detail = detail[:-1]
+                self.text(self.screen, self.f_tiny, detail, MUTED,
+                          topleft=(row.x + int(30 * s), row.y + int(25 * s)))
+            else:
+                self.text(self.screen, self.f_body2, label, INK,
+                          topleft=(row.x + int(30 * s),
+                                   row.centery - self.f_body2.get_height() // 2))
+            done = job.get("done", 0)
+            total = job.get("total", 0)
+            age = int(job.get("age", 0))
+            when = "%dm" % (age // 60) if age >= 60 else "%ds" % age
+            note = "%d/%d \u00b7 %s" % (done, total, when) if total else when
+            failed = job.get("failed", 0)
+            image = self.f_tiny.render(note, True,
+                                       PINK_SOFT if failed else MUTED)
+            self.screen.blit(image, (row.right - int(12 * s) - image.get_width(),
+                                     row.centery - image.get_height() // 2))
+            y = row.bottom + gap
+        if not shown:
+            self.text(self.screen, self.f_small,
+                      "Nothing has run lately.", MUTED,
+                      topleft=(left.x, y + int(6 * s)))
 
-        # The ones that change something sit apart from the read-only rows,
-        # and they sit on the bottom of the middle rather than after whatever
-        # came before: the unreachable-device strip appears only when a device
-        # is down, and with it the row ran twelve pixels off the screen --
-        # which is exactly when someone needs RETRY DOWN.
-        width = int(150 * s)
+        # -- what is wrong, or the vitals when nothing is
+        down = state["unreachable"]
+        y = self.divider("Not answering" if down else "Vitals", right.y,
+                         right.w, x=right.x)
+        if down:
+            for device in down[:2]:
+                row = pygame.Rect(right.x, y, right.w, int(40 * s))
+                self.rounded(self.screen, row, over(PINK, 0.06),
+                             over(PINK, 0.35), radius=int(10 * s))
+                name = device.get("name", "?").replace("_", " ")
+                self.text(self.screen, self.f_body2, name, PINK_SOFT,
+                          topleft=(row.x + int(12 * s), row.y + int(4 * s)))
+                why = (device.get("error") or "no answer")[:34]
+                self.text(self.screen, self.f_tiny, why, over(PINK_SOFT, 0.7),
+                          topleft=(row.x + int(12 * s), row.y + int(22 * s)))
+                y = row.bottom + int(6 * s)
+            if len(down) > 2:
+                self.text(self.screen, self.f_tiny, "+%d more" % (len(down) - 2),
+                          FAINT, topleft=(right.x + int(4 * s), y))
+                y += int(16 * s)
+            test = pygame.Rect(right.x, y + int(2 * s), right.w, int(48 * s))
+            self.rounded(self.screen, test, over(INK, 0.08), LINE,
+                         radius=test.h // 2)
+            self.text(self.screen, self.f_body, "TEST DOWN UNITS", INK,
+                      center=test.center)
+            self.buttons.append(Button(test, "TEST DOWN UNITS", "retry-down"))
+        else:
+            wanted = ("Bluetooth", "Clock", "Network", "Pi power", "Storage")
+            rows = [r for name in wanted for r in state["diagnostics"]
+                    if r.get("name") == name][:4] or state["diagnostics"][:4]
+            for entry in rows:
+                ok = entry.get("ok")
+                pygame.draw.circle(self.screen, OLIVE if ok else PINK,
+                                   (right.x + int(5 * s), y + int(15 * s)),
+                                   int(4 * s))
+                self.text(self.screen, self.f_small, entry["name"], INK,
+                          topleft=(right.x + int(16 * s), y + int(6 * s)))
+                value = entry.get("value", "")[:22]
+                image = self.f_small.render(value, True,
+                                            INK if ok else PINK_SOFT)
+                self.screen.blit(image, (right.right - image.get_width(),
+                                         y + int(6 * s)))
+                y += int(30 * s)
+
+        # -- the levers, pinned to the bottom of the middle
         height = int(48 * s)
-        y = min(y, self.middle.bottom - height)
-        # First, because it is the one you want in a hurry: a sweep of
-        # controllers that are out of range runs for minutes, and everything
-        # else -- a test message, a scene, a retry -- waits behind it.
-        stop = pygame.Rect(self.middle.x, y, width, height)
-        self.rounded(self.screen, stop, over(ORANGE, 0.10), over(ORANGE, 0.45),
+        y = self.middle.bottom - height
+        gap = int(10 * s)
+        stop = pygame.Rect(self.middle.x, y, int(268 * s), height)
+        self.rounded(self.screen, stop, over(ORANGE, 0.12), over(ORANGE, 0.5),
                      radius=height // 2)
-        self.text(self.screen, self.f_small, "STOP NOW", ORANGE, center=stop.center)
-        self.buttons.append(Button(stop, "STOP NOW", "stop-all"))
+        self.text(self.screen, self.f_body, "STOP EVERYTHING", ORANGE,
+                  center=stop.center)
+        self.buttons.append(Button(stop, "STOP EVERYTHING", "stop-all"))
 
-        retry = pygame.Rect(stop.right + int(10 * s), y, width, height)
+        clear = pygame.Rect(stop.right + gap, y, int(160 * s), height)
+        self.rounded(self.screen, clear, CARD, LINE, radius=height // 2)
+        self.text(self.screen, self.f_body, "CLEAR QUEUE", INK,
+                  center=clear.center)
+        self.buttons.append(Button(clear, "CLEAR QUEUE", "clear-queue"))
+
+        retry = pygame.Rect(clear.right + gap, y, int(160 * s), height)
         self.rounded(self.screen, retry, CARD, LINE, radius=height // 2)
-        self.text(self.screen, self.f_small, "RETRY DOWN", INK, center=retry.center)
+        self.text(self.screen, self.f_body, "RETRY DOWN", INK,
+                  center=retry.center)
         self.buttons.append(Button(retry, "RETRY DOWN", "retry-down"))
 
-        reboot = pygame.Rect(retry.right + int(10 * s), y, width, height)
-        self.rounded(self.screen, reboot, CARD, over(ORANGE, 0.45), radius=height // 2)
-        self.text(self.screen, self.f_small, "REBOOT PI", ORANGE, center=reboot.center)
-        self.buttons.append(Button(reboot, "REBOOT PI", "ask-reboot"))
-
-        shut = pygame.Rect(reboot.right + int(10 * s), y, width, height)
-        self.rounded(self.screen, shut, over(PINK, 0.10), over(PINK, 0.45),
+        power = pygame.Rect(retry.right + gap, y,
+                            self.middle.right - retry.right - gap, height)
+        self.rounded(self.screen, power, CARD, over(ORANGE, 0.45),
                      radius=height // 2)
-        self.text(self.screen, self.f_small, "SHUT DOWN PI", PINK_SOFT,
-                  center=shut.center)
-        self.buttons.append(Button(shut, "SHUT DOWN PI", "ask-shutdown"))
+        self.text(self.screen, self.f_body, "POWER\u2026", ORANGE,
+                  center=power.center)
+        self.buttons.append(Button(power, "POWER", "ask-power"))
 
     def draw_panel(self, state):
         """The text panel: what it is saying, and what else it could say.
@@ -1558,7 +1682,7 @@ class Panel:
 
         # -- the queue, as chips you can put up with one tap
         messages = state["messages"]
-        chip_h = int(38 * s)
+        chip_h = int(44 * s)
         gap = int(8 * s)
         per_row = 4
         chip_w = (self.middle.w - gap * (per_row - 1)) // per_row
@@ -1700,6 +1824,10 @@ class Panel:
         It names the consequence rather than asking "are you sure": after a
         shutdown the sign is dark and this panel is dead, and the only way back
         is unplugging the Pi and plugging it in again.
+
+        ``options`` is a list of {label, action, danger?}; CANCEL is added
+        here so no caller can forget it. Actions dispatch through the same
+        act()/system() rails as any button, on their worker threads.
         """
         s = self.k
         ask = self.confirm
@@ -1715,29 +1843,47 @@ class Panel:
                       topleft=(panel.x + int(18 * s), y))
             y += int(20 * s)
 
-        height = int(46 * s)
-        wide = int(190 * s)
-        yes = pygame.Rect(panel.right - int(18 * s) - wide,
-                          panel.bottom - int(18 * s) - height, wide, height)
-        self.rounded(self.screen, yes, over(PINK, 0.16), PINK, radius=height // 2)
-        self.text(self.screen, self.f_head2, ask["yes"], PINK_SOFT, center=yes.center)
-        self.buttons.append(Button(yes, ask["yes"], "confirm-yes"))
-
-        cancel = pygame.Rect(yes.x - int(10 * s) - wide, yes.y, wide, height)
+        height = int(48 * s)
+        options = ask["options"]
+        wide = min(int(200 * s),
+                   (panel.w - int(36 * s) - int(10 * s) * len(options))
+                   // (len(options) + 1))
+        x = panel.right - int(18 * s) - wide
+        row_y = panel.bottom - int(18 * s) - height
+        for option in reversed(options):
+            spot = pygame.Rect(x, row_y, wide, height)
+            danger = option.get("danger")
+            self.rounded(self.screen, spot,
+                         over(PINK, 0.16) if danger else over(CYAN, 0.12),
+                         PINK if danger else over(CYAN, 0.6),
+                         radius=height // 2)
+            self.text(self.screen, self.f_body, option["label"],
+                      PINK_SOFT if danger else CYAN_SOFT, center=spot.center)
+            self.buttons.append(Button(spot, option["label"], "confirm-opt",
+                                       option["action"]))
+            x -= wide + int(10 * s)
+        cancel = pygame.Rect(x, row_y, wide, height)
         self.rounded(self.screen, cancel, CARD, LINE, radius=height // 2)
-        self.text(self.screen, self.f_head2, "CANCEL", INK, center=cancel.center)
+        self.text(self.screen, self.f_body, "CANCEL", INK, center=cancel.center)
         self.buttons.append(Button(cancel, "CANCEL", "confirm-no"))
 
     def target_options(self, state):
-        preferred = ["letters", "drink", "cup", "straw", "border", "side-a", "side-b"]
+        """The named groups, one finger-sized row's worth.
+
+        The single-letter groups and the per-side pair are deliberately not
+        here: the preview letters above ARE the per-letter picker, and
+        per-side targeting stays on the phone. That is what lets this be one
+        48-pixel row instead of two cramped ones.
+        """
+        preferred = ["letters", "drink", "cup", "straw", "border"]
         groups = list(state["groups"])
         ordered = [g for g in preferred if g in groups]
-        ordered += [g for g in groups if g not in ordered and len(g) > 1]
+        ordered += [g for g in groups
+                    if g not in ordered and len(g) > 1
+                    and not g.startswith("side-")]
         options = [("all", "Everything")]
         options += [("group:" + g, GROUP_LABELS.get(g, g.replace("-", " ").title()))
                     for g in ordered]
-        # The single-letter groups become round chips, as in 2b.
-        options += [("group:" + g, g) for g in groups if len(g) == 1]
         return options
 
     @staticmethod
@@ -1755,8 +1901,6 @@ class Panel:
                     break
         return out
 
-    def layout_actions(self):
-        pass          # the bottom bar is built while drawing
 
     # -- drawing helpers ------------------------------------------------------
 
@@ -1825,6 +1969,10 @@ class Panel:
     # rather than the one it was closer to.
     TOUCH_SLOP = 18          # pixels at 800x480, about 2.1mm on this panel
 
+    # Controls a near miss must never land on. STOP throws away the queue; a
+    # finger aimed at the progress readout beside it has to miss harmlessly.
+    NEVER_SLOP = ("stop-all",)
+
     @staticmethod
     def _gap(rect, position) -> float:
         """How far a point is from a rectangle. Zero when it is inside."""
@@ -1846,6 +1994,8 @@ class Panel:
         slop = self.TOUCH_SLOP * self.k
         best, best_gap = None, None
         for button in candidates:
+            if button.kind in self.NEVER_SLOP:
+                continue              # direct hits only, handled above
             gap = self._gap(button.rect, position)
             if gap <= slop and (best_gap is None or gap < best_gap):
                 best, best_gap = button, gap
@@ -1856,11 +2006,15 @@ class Panel:
             # While a prompt is up nothing else is live, so a stray finger on
             # the tab row cannot dismiss it by navigating away.
             button = self._hit(position, self.buttons,
-                               kinds=("confirm-yes", "confirm-no"))
+                               kinds=("confirm-opt", "confirm-no"))
             if button is not None:
-                ask, self.confirm = self.confirm, None
-                if button.kind == "confirm-yes":
-                    self.system(ask["action"])
+                self.confirm = None
+                if button.kind == "confirm-opt":
+                    action = button.payload
+                    if action in ("reboot", "shutdown"):
+                        self.system(action)
+                    else:
+                        self.act(action)
             return
         if self.compose is not None:
             # Same reasoning as the confirm prompt above: while the keyboard is
@@ -1963,28 +2117,39 @@ class Panel:
                                 for d in down])
                 else:
                     self.sign.say("Nothing is down")
-            elif kind == "ask-reboot":
+            elif kind == "ask-power":
                 self.confirm = {
-                    "action": "reboot", "yes": "REBOOT",
-                    "title": "Reboot the Pi?",
-                    "body": ["The lights hold whatever they are showing -- the",
-                             "controllers keep running without the Pi.",
-                             "The sign comes back on its own in about a minute."]}
-            elif kind == "ask-shutdown":
-                self.confirm = {
-                    "action": "shutdown", "yes": "SHUT DOWN",
-                    "title": "Shut the Pi down?",
-                    "body": ["This panel goes dark and does not come back.",
-                             "To start it again, unplug the Pi and plug it in.",
+                    "title": "Reboot or shut down?",
+                    "body": ["Reboot: the lights hold what they are showing and",
+                             "the sign comes back on its own in about a minute.",
                              "",
-                             "Do this before pulling power: the config is written",
-                             "continuously, and a mid-write power cut is how SD",
-                             "cards corrupt."]}
-            elif kind == "save":
-                # Naming needs a keyboard, and the panel deliberately has none.
-                self.sign.say("Saving a scene needs a name -- use the phone UI")
-            elif kind == "revert":
-                self.act("revert")
+                             "Shut down: this panel goes dark and does not come",
+                             "back until the Pi is unplugged and plugged in.",
+                             "Do it this way before pulling power -- a mid-write",
+                             "power cut is how SD cards corrupt."],
+                    "options": [{"label": "REBOOT", "action": "reboot"},
+                                {"label": "SHUT DOWN", "action": "shutdown",
+                                 "danger": True}]}
+            elif kind == "battery":
+                snap = self.sign.snapshot()
+                if (snap.get("battery") or {}).get("tripped_at"):
+                    self.confirm = {
+                        "title": "The battery guard cut the lights",
+                        "body": ["The runtime budget ran out, so everything was",
+                                 "switched off -- rotation too, or it would have",
+                                 "relit the sign minutes later.",
+                                 "",
+                                 "Re-arm starts a fresh budget. With rotation, the",
+                                 "sign also starts changing scenes again."],
+                        "options": [
+                            {"label": "RE-ARM", "action": "rearm"},
+                            {"label": "+ ROTATE", "action": "rearm-rotate"}]}
+                else:
+                    self.tab = "system"
+            elif kind == "activity":
+                self.tab = "system"
+            elif kind == "clear-queue":
+                self.act("clear-queue")
             return
 
     def system(self, action):
@@ -2144,14 +2309,6 @@ class Panel:
                 where, name = self.selection()
                 _post("/api/power", dict(where, on=False))
                 self.sign.say("Turning off " + name.lower())
-            elif kind == "revert":
-                with self.sign.lock:
-                    playing = self.sign.playing
-                if playing:
-                    _post("/api/scene/apply", {"scene": playing})
-                    self.sign.say("Back to " + playing)
-                else:
-                    self.sign.say("Nothing to go back to")
             elif kind == "panel-cycle":
                 with self.sign.lock:
                     cycling = bool((self.sign.panel or {}).get("playlist"))
@@ -2178,6 +2335,19 @@ class Panel:
                 result = _post("/api/rotation/next", {})
                 self.sign.say(("Now playing " + result["scene"]) if result.get("ok")
                               else (result.get("error") or "nothing to play"))
+            elif kind == "rearm":
+                _post("/api/battery/rearm", {})
+                self.sign.say("Battery budget restarted")
+            elif kind == "rearm-rotate":
+                _post("/api/battery/rearm", {})
+                _post("/api/rotation", {"enabled": True})
+                self.sign.say("Re-armed \u00b7 rotation back on")
+            elif kind == "clear-queue":
+                result = _post("/api/queue/clear", {})
+                cleared = result.get("cleared", 0)
+                self.sign.say("Cleared %d queued job%s"
+                              % (cleared, "" if cleared == 1 else "s")
+                              if result.get("ok") else "could not clear it")
             else:
                 with self.sign.lock:
                     want = not bool(self.sign.rotation.get("enabled"))
@@ -2248,7 +2418,8 @@ class Panel:
                     self.last_point = (x, y)
                 elif kind == "up":
                     if self.drag_from and self.dragging:
-                        self.swipe(self.last_point[0] - self.drag_from[0])
+                        self.swipe(self.last_point[0] - self.drag_from[0],
+                                   at_y=self.drag_from[1])
                     elif self.drag_from:
                         self.tap((x, y))
                     self.drag_from, self.dragging = None, False
@@ -2267,12 +2438,10 @@ class Panel:
                     self.draw_scenes(state)
                 elif self.tab == "colour":
                     self.draw_colour(state)
-                elif self.tab == "lights":
-                    self.draw_lights(state)
                 elif self.tab == "panel":
                     self.draw_panel(state)
                 else:
-                    self.draw_status(state)
+                    self.draw_system(state)
                 # The keyboard covers the bottom bar; drawing it underneath
                 # would put live buttons behind an overlay.
                 if self.compose is None:
@@ -2299,14 +2468,21 @@ class Panel:
             self.fb.close()
         pygame.quit()
 
-    def swipe(self, dx):
-        """Page the shelf. Only Scenes has one; the other tabs ignore it."""
+    def swipe(self, dx, at_y=None):
+        """Page a shelf. Only Scenes has them; the other tabs ignore this.
+
+        Pages the shelf the drag started over, not always the animated one --
+        swiping the solid row used to page the row above it, which reads as a
+        broken gesture rather than a wrong target.
+        """
         if self.tab != "scenes":
             return
-        which = "scenes"
+        boundary = self.middle.y + int(136 * self.k)   # divider+cards end
+        which = "solid" if (at_y is not None and at_y > boundary) else "scenes"
         page = 5
         with self.sign.lock:
-            total = sum(1 for s in self.sign.scenes if s["animated"])
+            total = sum(1 for s in self.sign.scenes
+                        if s["animated"] == (which == "scenes"))
         if dx < 0:
             self.shelf[which] = 0 if self.shelf[which] + page >= total \
                 else self.shelf[which] + page
