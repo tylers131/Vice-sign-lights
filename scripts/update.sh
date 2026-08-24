@@ -43,6 +43,16 @@ fi
 
 echo "==> restarting"
 systemctl restart vice-lights
+
+# The touchscreen is its own service running its own copy of vice_kiosk.py,
+# which this script has just replaced -- so without this it keeps running the
+# old code and an update looks like it did nothing. Only when it is installed:
+# a sign with no panel attached should not grow an error message.
+if systemctl list-unit-files vice-kiosk.service >/dev/null 2>&1 \
+   && systemctl is-enabled --quiet vice-kiosk 2>/dev/null; then
+  echo "==> restarting the touchscreen too"
+  systemctl restart vice-kiosk || echo "    (vice-kiosk did not come back; systemctl status vice-kiosk)"
+fi
 sleep 4
 journalctl -u vice-lights -n 12 --no-pager | sed 's/^/    /'
 echo

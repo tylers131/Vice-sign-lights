@@ -485,6 +485,21 @@ Not wired up, because it depends on how the panel physically mounts and that is
 not known until it is on the sign. If it comes up upside down, say so rather
 than guessing at `config.txt` values.
 
+### Updating
+
+```bash
+cd ~/vice-sign-lights && git pull && sudo ./scripts/update.sh
+```
+
+That copies the code into `/opt/vice-sign-lights` and restarts both services --
+`vice-lights` for the web UI and the sign, and `vice-kiosk` for the
+touchscreen, which runs its own copy of `vice_kiosk.py` in its own process. It
+used to restart only the first, so a change to the touchscreen looked like an
+update that did nothing.
+
+`/etc/vice-lights/config.json` is never touched: scenes, devices, panel
+settings and the runtime budget all survive an update.
+
 ### Diagnostics without a laptop
 
 At the sign there is a phone, a touchscreen and nothing else -- so a check
