@@ -102,6 +102,22 @@ class TimeKeeper:
         except (ValueError, OverflowError):
             return None
 
+    @staticmethod
+    def _tz_name() -> str:
+        """The abbreviation that matches the offset actually in force.
+
+        time.tzname is a pair -- ("PST", "PDT") -- and index 0 is the standard
+        one whatever the date. Reporting "PST" through the summer put a label
+        an hour off the clock beside it, which is the sort of small lie that
+        wastes an hour of someone's night when a schedule fires late.
+        """
+        if not time.tzname:
+            return ""
+        local = time.localtime()
+        if local.tm_isdst > 0 and len(time.tzname) > 1 and time.tzname[1]:
+            return time.tzname[1]
+        return time.tzname[0]
+
     def info(self) -> dict:
         now = dt.datetime.now()
         return {
@@ -109,7 +125,7 @@ class TimeKeeper:
             "epoch": time.time(),
             "clock_ok": self.clock_ok(),
             "weekday": now.weekday(),
-            "tz": time.tzname[0] if time.tzname else "",
+            "tz": self._tz_name(),
             "source": self.last_set_source,
             "rtc": self.rtc_present(),
             "can_set": os.geteuid() == 0,

@@ -47,7 +47,25 @@ command -v dtparam >/dev/null && dtparam i2c_arm=on 2>/dev/null || true
 # A bounded attempt: on the playa there is no mirror to reach and apt will sit
 # there retrying one for minutes before it admits it. Neither package below is
 # required, so a timeout is the right answer, not a wait.
-apt_try() { timeout 60 apt-get install -y "$1" >/dev/null 2>&1; }
+#
+# </dev/null matters as much as the timeout. apt and dpkg reach for the
+# terminal directly -- they call tcsetattr on stdin to stop your password
+# echoing -- and when timeout's SIGTERM cuts one down mid-call it never puts
+# the settings back. What you get is every later line of this script marching
+# off to the right, one staircase step at a time, because the terminal has
+# stopped turning newlines into carriage returns. Handing apt a stdin that is
+# not a terminal means there is nothing there for it to break. The stty
+# save/restore below is the belt to that pair of braces.
+apt_try() {
+  local settings status
+  settings="$(stty -g 2>/dev/null || true)"
+  # && / || rather than a bare $?, so this is safe under set -e wherever it
+  # gets called from, not just inside an if.
+  timeout 60 apt-get install -y "$1" </dev/null >/dev/null 2>&1 \
+    && status=0 || status=$?
+  [[ -n "$settings" ]] && stty "$settings" 2>/dev/null || true
+  return $status
+}
 
 if ! command -v i2cdetect >/dev/null; then
   if apt_try i2c-tools; then
