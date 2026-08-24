@@ -1886,6 +1886,42 @@ VICELIGHTS_FAKE_BLE=1 python3 -m vicelights --config ./config.example.json \
 
 ---
 
+## 9b. A real clock, at last
+
+Everything time-shaped in this project was built around the Pi having no RTC:
+the timekeeper persists a stamp to disk every minute and pulls the clock
+forward on boot, wall-clock schedules pause whenever the clock is suspect,
+and the battery guard counts monotonic minutes because "off at 3am" cannot be
+trusted. All of that still works -- but with a battery-backed RTC module on
+the I2C pins, it stops being load-bearing.
+
+Wire the module to SDA (pin 3), SCL (pin 5), 3V3 and GND, then:
+
+```bash
+sudo ./scripts/setup_rtc.sh            # DS3231, the usual module
+sudo ./scripts/setup_rtc.sh pcf8523    # Adafruit PiRTC and some HATs
+```
+
+The script is idempotent and does the whole job: enables I2C, adds the
+overlay to config.txt *and* live-loads it so no reboot is needed, removes
+fake-hwclock, unblocks the udev hwclock script, and syncs whichever clock
+knows the time into the one that does not. If the chip name is wrong it says
+so from the bus scan rather than leaving a silent dead overlay.
+
+Two integrations make it stick:
+
+* The service runs `hwclock -s` at start (a `-` prefix, so a Pi without an
+  RTC starts exactly as before). If the RTC ever holds garbage, the
+  timekeeper's forward-only stamp restore still corrects it.
+* **Setting the time from the phone now writes the RTC too** (`hwclock -w`
+  after `date -s`). Nothing auto-syncs system time into an RTC on a box with
+  no NTP, so without this the module would keep serving whatever time it
+  shipped with, and a set time would die with the next power cut.
+
+`/api/time` reports `rtc: true` when the device is present, the Timing tab's
+clock source reads "hardware clock" after a boot that used it, and
+`preflight.sh` warns when no RTC is fitted.
+
 ## 10. The text panel
 
 A BLE LED matrix that shows text. It is a **different device class** from

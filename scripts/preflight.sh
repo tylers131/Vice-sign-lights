@@ -182,6 +182,12 @@ USE="$(df -P / 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%')"
 if [[ -n "$USE" && "$USE" -lt 85 ]]; then ok "disk" "${USE}% used"
 elif [[ -n "$USE" ]]; then bad "disk" "${USE}% used" "free space before the playa"; fi
 
+if [[ -e /dev/rtc0 ]]; then
+  ok "hardware clock" "present"
+else
+  warn "hardware clock" "none -- time survives reboots only as a saved stamp;
+        an RTC module + sudo ./scripts/setup_rtc.sh fixes that"
+fi
 if api /api/status | grep -q '"clock_ok": *true'; then
   ok "clock" "set"
 else

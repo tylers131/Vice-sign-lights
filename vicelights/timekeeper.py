@@ -29,6 +29,11 @@ log = logging.getLogger("vicelights.time")
 # Anything before this means "the clock was never set on this boot".
 SANE_AFTER = dt.datetime(2024, 1, 1)
 
+# A battery-backed clock, if scripts/setup_rtc.sh has been run on a module
+# wired to the I2C pins. Everything here still works without one -- the RTC
+# just makes the stamp-restore dance unnecessary instead of load-bearing.
+RTC_DEVICE = "/dev/rtc0"
+
 
 class TimeKeeper:
     def __init__(self, state_path: str, persist_interval: float = 60.0):
@@ -48,6 +53,10 @@ class TimeKeeper:
     def clock_ok() -> bool:
         return dt.datetime.now() >= SANE_AFTER
 
+    @staticmethod
+    def rtc_present() -> bool:
+        return os.path.exists(RTC_DEVICE)
+
     def info(self) -> dict:
         now = dt.datetime.now()
         return {
@@ -57,6 +66,7 @@ class TimeKeeper:
             "weekday": now.weekday(),
             "tz": time.tzname[0] if time.tzname else "",
             "source": self.last_set_source,
+            "rtc": self.rtc_present(),
             "can_set": os.geteuid() == 0,
         }
 
@@ -88,6 +98,11 @@ class TimeKeeper:
             log.info("no saved clock stamp; time is unknown until you set it")
             return False
         if time.time() >= stamp:
+            if self.rtc_present() and self.clock_ok():
+                # The kernel (and the service's own hwclock -s at start) set
+                # the system clock from the hardware one; say so rather than
+                # leaving the source blank as if nobody knew the time.
+                self.last_set_source = self.last_set_source or "hardware clock"
             log.info("system clock (%s) is at or ahead of saved stamp",
                      dt.datetime.now().isoformat(timespec="seconds"))
             return False
@@ -111,8 +126,23 @@ class TimeKeeper:
             raise RuntimeError("could not set system clock (need root)")
         self.last_set_source = source
         self._write_stamp()
+        # A time someone bothered to set belongs in the hardware clock, or it
+        # dies with the next power cut and the RTC keeps serving whatever it
+        # held before. Nothing auto-syncs system -> RTC on a box with no NTP.
+        self._write_rtc()
         log.warning("system clock set to %s (%s)", target.isoformat(timespec="seconds"), source)
         return self.info()
+
+    def _write_rtc(self):
+        if not self.rtc_present():
+            return
+        try:
+            subprocess.run(["hwclock", "-w"], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                           timeout=10)
+            log.info("hardware clock updated")
+        except Exception as exc:
+            log.warning("could not write the hardware clock: %s", exc)
 
     @staticmethod
     def _apply_system_time(target: dt.datetime) -> bool:

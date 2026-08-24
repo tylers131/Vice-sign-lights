@@ -20,6 +20,9 @@ ExecStartPre=/bin/sleep 8
 # "Failed to set mode: Failed (0x03)" in the bluetoothd log), which would look
 # like all 16 controllers dying at once. Clear it and bring the adapter up.
 # Leading "-" means a failure here never stops the service from starting.
+# Read the hardware clock, when one exists, before anything timestamps
+# anything. The '-' means a Pi without an RTC starts exactly as before.
+ExecStartPre=-/sbin/hwclock -s
 ExecStartPre=-/bin/sh -c 'rfkill unblock bluetooth || true'
 ExecStartPre=-/bin/sh -c 'hciconfig hci0 up 2>/dev/null || btmgmt power on 2>/dev/null || true'
 ExecStart=/opt/vice-sign-lights/venv/bin/python -m vicelights
