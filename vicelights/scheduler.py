@@ -133,6 +133,22 @@ class Rotation:
         return ("base", rotation.get("playlist") or [],
                 float(rotation["interval_minutes"]))
 
+    def _resolve_scenes(self, rotation):
+        """Resolve to (key, playable scene names, interval) -- never freeze.
+
+        The mood's playlist is filtered against the scenes that exist and the
+        exclude list. If that leaves nothing -- a day-part naming scenes that
+        were renamed, or an exclude that swallowed the whole mood -- fall back
+        to the base playlist rather than sitting on a frozen sign with no
+        rotation and no self-heal. The key stays the mood's, so the boundary
+        detection and the on-screen label are unaffected.
+        """
+        key, playlist, minutes = self._resolve(rotation)
+        names = self.store.rotation_scenes(playlist)
+        if not names and key != "base":
+            names = self.store.rotation_scenes(rotation.get("playlist") or [])
+        return key, names, minutes
+
     @staticmethod
     def _mood_label(key):
         """Human name for a resolved key, for the UI. None for the plain list."""
@@ -154,8 +170,7 @@ class Rotation:
 
     def status(self) -> dict:
         rotation = self.store.rotation()
-        key, playlist, minutes = self._resolve(rotation)
-        names = self.store.rotation_scenes(playlist)
+        key, names, minutes = self._resolve_scenes(rotation)
         with self._lock:
             next_at, current = self._next_at, self._current
         remaining = None
@@ -230,24 +245,27 @@ class Rotation:
             self._active_key = key
 
     def play_next(self, force: bool = False) -> str:
-        """Advance to the next scene now. Returns the name, or None."""
+        """Play the next scene now (re-sending a lone one). Returns it, or None.
+
+        A single-scene mood is still *sent* every interval, not skipped: that
+        re-send is the self-heal that re-wakes a controller whose Bluetooth
+        dropped, so the sign staying lit does not depend on there being two
+        scenes to alternate between.
+        """
         rotation = self.store.rotation()
-        key, playlist, minutes = self._resolve(rotation)
-        names = self.store.rotation_scenes(playlist)
+        key, names, minutes = self._resolve_scenes(rotation)
         if not names:
             if not self._warned_empty:
                 log.warning("rotation has no scenes to play (check playlist/exclude)")
                 self._warned_empty = True
             return None
         self._warned_empty = False
-        if len(names) == 1 and not force:
-            # Nothing to advance to, but keep the mood current so a later
-            # day-part change is still seen as a change.
-            with self._lock:
-                self._active_key = key
-            return None
 
         with self._lock:
+            # A mood change reached here (a manual "next" landing right on a
+            # day-part boundary) must draw from the new mood, not the old bag.
+            if self._active_key is not None and key != self._active_key:
+                self._bag = []
             name = self._next_name(names, rotation)
             self._last_played = name
             self._current = name

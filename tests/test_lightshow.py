@@ -305,6 +305,87 @@ class BoundarySwitch(unittest.TestCase):
         self.assertEqual(self.rot._active_key, "daypart:Daytime")
 
 
+class SelfHeal(unittest.TestCase):
+    """A mood must keep re-sending -- that is the fix for dropped controllers.
+
+    Regressions for the review's confirmed self-heal defects: a single-scene
+    mood was skipped entirely, and a mood whose playlist matched nothing froze.
+    """
+
+    def setUp(self):
+        self.store = build_store()
+        self.worker = FakeWorker()
+
+    def _rot(self, when=None, coffee=False):
+        return Rotation(self.store, self.worker, timekeeper=FakeClock(when),
+                        service_active=lambda: coffee)
+
+    def test_single_scene_mood_is_resent_every_interval(self):
+        # A one-scene fallback (clock unset) must still be sent, and re-sent.
+        self.store.update_rotation({"enabled": True, "playlist": ["Vice"],
+                                    "dayparts": [], "attract": []})
+        rot = self._rot(when=None)
+        self.assertEqual(rot.play_next(), "Vice")
+        self.assertEqual(rot.play_next(), "Vice")     # re-sent, not skipped
+        self.assertEqual(self.worker.submitted, ["Vice", "Vice"])
+
+    def test_empty_resolved_playlist_falls_back_not_freezes(self):
+        # A day-part naming a scene that does not exist must not freeze rotation.
+        self.store.update_rotation({
+            "enabled": True, "playlist": ["Vice", "Miami"],
+            "dayparts": [{"name": "Void", "start": "00:00",
+                          "interval_minutes": 5.0, "playlist": ["No Such Scene"]}],
+            "attract": []})
+        rot = self._rot(when=dt.datetime(2026, 9, 2, 0, 30))
+        key, names, _ = rot._resolve_scenes(self.store.rotation())
+        self.assertEqual(key, "daypart:Void")
+        self.assertTrue(names, "empty day-part should fall back, not freeze")
+        played = rot.play_next()
+        self.assertIn(played, ("Vice", "Miami"))
+        self.assertTrue(self.worker.submitted)
+
+    def test_manual_next_at_boundary_draws_from_the_new_mood(self):
+        # A forced next landing on a boundary must not play the old bag.
+        rot = self._rot(when=dt.datetime(2026, 9, 2, 19, 0))   # Golden hour
+        rot.note_played("Sunset")
+        self.assertEqual(rot._active_key, "daypart:Golden hour")
+        rot.timekeeper.when = dt.datetime(2026, 9, 2, 21, 0)    # Party
+        played = rot.play_next(force=True)
+        party = set(self.store.rotation_scenes(
+            [p for p in L.DAYPARTS if p["name"] == "Party"][0]["playlist"]))
+        self.assertIn(played, party)
+        self.assertEqual(rot._active_key, "daypart:Party")
+
+
+class ConfigHardening(unittest.TestCase):
+    """A valid-JSON but structurally-bad config must never crash startup."""
+
+    def _loads(self, raw):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(raw, handle)
+        handle.close()
+        try:
+            return ConfigStore(handle.name).snapshot()
+        finally:
+            for path in (handle.name, handle.name + ".lastgood",
+                         handle.name + ".bak"):
+                if os.path.exists(path):
+                    os.unlink(path)
+
+    def test_scalar_where_a_list_belongs_does_not_raise(self):
+        for raw in ({"rotation": {"attract": True}},
+                    {"rotation": {"dayparts": 8}},
+                    {"rotation": "on"},
+                    {"settings": "loud"},
+                    {"devices": 5},
+                    {"scenes": "no"},
+                    {"mode_names": "x"}):
+            snap = self._loads(raw)                # must not raise
+            self.assertIn("rotation", snap)
+            self.assertIsInstance(snap["rotation"]["attract"], list)
+            self.assertIsInstance(snap["rotation"]["dayparts"], list)
+
+
 class ApplyEffects(unittest.TestCase):
     def test_apply_clears_blackout_schedule_and_sets_boot(self):
         devices = [{"address": _address(i), "name": name, "groups": groups,

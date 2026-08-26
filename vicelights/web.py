@@ -279,9 +279,14 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         row("Version", app.config.get("VERSION", "?"), True, _installed_from())
 
         rotation = scheduler.rotation.status()
-        row("Rotation", "on" if rotation["enabled"] else "off", True,
-            "%d scenes, every %g min" % (len(rotation["scenes"]),
-                                         rotation["interval_minutes"]))
+        # Count and pace of the mood actually in force, so the two agree; the
+        # day-part name if one is driving it.
+        detail = "%d scenes, every %g min" % (
+            len(rotation["scenes"]),
+            rotation.get("active_interval_minutes", rotation["interval_minutes"]))
+        if rotation.get("daypart"):
+            detail += " (%s)" % rotation["daypart"]
+        row("Rotation", "on" if rotation["enabled"] else "off", True, detail)
         return jsonify({"ok": True, "rows": rows,
                         "down": [{"address": a,
                                   "name": (store.device(a) or {}).get("name", a),

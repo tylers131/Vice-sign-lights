@@ -93,9 +93,23 @@ def main() -> None:
     if not os.path.exists(args.config):
         sys.exit("no config at %s -- pass --config PATH" % args.config)
 
-    # ConfigStore reads and normalises the live config; loading it does not
-    # rewrite the main file (only a .lastgood snapshot), so the summary is
-    # safe to show before deciding to write.
+    # Refuse to run against a config that will not parse. Constructing the store
+    # on an unreadable file triggers its crash-recovery, which REWRITES the main
+    # file -- restoring a backup if there is one, otherwise resetting to defaults
+    # and losing the device list. A "load the light show" run, dry or not, must
+    # never do that silently, so we check first and stop.
+    import json
+    try:
+        with open(args.config, "r", encoding="utf-8") as handle:
+            json.load(handle)
+    except (OSError, ValueError) as exc:
+        sys.exit("cannot read %s as JSON (%s).\n"
+                 "Refusing to touch it -- restore a backup (%s.lastgood or "
+                 "%s.bak) or fix the file first."
+                 % (args.config, exc, args.config, args.config))
+
+    # It parses, so constructing the store will not rewrite it; the summary is
+    # safe to show before deciding whether to write.
     store = ConfigStore(args.config)
     _summary(store)
 

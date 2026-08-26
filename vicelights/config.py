@@ -232,6 +232,17 @@ def _channels(value) -> str:
     return order
 
 
+def _as_list(value) -> list:
+    """A list, or [] for anything that is not one.
+
+    So a scalar left in a hand-edited config (``"attract": true`` to "turn it
+    on", or a fat-fingered ``"dayparts": 8``) reads as the feature being off,
+    rather than raising out of _normalize and crash-looping the service before
+    the web UI can come up to fix it.
+    """
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
 def _stagger(raw) -> float:
     """Seconds to wait between devices when a scene is applied.
 
@@ -248,10 +259,11 @@ def _stagger(raw) -> float:
 def _rotation(raw) -> dict:
     """Validate the rotation block, clamping the interval to something sane."""
     value = dict(DEFAULT_ROTATION)
-    value.update(raw or {})
+    if isinstance(raw, dict):
+        value.update(raw)
     value["enabled"] = bool(value.get("enabled"))
-    value["playlist"] = [str(n).strip() for n in (value.get("playlist") or []) if str(n).strip()]
-    value["exclude"] = [str(n).strip() for n in (value.get("exclude") or []) if str(n).strip()]
+    value["playlist"] = [str(n).strip() for n in _as_list(value.get("playlist")) if str(n).strip()]
+    value["exclude"] = [str(n).strip() for n in _as_list(value.get("exclude")) if str(n).strip()]
     value["order"] = "sequential" if value.get("order") == "sequential" else "shuffle"
     value["avoid_repeat"] = bool(value.get("avoid_repeat", True))
     try:
@@ -269,7 +281,7 @@ def _rotation(raw) -> dict:
     except (TypeError, ValueError):
         value["hold_after_manual_minutes"] = 15.0
     value["dayparts"] = _dayparts(value.get("dayparts"))
-    value["attract"] = [str(n).strip() for n in (value.get("attract") or [])
+    value["attract"] = [str(n).strip() for n in _as_list(value.get("attract"))
                         if str(n).strip()]
     try:
         value["attract_interval_minutes"] = max(
@@ -282,7 +294,7 @@ def _rotation(raw) -> dict:
 def _dayparts(raw) -> list:
     """Validate the day-part list: named windows with a start and a playlist."""
     out = []
-    for part in raw or []:
+    for part in _as_list(raw):
         if not isinstance(part, dict):
             continue
         start = str(part.get("start") or "").strip()
@@ -302,7 +314,7 @@ def _dayparts(raw) -> list:
             "name": str(part.get("name") or start).strip(),
             "start": "%02d:%02d" % (hour, minute),
             "interval_minutes": interval,
-            "playlist": [str(n).strip() for n in (part.get("playlist") or [])
+            "playlist": [str(n).strip() for n in _as_list(part.get("playlist"))
                          if str(n).strip()],
         })
     out.sort(key=lambda d: d["start"])
@@ -312,7 +324,8 @@ def _dayparts(raw) -> list:
 def _temperature(raw) -> dict:
     """Validate the temperature block."""
     value = dict(DEFAULT_TEMPERATURE)
-    value.update(raw or {})
+    if isinstance(raw, dict):
+        value.update(raw)
     value["enabled"] = bool(value.get("enabled"))
     value["model"] = str(value.get("model") or "DHT11").strip().upper()
     try:
@@ -331,7 +344,8 @@ def _matrix(raw) -> dict:
     """Validate the panel block, clamping anything a bad client could send."""
     from .matrix import FAMILIES, DEFAULT_FAMILY
     value = dict(DEFAULT_MATRIX)
-    value.update(raw or {})
+    if isinstance(raw, dict):
+        value.update(raw)
     value["enabled"] = bool(value.get("enabled"))
     value["playlist"] = bool(value.get("playlist"))
     # Cycle the calendar-driven messages (schedule.py) instead of the
@@ -426,7 +440,7 @@ def _mode_names(raw) -> dict:
     """Normalise observed mode labels to '0xNN' keys, dropping junk."""
     from .protocol import MODE_MIN, MODE_MAX, mode_key
     names = {}
-    for key, label in (raw or {}).items():
+    for key, label in (raw if isinstance(raw, dict) else {}).items():
         try:
             value = int(str(key), 0)
         except (TypeError, ValueError):
@@ -476,7 +490,17 @@ class ConfigStore:
                 raw = _read_json(self.path)
             except Exception as exc:
                 return self._recover(exc)
-            self._data = self._normalize(raw)
+            # A config that parses as JSON can still be structurally wrong (a
+            # scalar where a list belongs). Normalising must never be able to
+            # crash startup either -- that would crash-loop the service under
+            # Restart=always, exactly what _recover exists to prevent -- so a
+            # normalise failure falls back to the last-good copy just as a parse
+            # failure does. The field normalisers coerce the common typos; this
+            # catches anything they miss.
+            try:
+                self._data = self._normalize(raw)
+            except Exception as exc:
+                return self._recover(exc)
             self._keep_last_good()
             log.info(
                 "loaded config: %d devices, %d groups, %d scenes, %d schedules",
@@ -603,7 +627,9 @@ class ConfigStore:
 
         data = json.loads(json.dumps(DEFAULT_CONFIG))
         settings = dict(DEFAULT_SETTINGS)
-        settings.update(raw.get("settings") or {})
+        raw_settings = raw.get("settings")
+        if isinstance(raw_settings, dict):
+            settings.update(raw_settings)
         data["settings"] = settings
         data["rotation"] = _rotation(raw.get("rotation"))
         data["mode_names"] = _mode_names(raw.get("mode_names"))
@@ -613,7 +639,9 @@ class ConfigStore:
         from .matrix import normalize_message, MAX_MESSAGES
         dwell = data["matrix"]["default_dwell"]
         seen_messages = set()
-        for entry in (raw.get("messages") or [])[:MAX_MESSAGES]:
+        for entry in _as_list(raw.get("messages"))[:MAX_MESSAGES]:
+            if not isinstance(entry, dict):
+                continue
             message = normalize_message(entry, dwell)
             if not message["text"]:
                 log.warning("dropping message with no text")
@@ -625,7 +653,10 @@ class ConfigStore:
             data["messages"].append(message)
 
         seen = set()
-        for entry in raw.get("devices") or []:
+        for entry in _as_list(raw.get("devices")):
+            if not isinstance(entry, dict):
+                log.warning("dropping non-object device entry")
+                continue
             try:
                 address = normalize_address(entry.get("address"))
             except ValueError as exc:
@@ -638,23 +669,27 @@ class ConfigStore:
             data["devices"].append({
                 "address": address,
                 "name": (entry.get("name") or address).strip(),
-                "groups": [str(g).strip() for g in (entry.get("groups") or []) if str(g).strip()],
+                "groups": [str(g).strip() for g in _as_list(entry.get("groups")) if str(g).strip()],
                 "enabled": bool(entry.get("enabled", True)),
                 "char_uuid": entry.get("char_uuid") or None,
                 "channels": _channels(entry.get("channels")),
                 "notes": entry.get("notes") or "",
             })
 
-        groups = [str(g).strip() for g in (raw.get("groups") or []) if str(g).strip()]
+        groups = [str(g).strip() for g in _as_list(raw.get("groups")) if str(g).strip()]
         for device in data["devices"]:
             for group in device["groups"]:
                 if group not in groups:
                     groups.append(group)
         data["groups"] = groups
 
-        for scene in raw.get("scenes") or []:
+        for scene in _as_list(raw.get("scenes")):
+            if not isinstance(scene, dict):
+                continue
             steps = []
-            for step in scene.get("steps") or []:
+            for step in _as_list(scene.get("steps")):
+                if not isinstance(step, dict):
+                    continue
                 steps.append({
                     "target": step.get("target") or "all",
                     "power": step.get("power", True),
@@ -670,13 +705,15 @@ class ConfigStore:
                 "stagger": _stagger(scene.get("stagger")),
             })
 
-        for schedule in raw.get("schedules") or []:
+        for schedule in _as_list(raw.get("schedules")):
+            if not isinstance(schedule, dict):
+                continue
             data["schedules"].append({
                 "id": schedule.get("id") or new_id(),
                 "name": (schedule.get("name") or "").strip(),
                 "scene": schedule.get("scene") or "",
                 "time": schedule.get("time") or "00:00",
-                "days": sorted({int(d) for d in (schedule.get("days") or []) if 0 <= int(d) <= 6}),
+                "days": sorted({int(d) for d in _as_list(schedule.get("days")) if 0 <= int(d) <= 6}),
                 "enabled": bool(schedule.get("enabled", True)),
                 "last_fired": schedule.get("last_fired") or "",
             })

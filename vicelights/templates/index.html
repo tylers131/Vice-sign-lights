@@ -247,6 +247,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button class="btn" style="margin-top:10px" onclick="rotateNow()">Skip to next scene</button>
     <hr>
     <label>Scenes in the rotation (none ticked = all of them)</label>
+    <div id="rotPlaylistNote" class="muted" style="margin:2px 0 8px;font-size:13px"></div>
     <div id="rotPlaylist" class="grid"></div>
   </div>
 
@@ -784,6 +785,14 @@ function renderRotation(r){
     + (r.enabled ? (r.holding?"":"ok") : "") + '"></span><div class="grow">'
     + '<div class="meta">' + bits.join(" &middot; ") + '</div></div></div>';
 
+  var note = $("rotPlaylistNote");
+  if(note){
+    note.innerHTML = r.daypart
+      ? "Time-of-day is running the show (mood <b>"+esc(r.daypart)+"</b>): the "
+        + "scenes come from that day-part, set in the config. These ticks apply "
+        + "only when the clock is unset."
+      : "";
+  }
   var chosen = {};
   (r.playlist||[]).forEach(function(n){ chosen[n.toLowerCase()] = true; });
   var excluded = {};
