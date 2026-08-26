@@ -105,5 +105,83 @@ class SubmitMirrors(unittest.TestCase):
         self.assertEqual([i["address"] for i in job.items], [A])
 
 
+class _Clock:
+    def __init__(self, when):
+        self.when = when
+
+    def clock_ok(self):
+        return self.when is not None
+
+    def now(self):
+        return self.when
+
+
+class _Sched:
+    def __init__(self, when):
+        self.clock = _Clock(when)
+
+
+class _SendWorker:
+    """Records panel control sends; each submit reports a completed job."""
+
+    def __init__(self):
+        self.sent = []
+
+    def submit_matrix(self, frames, label, **kwargs):
+        self.sent.append(label)
+
+        class Job:
+            state, ok = "done", 1
+        return Job()
+
+
+class NightDim(unittest.TestCase):
+    """The panel dims on a clock window; the LED strips are never touched here."""
+
+    def setUp(self):
+        self.store = _store({"enabled": True, "address": A, "family": "ipixel",
+                             "char_uuid": CHAR, "brightness": 100,
+                             "night_dim_enabled": True, "night_dim_start": "23:00",
+                             "night_dim_end": "06:00", "night_brightness": 15})
+
+    def _runner(self, when):
+        from vicelights.messages import MatrixRunner
+        return MatrixRunner(self.store, _SendWorker(), schedule=_Sched(when))
+
+    def _target(self, hour, minute=0, clock=True):
+        import datetime as dt
+        when = dt.datetime(2026, 9, 2, hour, minute) if clock else None
+        return self._runner(when)._target_brightness(self.store.matrix())
+
+    def test_dim_inside_window_bright_outside(self):
+        for hour in (23, 0, 3, 5):
+            self.assertEqual(self._target(hour), 15, "%02d:00 should dim" % hour)
+        for hour in (12, 22, 6, 7):
+            self.assertEqual(self._target(hour), 100, "%02d:00 should be full" % hour)
+
+    def test_no_clock_stays_bright(self):
+        self.assertEqual(self._target(1, clock=False), 100)
+
+    def test_disabled_stays_at_day_level(self):
+        self.store.update_matrix({"night_dim_enabled": False})
+        self.assertEqual(self._target(1), 100)
+
+    def test_command_sent_once_per_boundary(self):
+        import datetime as dt
+        runner = self._runner(dt.datetime(2026, 9, 2, 1, 0))    # night
+        runner._apply_night_dim(self.store.matrix())
+        runner._apply_night_dim(self.store.matrix())            # no change
+        self.assertEqual(len(runner.worker.sent), 1)
+        self.assertEqual(runner._applied_brightness, 15)
+        runner.schedule = _Sched(dt.datetime(2026, 9, 2, 12, 0))  # cross to day
+        runner._apply_night_dim(self.store.matrix())
+        self.assertEqual(len(runner.worker.sent), 2)
+        self.assertEqual(runner._applied_brightness, 100)
+
+    def test_strips_are_not_affected(self):
+        # force_full_brightness governs the strips and is independent of this.
+        self.assertTrue(self.store.setting("force_full_brightness"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

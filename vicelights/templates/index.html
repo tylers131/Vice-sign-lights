@@ -450,10 +450,31 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
         </div>
       </div>
       <div id="panelBrightRow">
-        <label>Brightness <b id="panelBrightVal">100%</b></label>
+        <label>Daytime brightness <b id="panelBrightVal">100%</b></label>
         <input type="range" id="panelBright" min="5" max="100" step="5" value="100"
                oninput="$('panelBrightVal').textContent=this.value+'%'"
                onchange="setPanelBrightness()">
+        <label class="switch" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <input type="checkbox" id="panelNightDim" style="width:auto" onchange="saveNightDim()">
+          <span>Dim the panel late at night</span></label>
+        <div class="muted" style="font-size:13px;margin:2px 0 6px">
+          The panel is far brighter than the sign; this softens it overnight. The
+          LED strips are never dimmed. Needs the clock set.</div>
+        <div class="row">
+          <div>
+            <label>From</label>
+            <input id="panelNightStart" type="time" value="23:00" onchange="saveNightDim()">
+          </div>
+          <div>
+            <label>Until</label>
+            <input id="panelNightEnd" type="time" value="06:00" onchange="saveNightDim()">
+          </div>
+        </div>
+        <label style="margin-top:8px">Night brightness <b id="panelNightVal">15%</b></label>
+        <input type="range" id="panelNightBright" min="5" max="100" step="5" value="15"
+               oninput="$('panelNightVal').textContent=this.value+'%'"
+               onchange="saveNightDim()">
+        <div id="panelNightNote" class="muted" style="font-size:13px;margin-top:4px"></div>
       </div>
       <div class="row" style="margin-top:10px">
         <button class="btn sm" onclick="post('/api/matrix/power',{on:true})">Screen on</button>
@@ -1377,6 +1398,20 @@ function renderPanel(p){
     $("panelBright").value = p.brightness;
     $("panelBrightVal").textContent = p.brightness + "%";
   }
+  var ndFocus = ["panelNightStart","panelNightEnd","panelNightBright","panelNightDim"]
+    .indexOf(document.activeElement && document.activeElement.id) >= 0;
+  if(!ndFocus){
+    $("panelNightDim").checked = !!p.night_dim_enabled;
+    if(p.night_dim_start) $("panelNightStart").value = p.night_dim_start;
+    if(p.night_dim_end) $("panelNightEnd").value = p.night_dim_end;
+    $("panelNightBright").value = p.night_brightness;
+    $("panelNightVal").textContent = p.night_brightness + "%";
+  }
+  var nn = $("panelNightNote");
+  if(nn) nn.innerHTML = p.night_dim_enabled
+    ? "Panel dims to <b>"+p.night_brightness+"%</b> from <b>"+esc(p.night_dim_start)
+      +"</b> to <b>"+esc(p.night_dim_end)+"</b>."
+    : "";
 
   if($("panelSchedBtn")){
     $("panelSchedBtn").textContent = p.schedule ? "Stop" : "Start";
@@ -1599,6 +1634,18 @@ function setPanelScale(){
 }
 function setPanelBrightness(){
   post("/api/matrix/brightness", {percent:parseInt($("panelBright").value,10)});
+}
+function saveNightDim(){
+  post("/api/matrix", {
+    night_dim_enabled: $("panelNightDim").checked,
+    night_dim_start: $("panelNightStart").value,
+    night_dim_end: $("panelNightEnd").value,
+    night_brightness: parseInt($("panelNightBright").value, 10)
+  }).then(function(j){
+    if(j.ok){ renderPanel(j.matrix);
+      toast($("panelNightDim").checked ? "Night dimming saved" : "Night dimming off"); }
+    else toast(j.error || "could not save");
+  });
 }
 function pairPanel(){
   var addr = $("panelAddr").value.trim();

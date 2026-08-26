@@ -829,6 +829,20 @@ is shared, because the signs are the same and meant to match. A write to two
 signs is two connects on one radio, so text lands a little slower with the
 second attached; the twelve light controllers are unaffected.
 
+### Dimming the panel at night
+
+The text panel is far brighter than the sign's LED strips and glares after
+dark. On the *LED Text Display* tab the brightness slider is the **daytime**
+level; below it, **Dim the panel late at night** drops the panel to a chosen
+night level between two wall-clock times (wrapping midnight, so 23:00-06:00
+works), then restores the daytime level in the morning. It is sent as the
+panel's own brightness command once at each boundary -- the strips are never
+touched, and the daytime level you set is left intact. It needs the clock set;
+with none it stays bright rather than guess. In the config: `matrix.brightness`
+(day), `matrix.night_brightness`, `matrix.night_dim_enabled` and the
+`night_dim_start` / `night_dim_end` window. A panel whose driver has no
+brightness command simply cannot be dimmed, and the control is hidden for it.
+
 ### A corrupt config can no longer stop the sign from starting
 
 `load()` used to call `json.load()` with nothing catching it, so an unparseable

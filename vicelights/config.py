@@ -115,7 +115,17 @@ DEFAULT_MATRIX = {
     # sign's panel is 96 wide by 16 tall, from the product listing.
     "width": 96,
     "height": 16,
+    # The panel is much brighter than the sign's LED strips and glares at night.
+    # brightness is its normal (daytime) level; when night_dim is on, it drops to
+    # night_brightness between night_dim_start and night_dim_end (wrapping
+    # midnight, wall-clock, so it needs a set clock). The strips are never
+    # touched by this. Applied as the panel's own brightness command, so it does
+    # not overwrite the daytime level you set.
     "brightness": 100,
+    "night_dim_enabled": False,
+    "night_dim_start": "23:00",
+    "night_dim_end": "06:00",
+    "night_brightness": 15,
     # Cycle the saved messages, one at a time, each for its own dwell.
     "playlist": False,
     "default_dwell": 20.0,
@@ -460,6 +470,9 @@ def _matrix(raw) -> dict:
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     value["text_reversed"] = bool(value.get("text_reversed"))
+    value["night_dim_enabled"] = bool(value.get("night_dim_enabled"))
+    value["night_dim_start"] = _hhmm(value.get("night_dim_start"), "23:00")
+    value["night_dim_end"] = _hhmm(value.get("night_dim_end"), "06:00")
     from .matrix import MAX_COLOR_MODE
     for key, low, high, default in (("color_mode", 0, MAX_COLOR_MODE, 0),
                                     ("h_align", 0, 2, 1), ("v_align", 0, 2, 1)):
@@ -488,7 +501,9 @@ def _matrix(raw) -> dict:
     bold = str(value.get("bold", "auto")).strip().lower()
     value["bold"] = bold if bold in ("auto", "true", "false") else "auto"
     for key, low, high, default in (("width", 4, 256, 32), ("height", 4, 256, 16),
-                                    ("brightness", 5, 100, 100), ("chunk", 8, 512, 20),
+                                    ("brightness", 5, 100, 100),
+                                    ("night_brightness", 5, 100, 15),
+                                    ("chunk", 8, 512, 20),
                                     ("png_opt", 0, 255, 0), ("png_buffer", 0, 255, 0)):
         try:
             value[key] = max(low, min(high, int(value.get(key, default))))

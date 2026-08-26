@@ -52,6 +52,7 @@ class MatrixRunner:
         self._landed = None           # the last write that actually completed
         self._unsure = []             # writes that failed and may be half up
         self._warned_unconfigured = False
+        self._applied_brightness = None   # last brightness we commanded (auto-dim)
 
     # ------------------------------------------------------------------ state
 
@@ -160,6 +161,10 @@ class MatrixRunner:
             "capabilities": driver.capabilities,
             "modes": list(driver.modes),
             "brightness": matrix.get("brightness", 100),
+            "night_dim_enabled": bool(matrix.get("night_dim_enabled")),
+            "night_dim_start": matrix.get("night_dim_start", "23:00"),
+            "night_dim_end": matrix.get("night_dim_end", "06:00"),
+            "night_brightness": matrix.get("night_brightness", 15),
             "playlist": bool(matrix.get("playlist")),
             "schedule": self._scheduled(),
             "default_dwell": matrix.get("default_dwell", 20.0),
@@ -515,8 +520,75 @@ class MatrixRunner:
         ok = self._send_control(driver.brightness_frames(percent),
                                 "panel: brightness %d%%" % int(percent), "brightness")
         if ok:
+            # The slider sets the daytime level. Record it as applied so the
+            # auto-dim tick does not re-send the same value a moment later; if
+            # a night window is active it will still override on the next tick.
             self.store.update_matrix({"brightness": int(percent)})
+            self._applied_brightness = int(percent)
         return ok
+
+    # ----------------------------------------------------------- night dimming
+
+    def _clock_now(self):
+        """The wall clock, or None if unset/unavailable -- via the schedule."""
+        if self.schedule is None:
+            return None
+        try:
+            if not self.schedule.clock.clock_ok():
+                return None
+            return self.schedule.clock.now()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _in_window(now, start: str, end: str) -> bool:
+        """Is ``now`` inside the [start, end) wall-clock window (wraps midnight)?"""
+        def mins(hhmm):
+            hour, _, minute = str(hhmm).partition(":")
+            return int(hour) * 60 + int(minute)
+        try:
+            lo, hi = mins(start), mins(end)
+        except (ValueError, TypeError):
+            return False
+        if lo == hi:
+            return False
+        cur = now.hour * 60 + now.minute
+        return lo <= cur < hi if lo < hi else (cur >= lo or cur < hi)
+
+    def _target_brightness(self, matrix) -> int:
+        """The panel brightness the clock calls for: night level or day level."""
+        day = int(matrix.get("brightness", 100))
+        if not matrix.get("night_dim_enabled"):
+            return day
+        now = self._clock_now()
+        if now is None:
+            return day          # no clock -> cannot know it is night; stay bright
+        if self._in_window(now, matrix.get("night_dim_start", "23:00"),
+                           matrix.get("night_dim_end", "06:00")):
+            return int(matrix.get("night_brightness", 15))
+        return day
+
+    def _apply_night_dim(self, matrix):
+        """Send the panel its clock-appropriate brightness when it changes.
+
+        Only the panel: the sign's LED strips are never dimmed. The command is
+        sent once when the target changes (a window boundary, or the day level
+        being edited), not every tick, and it does not persist -- the daytime
+        level the slider set is left intact so leaving the window restores it.
+        """
+        target = self._target_brightness(matrix)
+        if target == self._applied_brightness:
+            return
+        driver = matrix_module.driver_for(matrix)
+        frames = driver.brightness_frames(target)
+        if not frames:
+            # This panel has no brightness command; nothing to dim with. Record
+            # the target anyway so we do not retry it every tick.
+            self._applied_brightness = target
+            return
+        if self._send_control(frames, "panel: auto-brightness %d%%" % target,
+                              "brightness"):
+            self._applied_brightness = target
 
     def _send_control(self, frames, label: str, kind: str) -> bool:
         """Queue one control command.
@@ -554,6 +626,10 @@ class MatrixRunner:
         matrix = self.store.matrix()
         if not (matrix.get("enabled") and matrix.get("address")):
             return
+        # Dim the panel at night before anything else -- it applies whether or
+        # not messages are cycling, and it is cheap (a no-op unless the target
+        # just changed).
+        self._apply_night_dim(matrix)
         self._reconcile()
         # Pages turn whether or not the playlist is running: a message sent by
         # hand is still too long to fit, and its later pages are as much of the

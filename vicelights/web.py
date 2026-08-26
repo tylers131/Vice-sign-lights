@@ -861,7 +861,9 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "pixel_layout", "scale", "write_response", "stretch",
                        "bold", "batch_writes", "paging", "page_seconds",
                        "text_font", "bitmap_order", "text_reversed",
-                       "color_mode", "h_align", "v_align")
+                       "color_mode", "h_align", "v_align",
+                       "night_dim_enabled", "night_dim_start", "night_dim_end",
+                       "night_brightness")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")

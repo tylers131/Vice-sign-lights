@@ -308,7 +308,7 @@
   ],
   "scenes": [
     {
-      "id": "2cec95a2",
+      "id": "c4f95f3c",
       "name": "Sunrise",
       "steps": [
         {
@@ -339,7 +339,7 @@
       "stagger": 0.0
     },
     {
-      "id": "527c282f",
+      "id": "96c9f498",
       "name": "Dawn Breathe",
       "steps": [
         {
@@ -370,7 +370,7 @@
       "stagger": 0.0
     },
     {
-      "id": "b5c6745c",
+      "id": "854e334b",
       "name": "Ember Glow",
       "steps": [
         {
@@ -401,7 +401,7 @@
       "stagger": 0.0
     },
     {
-      "id": "43b4a7c3",
+      "id": "b8317cc0",
       "name": "Vice",
       "steps": [
         {
@@ -432,7 +432,7 @@
       "stagger": 0.0
     },
     {
-      "id": "1966673b",
+      "id": "27f11fe8",
       "name": "Sunblast",
       "steps": [
         {
@@ -463,7 +463,7 @@
       "stagger": 0.0
     },
     {
-      "id": "43d4c4cc",
+      "id": "6bdc26df",
       "name": "Electric Blue",
       "steps": [
         {
@@ -494,7 +494,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9f85fc40",
+      "id": "359db4da",
       "name": "Magenta Pop",
       "steps": [
         {
@@ -525,7 +525,7 @@
       "stagger": 0.0
     },
     {
-      "id": "fa39c757",
+      "id": "39f7de54",
       "name": "Sunset",
       "steps": [
         {
@@ -556,7 +556,7 @@
       "stagger": 0.0
     },
     {
-      "id": "66ab5132",
+      "id": "c2c6b78a",
       "name": "Magic Hour",
       "steps": [
         {
@@ -587,7 +587,7 @@
       "stagger": 0.0
     },
     {
-      "id": "cf8df91b",
+      "id": "aa85f5f9",
       "name": "Afterglow",
       "steps": [
         {
@@ -618,7 +618,7 @@
       "stagger": 0.0
     },
     {
-      "id": "79d1397c",
+      "id": "a588cbd3",
       "name": "Neon Dusk",
       "steps": [
         {
@@ -649,7 +649,7 @@
       "stagger": 0.0
     },
     {
-      "id": "ff920e52",
+      "id": "1fb9eb82",
       "name": "Miami",
       "steps": [
         {
@@ -680,7 +680,7 @@
       "stagger": 0.0
     },
     {
-      "id": "a357cd98",
+      "id": "6d45a5f9",
       "name": "Neon Nights",
       "steps": [
         {
@@ -711,7 +711,7 @@
       "stagger": 0.0
     },
     {
-      "id": "139b8d1d",
+      "id": "21ac6c40",
       "name": "Cyberpunk",
       "steps": [
         {
@@ -742,7 +742,7 @@
       "stagger": 0.0
     },
     {
-      "id": "53e4955a",
+      "id": "fe70b64f",
       "name": "Rainbow VICE",
       "steps": [
         {
@@ -797,7 +797,7 @@
       "stagger": 0.0
     },
     {
-      "id": "3bb65d00",
+      "id": "80d218f6",
       "name": "Vice Breathe",
       "steps": [
         {
@@ -828,7 +828,7 @@
       "stagger": 0.0
     },
     {
-      "id": "a851f128",
+      "id": "a00c1edd",
       "name": "Jump Party",
       "steps": [
         {
@@ -859,7 +859,7 @@
       "stagger": 0.0
     },
     {
-      "id": "61e3c968",
+      "id": "3d1b9dab",
       "name": "Ultraviolet",
       "steps": [
         {
@@ -890,7 +890,7 @@
       "stagger": 0.0
     },
     {
-      "id": "777a7d85",
+      "id": "406a3715",
       "name": "After Hours",
       "steps": [
         {
@@ -921,7 +921,7 @@
       "stagger": 0.0
     },
     {
-      "id": "4a21c246",
+      "id": "f4ab9141",
       "name": "Deep Fade",
       "steps": [
         {
@@ -952,7 +952,7 @@
       "stagger": 0.0
     },
     {
-      "id": "800b5489",
+      "id": "fde55108",
       "name": "Hypnotic",
       "steps": [
         {
@@ -983,7 +983,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9fd90e8b",
+      "id": "22aed264",
       "name": "Coffee Call",
       "steps": [
         {
@@ -1014,7 +1014,7 @@
       "stagger": 0.0
     },
     {
-      "id": "821985cc",
+      "id": "bce5763b",
       "name": "Fresh Brew",
       "steps": [
         {
@@ -1045,7 +1045,7 @@
       "stagger": 0.0
     },
     {
-      "id": "b164a737",
+      "id": "8a814384",
       "name": "Wake Up",
       "steps": [
         {
@@ -1076,7 +1076,7 @@
       "stagger": 0.0
     },
     {
-      "id": "19ab47c1",
+      "id": "9f25462b",
       "name": "All off",
       "steps": [
         {
@@ -1103,6 +1103,10 @@
     "width": 96,
     "height": 16,
     "brightness": 100,
+    "night_dim_enabled": false,
+    "night_dim_start": "23:00",
+    "night_dim_end": "06:00",
+    "night_brightness": 15,
     "playlist": false,
     "default_dwell": 20.0,
     "paging": true,
