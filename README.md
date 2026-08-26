@@ -196,12 +196,24 @@ day-parts, so a Pi seeded from the example runs the show out of the box.
 
 ### Editing the schedule
 
-The day-parts, the coffee attract list, the intervals and the fallback are the
-data at the top of `lightshow.py` (`DAYPARTS`, `ATTRACT`, `FALLBACK_PLAYLIST`).
-Edit there and re-run the loader to change the plan. The rotation block also
-accepts a hand-edited `dayparts` array in the config directly — each entry is
-`{name, start "HH:MM", interval_minutes, playlist:[scene names]}` — for a one-off
-tweak without touching code.
+Two things you will most want to change once the sign is up, both editable from
+the phone mid-week, no SSH and no re-running the loader:
+
+* **Day-part timing** — the *Timing* tab lists the five moods with an editable
+  start time and change interval each ("party starts at 21:00 now", "let dawn
+  drift slower"). Which scenes a mood plays stays where it is defined (the
+  loader); the phone only retunes *when* and *how fast*.
+* **Today's coffee** — a *Coffee service today* card sets the service window for
+  the current day when it runs off the printed schedule. It moves the panel text
+  ("NOW SERVING") **and** the lights' attract look together, because both read
+  the same override, and it only touches today — the rest of the week keeps its
+  printed times. "Back to the printed schedule" clears it.
+
+The design's defaults live at the top of `lightshow.py` (`DAYPARTS`, `ATTRACT`,
+`FALLBACK_PLAYLIST`); edit there and re-run the loader for a permanent change.
+The rotation block also accepts a hand-edited `dayparts` array in the config
+directly — each entry is `{name, start "HH:MM", interval_minutes, playlist:[scene
+names]}`. Coffee overrides live under `coffee.overrides`, keyed by ISO date.
 
 ---
 

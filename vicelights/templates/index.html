@@ -268,6 +268,39 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div id="rotPlaylist" class="grid"></div>
   </div>
 
+  <div class="card" id="daypartCard">
+    <h2>Time-of-day moods</h2>
+    <p class="muted">When the clock is set, the rotation follows these through the
+      day. Change when each starts and how fast it changes scenes. Which scenes
+      each mood plays is set in the config (the loader), not here.</p>
+    <div id="rotDayparts"></div>
+    <div id="rotDaypartsEmpty" class="muted" style="font-size:13px"></div>
+  </div>
+
+  <div class="card" id="coffeeCard">
+    <h2>Coffee service today</h2>
+    <p class="muted">While a service is on, the sign shouts "NOW SERVING" and the
+      lights switch to a warm come-here look. Adjust today's window if it runs
+      at a different time than the printed schedule.</p>
+    <div id="coffeeBox"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <input type="checkbox" id="coffeeOn" style="width:auto" onchange="saveCoffee()">
+      <span>Serving coffee today</span></label>
+    <div class="row" style="margin-top:8px">
+      <div>
+        <label>From</label>
+        <input id="coffeeStart" type="time" value="14:00" onchange="saveCoffee()">
+      </div>
+      <div>
+        <label>Until</label>
+        <input id="coffeeEnd" type="time" value="18:00" onchange="saveCoffee()">
+      </div>
+    </div>
+    <button class="btn" style="margin-top:10px" onclick="resetCoffee()">
+      Back to the printed schedule</button>
+    <div id="coffeeNote" class="muted" style="font-size:13px;margin-top:6px"></div>
+  </div>
+
   <div class="card">
     <h2>Clock</h2>
     <div id="clockBox"></div>
@@ -811,6 +844,7 @@ function renderRotation(r){
     + (r.enabled ? (r.holding?"":"ok") : "") + '"></span><div class="grow">'
     + '<div class="meta">' + bits.join(" &middot; ") + '</div></div></div>';
 
+  renderDayparts(r);
   var note = $("rotPlaylistNote");
   if(note){
     note.innerHTML = r.daypart
@@ -848,6 +882,88 @@ function saveAutoOff(){
     auto_on_at: $("rotOnAt").value
   }).then(function(j){ if(j.ok){ renderRotation(j.rotation);
     toast($("rotAutoOff").checked ? "Auto off saved" : "Auto off turned off"); } });
+}
+function renderDayparts(r){
+  var host = $("rotDayparts");
+  if(!host) return;
+  var dps = r.dayparts || [];
+  STATE.dayparts = dps;
+  if(!dps.length){
+    host.innerHTML = "";
+    $("rotDaypartsEmpty").textContent =
+      "No time-of-day moods set — the rotation uses one playlist all day.";
+    return;
+  }
+  $("rotDaypartsEmpty").textContent = "";
+  host.innerHTML = dps.map(function(d, i){
+    var live = r.daypart && ("daypart:"+r.daypart)===("daypart:"+d.name);
+    return '<div class="row" style="align-items:flex-end;margin-top:8px">'
+      + '<div style="flex:1.4"><label>'+esc(d.name)+(live?' · now':'')+'</label>'
+      + '<input type="time" id="rotDp'+i+'start" data-dp="'+i+'" data-k="start" value="'
+      + esc(d.start)+'" onchange="saveDayparts()"></div>'
+      + '<div><label>Every (min)</label>'
+      + '<input type="number" min="2" step="1" id="rotDp'+i+'int" data-dp="'+i
+      + '" data-k="interval" value="'+d.interval_minutes+'" onchange="saveDayparts()"></div>'
+      + '</div>';
+  }).join("");
+}
+function saveDayparts(){
+  var dps = (STATE.dayparts||[]).map(function(d){ return {
+    name: d.name, start: d.start,
+    interval_minutes: d.interval_minutes, playlist: d.playlist || [] }; });
+  Array.prototype.forEach.call(
+    document.querySelectorAll('#rotDayparts input[data-dp]'), function(inp){
+      var i = +inp.dataset.dp;
+      if(!dps[i]) return;
+      if(inp.dataset.k === "start"){ if(inp.value) dps[i].start = inp.value; }
+      else dps[i].interval_minutes = parseFloat(inp.value) || dps[i].interval_minutes;
+    });
+  post("/api/rotation", {dayparts: dps}).then(function(j){
+    if(j.ok){ renderRotation(j.rotation); toast("Moods updated"); }
+  });
+}
+function fmt12(hhmm){
+  if(!hhmm) return "";
+  var p = hhmm.split(":"), h = +p[0];
+  return ((h%12)||12) + ":" + p[1] + " " + (h<12?"AM":"PM");
+}
+function loadCoffee(){
+  return get("/api/coffee").then(function(c){ if(c && c.ok) renderCoffee(c); });
+}
+function renderCoffee(c){
+  if(!$("coffeeCard")) return;
+  if(document.activeElement && document.activeElement.id &&
+     document.activeElement.id.indexOf("coffee")===0) return;   /* don't fight typing */
+  var box = $("coffeeBox"), note = $("coffeeNote");
+  var ids = ["coffeeOn","coffeeStart","coffeeEnd"];
+  if(!c.clock_ok){
+    box.innerHTML = '<span class="muted">Set the Pi clock (below) to edit today’s coffee.</span>';
+    ids.forEach(function(id){ $(id).disabled = true; });
+    note.textContent = "";
+    return;
+  }
+  ids.forEach(function(id){ $(id).disabled = false; });
+  var eff = c.effective || {};
+  $("coffeeOn").checked = !!eff.on;
+  $("coffeeStart").value = eff.start || (c.scheduled && c.scheduled.start) || "14:00";
+  $("coffeeEnd").value = eff.end || (c.scheduled && c.scheduled.end) || "18:00";
+  var sched = c.scheduled ? (fmt12(c.scheduled.start)+"–"+fmt12(c.scheduled.end))
+                          : "no coffee on the schedule";
+  box.innerHTML = '<span class="muted">Printed schedule: '+esc(sched)+'</span>';
+  note.textContent = c.override
+    ? "Overriding today only — the rest of the week keeps the printed times."
+    : "Following the printed schedule.";
+}
+function saveCoffee(){
+  post("/api/coffee", {enabled: $("coffeeOn").checked,
+                       start: $("coffeeStart").value,
+                       end: $("coffeeEnd").value}).then(function(c){
+    if(c.ok){ renderCoffee(c); toast("Coffee time saved"); }
+    else toast(c.error || "could not save"); });
+}
+function resetCoffee(){
+  post("/api/coffee", {clear: true}).then(function(c){
+    if(c.ok){ renderCoffee(c); toast("Back to the printed schedule"); } });
 }
 function savePlaylist(){
   var names = [];
@@ -902,6 +1018,7 @@ function loadState(){
     renderTargets(); renderModes(); renderScenes(); renderDevices();
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
     renderRotation(j.rotation);
+    loadCoffee();
     if(j.panel_families) PANEL_FAMILIES = j.panel_families;
     renderPanel(j.panel);
     var locked = !!(j.settings && j.settings.force_full_brightness);

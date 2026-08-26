@@ -414,6 +414,45 @@ class AutoOff(unittest.TestCase):
         self.assertEqual(st["daypart"], "Auto off")
 
 
+class Editors(unittest.TestCase):
+    """The phone's mid-week edits: day-part retuning and coffee overrides."""
+
+    def setUp(self):
+        self.store = build_store()
+
+    def test_daypart_edit_preserves_playlists(self):
+        dayparts = [dict(d) for d in self.store.rotation()["dayparts"]]
+        for part in dayparts:
+            if part["name"] == "Party":
+                part["start"] = "21:00"
+                part["interval_minutes"] = 4.0
+        self.store.update_rotation({"dayparts": dayparts})
+        party = [d for d in self.store.rotation()["dayparts"]
+                 if d["name"] == "Party"][0]
+        self.assertEqual(party["start"], "21:00")
+        self.assertEqual(party["interval_minutes"], 4.0)
+        self.assertEqual(len(party["playlist"]), 6)     # scenes not lost
+        self.assertEqual(len(self.store.rotation()["dayparts"]), 5)
+
+    def test_coffee_override_set_and_clear(self):
+        self.store.set_coffee_override("2026-09-02",
+                                       {"enabled": True, "start": "19:00", "end": "22:00"})
+        got = self.store.coffee_overrides().get("2026-09-02")
+        self.assertEqual((got["start"], got["end"], got["enabled"]),
+                         ("19:00", "22:00", True))
+        self.assertTrue(self.store.clear_coffee_override("2026-09-02"))
+        self.assertNotIn("2026-09-02", self.store.coffee_overrides())
+
+    def test_coffee_override_normalises_bad_input(self):
+        # A bad time falls back to the default; a bad date key is dropped.
+        self.store.set_coffee_override("2026-09-02", {"start": "nope"})
+        self.assertEqual(self.store.coffee_overrides()["2026-09-02"]["start"], "14:00")
+        raw = self.store.snapshot()
+        raw["coffee"] = {"overrides": {"not-a-date": {"start": "10:00"}, 5: {}}}
+        self.store.replace_all(raw)
+        self.assertEqual(self.store.coffee_overrides(), {})
+
+
 class ConfigHardening(unittest.TestCase):
     """A valid-JSON but structurally-bad config must never crash startup."""
 

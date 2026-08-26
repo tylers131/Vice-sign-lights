@@ -734,7 +734,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             body = _body()
             allowed = ("enabled", "playlist", "exclude", "interval_minutes",
                        "order", "avoid_repeat", "hold_after_manual_minutes",
-                       "auto_off_enabled", "auto_off_at", "auto_on_at")
+                       "auto_off_enabled", "auto_off_at", "auto_on_at",
+                       "dayparts", "attract_interval_minutes")
             changes = {k: body[k] for k in allowed if k in body}
             was = store.rotation()["enabled"]
             try:
@@ -754,6 +755,60 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             return _json_error("nothing to play -- check the playlist")
         return jsonify({"ok": True, "scene": name,
                         "rotation": scheduler.rotation.status()})
+
+    @app.route("/api/coffee", methods=["GET", "POST"])
+    def api_coffee():
+        """Today's coffee service window -- read it, adjust it, or reset it.
+
+        A POST always acts on *today* (an override is keyed by date, and there
+        is no date without a set clock). The panel text and the lights' attract
+        look both read the same override, so a change here moves both.
+        """
+        from . import schedule as sched
+        clock = scheduler.timekeeper
+        try:
+            date = clock.now().date() if clock.clock_ok() else None
+        except Exception:
+            date = None
+
+        if request.method == "POST":
+            if date is None:
+                return _json_error("set the clock first -- a coffee time needs "
+                                   "a date to sit on")
+            key = date.isoformat()
+            body = _body()
+            if body.get("clear"):
+                store.clear_coffee_override(key)
+            else:
+                changes = {k: body[k] for k in ("enabled", "start", "end")
+                           if k in body}
+                try:
+                    store.set_coffee_override(key, changes)
+                except Exception as exc:
+                    return _json_error(exc)
+            # The panel rebuilds its message list from the schedule every tick
+            # and rotation resolves attract every tick, so both pick this up on
+            # their own within a few seconds -- nothing to poke here.
+
+        def window(events):
+            for event in events:
+                if event.title == sched.COFFEE_TITLE:
+                    return {"start": event.start, "end": event.end}
+            return None
+
+        payload = {"ok": True, "clock_ok": date is not None,
+                   "today": date.isoformat() if date else None,
+                   "scheduled": None, "effective": None, "override": None}
+        if date is not None:
+            payload["scheduled"] = window(sched.events_for(date))
+            effective = window(sched.events_for(date, store.coffee_overrides()))
+            payload["effective"] = {
+                "on": effective is not None,
+                "start": effective["start"] if effective else None,
+                "end": effective["end"] if effective else None,
+            }
+            payload["override"] = store.coffee_overrides().get(date.isoformat())
+        return jsonify(payload)
 
     @app.route("/api/timers", methods=["POST"])
     def api_timer_add():

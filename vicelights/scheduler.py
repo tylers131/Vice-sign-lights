@@ -241,6 +241,9 @@ class Rotation:
             "auto_off_at": rotation["auto_off_at"],
             "auto_on_at": rotation["auto_on_at"],
             "sleeping": key == "quiet",
+            # The time-of-day moods, so the phone can retune their start and pace.
+            "dayparts": rotation["dayparts"],
+            "attract_interval_minutes": rotation["attract_interval_minutes"],
         }
 
     def _hold_remaining(self, rotation) -> float:
@@ -547,7 +550,8 @@ class Scheduler:
         # that sampler. It only decides text; the runner still does the
         # sending and cycling. Built before rotation because rotation borrows
         # its calendar to know when a coffee service is on.
-        self.schedule = Schedule(timekeeper, temperature=self.temperature.current)
+        self.schedule = Schedule(timekeeper, temperature=self.temperature.current,
+                                 coffee_overrides=store.coffee_overrides)
         # Cycle scenes all day. Time-of-day aware: it reads the clock for the
         # hour's mood and the schedule's calendar for the coffee attract look.
         self.rotation = Rotation(store, worker, timekeeper=timekeeper,

@@ -213,5 +213,67 @@ class ActiveHelper(unittest.TestCase):
                              for e in S.active_events(dt.datetime(2026, 9, 1, 15, 30))))
 
 
+class CoffeeOverride(unittest.TestCase):
+    """A phone-set coffee window moves the panel text and the attract lights."""
+
+    # 2026-09-02 has a printed coffee window of 14:00-18:00.
+    DAY = dt.date(2026, 9, 2)
+
+    def _window(self, events):
+        for event in events:
+            if event.title == S.COFFEE_TITLE:
+                return (event.start, event.end)
+        return None
+
+    def test_override_replaces_the_window(self):
+        ov = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
+        self.assertEqual(self._window(S.events_for(self.DAY)), ("14:00", "18:00"))
+        self.assertEqual(self._window(S.events_for(self.DAY, ov)), ("19:00", "22:00"))
+
+    def test_disabled_override_drops_coffee(self):
+        ov = {"2026-09-02": {"enabled": False}}
+        self.assertIsNone(self._window(S.events_for(self.DAY, ov)))
+
+    def test_active_events_follow_the_override(self):
+        ov = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
+        at3pm = dt.datetime(2026, 9, 2, 15, 0)
+        at8pm = dt.datetime(2026, 9, 2, 20, 0)
+        # 3pm: printed says yes, override says no.
+        self.assertTrue(any(e.title == S.COFFEE_TITLE for e in S.active_events(at3pm)))
+        self.assertFalse(any(e.title == S.COFFEE_TITLE
+                             for e in S.active_events(at3pm, ov)))
+        # 8pm: printed says no, override says yes.
+        self.assertTrue(any(e.title == S.COFFEE_TITLE
+                            for e in S.active_events(at8pm, ov)))
+
+    def test_today_line_shows_the_new_label(self):
+        ov = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
+        self.assertIn("7P COFFEE", S.today_line(self.DAY, ov))
+
+    def test_schedule_attract_and_text_use_the_override(self):
+        store = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
+        clock3 = FakeClock(dt.datetime(2026, 9, 2, 15, 0))
+        clock8 = FakeClock(dt.datetime(2026, 9, 2, 20, 0))
+        s3 = S.Schedule(clock3, coffee_overrides=lambda: store)
+        s8 = S.Schedule(clock8, coffee_overrides=lambda: store)
+        self.assertFalse(s3.attract_now())      # printed 3pm, but overridden away
+        self.assertTrue(s8.attract_now())        # overridden to 8pm
+        texts = " ".join(m["text"] for m in s8.messages())
+        self.assertIn("7P COFFEE", texts)
+
+    def test_bad_override_provider_is_ignored(self):
+        def boom():
+            raise RuntimeError("store exploded")
+        s = S.Schedule(FakeClock(dt.datetime(2026, 9, 2, 15, 0)),
+                       coffee_overrides=boom)
+        self.assertTrue(s.attract_now())         # falls back to the printed 14-18
+
+    def test_coffee_label_formats(self):
+        self.assertEqual(S._coffee_label("19:00"), "7P COFFEE")
+        self.assertEqual(S._coffee_label("08:30"), "830A COFFEE")
+        self.assertEqual(S._coffee_label("00:00"), "12A COFFEE")
+        self.assertEqual(S._coffee_label("12:00"), "12P COFFEE")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

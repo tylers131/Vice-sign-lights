@@ -215,7 +215,14 @@ DEFAULT_CONFIG = {
     "matrix": dict(DEFAULT_MATRIX),
     "messages": [],
     "temperature": dict(DEFAULT_TEMPERATURE),
+    # Per-day overrides of the coffee service window, set from the phone when a
+    # service runs at a different time than the printed schedule. Keyed by ISO
+    # date -> {enabled, start "HH:MM", end "HH:MM"}. The panel text and the
+    # lights' attract look both follow it. Empty = the printed schedule stands.
+    "coffee": {"overrides": {}},
 }
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def new_id() -> str:
@@ -340,6 +347,22 @@ def _dayparts(raw) -> list:
                          if str(n).strip()],
         })
     out.sort(key=lambda d: d["start"])
+    return out
+
+
+def _coffee(raw) -> dict:
+    """Validate the coffee-override block: per-ISO-date service windows."""
+    out = {"overrides": {}}
+    src = raw.get("overrides") if isinstance(raw, dict) else None
+    if isinstance(src, dict):
+        for date, entry in src.items():
+            if not DATE_RE.match(str(date)) or not isinstance(entry, dict):
+                continue
+            out["overrides"][str(date)] = {
+                "enabled": bool(entry.get("enabled", True)),
+                "start": _hhmm(entry.get("start"), "14:00"),
+                "end": _hhmm(entry.get("end"), "18:00"),
+            }
     return out
 
 
@@ -657,6 +680,7 @@ class ConfigStore:
         data["mode_names"] = _mode_names(raw.get("mode_names"))
         data["matrix"] = _matrix(raw.get("matrix"))
         data["temperature"] = _temperature(raw.get("temperature"))
+        data["coffee"] = _coffee(raw.get("coffee"))
 
         from .matrix import normalize_message, MAX_MESSAGES
         dwell = data["matrix"]["default_dwell"]
@@ -1063,6 +1087,38 @@ class ConfigStore:
             cleaned.update(merged)
             data["settings"] = cleaned
             return cleaned
+
+        return self.mutate(apply)
+
+    def coffee(self) -> dict:
+        with self._lock:
+            return json.loads(json.dumps(self._data.get("coffee") or {"overrides": {}}))
+
+    def coffee_overrides(self) -> dict:
+        """The per-date coffee overrides, for the schedule to fold in."""
+        return self.coffee().get("overrides", {})
+
+    def set_coffee_override(self, date: str, changes: dict) -> dict:
+        """Set (or update) today's coffee window; returns the stored override."""
+        def apply(data):
+            coffee = data.setdefault("coffee", {"overrides": {}})
+            overrides = coffee.setdefault("overrides", {})
+            entry = dict(overrides.get(date) or {})
+            entry.update(changes or {})
+            overrides[date] = entry
+            data["coffee"] = _coffee(coffee)
+            return data["coffee"]["overrides"].get(date)
+
+        return self.mutate(apply)
+
+    def clear_coffee_override(self, date: str) -> bool:
+        """Drop an override so the printed schedule stands again for that day."""
+        def apply(data):
+            coffee = data.setdefault("coffee", {"overrides": {}})
+            existed = date in (coffee.get("overrides") or {})
+            (coffee.get("overrides") or {}).pop(date, None)
+            data["coffee"] = _coffee(coffee)
+            return existed
 
         return self.mutate(apply)
 

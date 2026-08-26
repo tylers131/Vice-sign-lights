@@ -75,8 +75,42 @@ _COFFEE_PROMOS = (
 )
 
 
+COFFEE_TITLE = "COFFEE + TEA SERVICE"
+
+
 def _coffee(start, end, offering):
-    return Event(start, end, offering, "COFFEE + TEA SERVICE", _COFFEE_PROMOS)
+    return Event(start, end, offering, COFFEE_TITLE, _COFFEE_PROMOS)
+
+
+def _coffee_label(start: str) -> str:
+    """"3P COFFEE" / "830A COFFEE" -- the day-summary tag for a coffee window."""
+    hour, minute = int(start[:2]), int(start[3:5])
+    suffix = "A" if hour < 12 else "P"
+    h12 = hour % 12 or 12
+    stamp = "%d%s" % (h12, suffix) if minute == 0 else "%d%02d%s" % (h12, minute, suffix)
+    return stamp + " COFFEE"
+
+
+def _coffee_event(start: str, end: str) -> "Event":
+    """A coffee service from a phone-set window, keeping the title and promos so
+    the NOW shout and the lights' attract look fire exactly as a printed one."""
+    return Event(start, end, _coffee_label(start), COFFEE_TITLE, _COFFEE_PROMOS)
+
+
+def _apply_coffee_override(events: list, override: dict) -> list:
+    """Fold today's phone override into the day's events.
+
+    Disabled drops the coffee that day; enabled replaces its window (the day
+    keeps everything that is not coffee). Adding coffee to a day that had none
+    works too -- the override simply supplies the whole window.
+    """
+    if not override:
+        return events
+    kept = [e for e in events if e.title != COFFEE_TITLE]
+    if not override.get("enabled", True):
+        return kept
+    kept.append(_coffee_event(override["start"], override["end"]))
+    return kept
 
 
 # The nail spa runs the whole event; one object, reused every day.
@@ -127,18 +161,24 @@ def _minutes(hhmm: str) -> int:
     return int(hour) * 60 + int(minute)
 
 
-def events_for(date: dt.date):
-    return EVENTS.get(date.isoformat(), [])
+def events_for(date: dt.date, overrides=None):
+    """The day's events, with any phone-set coffee override folded in."""
+    events = EVENTS.get(date.isoformat(), [])
+    if overrides:
+        override = overrides.get(date.isoformat())
+        if override is not None:
+            return _apply_coffee_override(events, override)
+    return events
 
 
-def _day_summary(date: dt.date, label: str) -> str | None:
+def _day_summary(date: dt.date, label: str, overrides=None) -> str | None:
     """"<LABEL> <offering> / <offering> / ..." or None if nothing is on.
 
     Ordered as the day runs -- timed events by start time, the all-day spa
     last -- so the line reads like a plan for the day. The runner pages it if
     it overruns the panel; keeping the offerings short keeps the pages few.
     """
-    events = events_for(date)
+    events = events_for(date, overrides)
     if not events:
         return None
     timed = sorted((e for e in events if not e.all_day),
@@ -148,17 +188,17 @@ def _day_summary(date: dt.date, label: str) -> str | None:
     return "%s %s" % (label, " / ".join(parts))
 
 
-def today_line(date: dt.date) -> str | None:
-    return _day_summary(date, "TODAY")
+def today_line(date: dt.date, overrides=None) -> str | None:
+    return _day_summary(date, "TODAY", overrides)
 
 
-def tomorrow_line(date: dt.date) -> str | None:
-    return _day_summary(date + dt.timedelta(days=1), "TOMORROW")
+def tomorrow_line(date: dt.date, overrides=None) -> str | None:
+    return _day_summary(date + dt.timedelta(days=1), "TOMORROW", overrides)
 
 
-def active_events(now: dt.datetime):
+def active_events(now: dt.datetime, overrides=None):
     minutes = now.hour * 60 + now.minute
-    return [e for e in events_for(now.date()) if e.active_at(minutes)]
+    return [e for e in events_for(now.date(), overrides) if e.active_at(minutes)]
 
 
 def temperature_line(reading) -> str | None:
@@ -195,9 +235,20 @@ class Schedule:
     call, so the list is always current without this holding any state.
     """
 
-    def __init__(self, clock, temperature=None):
+    def __init__(self, clock, temperature=None, coffee_overrides=None):
         self.clock = clock
         self._temperature = temperature
+        # A zero-arg callable returning the per-date coffee overrides dict (the
+        # store's), or None. Read fresh each call so a phone edit shows at once.
+        self._coffee_overrides = coffee_overrides
+
+    def _overrides(self):
+        if self._coffee_overrides is None:
+            return None
+        try:
+            return self._coffee_overrides() or None
+        except Exception:
+            return None
 
     def _temp_reading(self):
         if self._temperature is None:
@@ -222,7 +273,8 @@ class Schedule:
             now = self.clock.now()
         except Exception:
             return False
-        return any(e.title == "COFFEE + TEA SERVICE" for e in active_events(now))
+        return any(e.title == COFFEE_TITLE
+                   for e in active_events(now, self._overrides()))
 
     def messages(self) -> list:
         """The slots to rotate, in order, right now.
@@ -240,13 +292,14 @@ class Schedule:
         except Exception:
             clock_ok = False
 
+        overrides = self._overrides()
         if clock_ok:
             now = self.clock.now()
-            today = today_line(now.date())
+            today = today_line(now.date(), overrides)
             if today:
                 out.append(_message("sched-today", today, color="#22d3ee",
                                     dwell=18.0))
-            tomorrow = tomorrow_line(now.date())
+            tomorrow = tomorrow_line(now.date(), overrides)
             if tomorrow:
                 out.append(_message("sched-tomorrow", tomorrow, color="#8b5cf6",
                                     dwell=16.0))
@@ -261,10 +314,10 @@ class Schedule:
             out.append(_message("sched-temp", temp, color="#2fe3b0", dwell=10.0))
 
         if clock_ok:
-            out.extend(self._event_messages(self.clock.now()))
+            out.extend(self._event_messages(self.clock.now(), overrides))
         return out
 
-    def _event_messages(self, now: dt.datetime) -> list:
+    def _event_messages(self, now: dt.datetime, overrides=None) -> list:
         """The shouts for whatever is happening at ``now``.
 
         Each active event contributes its promos; the coffee's two ride here.
@@ -273,7 +326,7 @@ class Schedule:
         all-day spa is already in the today line, so it earns a shout only when
         it is the *only* thing on.
         """
-        active = active_events(now)
+        active = active_events(now, overrides)
         live = [e for e in active if not e.all_day]
         out = []
         seen = set()
