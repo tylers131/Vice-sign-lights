@@ -1473,7 +1473,7 @@ function previewMessage(){
       var colour = $("msgColor").value;
       /* Size the cell to the phone, not the other way round: at a fixed 4px
          plus margins a 96-wide panel is 576px, so on a phone the preview was
-         cut off at "BAR IS O" -- and a preview you have to scroll cannot
+         cut off after a word or two -- and a preview you have to scroll cannot
          answer the one question it exists to answer, which is whether the
          message fits. */
       var box = $("msgPreview").clientWidth || 340;

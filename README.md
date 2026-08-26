@@ -2742,8 +2742,8 @@ long one runs, edit that table; the end times in it are assumptions (the sheet
 gave only start times) and only decide when an event stops shouting "NOW".
 
 **No bar anywhere.** The camp has no bar, so nothing here mentions one -- a test
-walks every hour of every day and asserts it, and the old "BAR IS OPEN"
-placeholders elsewhere are gone.
+walks every hour of every day and asserts it, and the old bar placeholders
+elsewhere are gone.
 
 **What it never does** is show a stale number as if it were live. A missing or
 old temperature reading drops the temperature line rather than showing the last

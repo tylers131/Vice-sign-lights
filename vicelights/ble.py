@@ -786,7 +786,13 @@ class BleWorker:
                      for i in range(3)]
         else:
             found = await scan_devices(seconds)
+        # Both the twelve controllers and any paired text panel(s), so a scan
+        # to add a second sign shows the first as "already added" and the new
+        # one stands out as the panel-shaped row that is not.
         known = {device["address"] for device in self.store.devices()}
+        known |= {panel["address"]
+                  for panel in (self.store.matrix().get("panels") or [])
+                  if panel.get("address")}
         for entry in found:
             entry["known"] = entry["address"] in known
             entry["is_elk"] = protocol.looks_like_elk(entry.get("name"))

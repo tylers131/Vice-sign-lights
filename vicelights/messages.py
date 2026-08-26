@@ -111,7 +111,7 @@ class MatrixRunner:
         with self._lock:
             # The whole message, not the page fragment on the glass. Someone
             # reading "now showing" wants to know which of their messages is
-            # up; "BAR IS" is not one of them.
+            # up; a partial page like "ICED CO" is not one of them.
             current = dict(self._source or self._current or {}) or None
             next_at = self._next_at
             error = self._last_error
