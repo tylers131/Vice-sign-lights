@@ -770,6 +770,7 @@ function renderRotation(r){
   var bits = [];
   if(r.current) bits.push("showing <b>"+esc(r.current)+"</b>");
   if(r.enabled){
+    if(r.daypart) bits.push("mood <b>"+esc(r.daypart)+"</b>");
     if(r.holding){
       bits.push("paused "+fmtSecs(r.hold_remaining_seconds)+" after manual control");
     } else if(r.next_in_seconds!=null){

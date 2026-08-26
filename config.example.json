@@ -21,26 +21,85 @@
   "rotation": {
     "enabled": true,
     "playlist": [
-      "Drift",
-      "Slow burn",
-      "Carousel",
-      "Pulse",
-      "Heartbeat",
-      "Neon drift",
-      "Ocean",
-      "Ember",
-      "Counterpoint",
-      "Two faces",
-      "Jump cut"
+      "Vice",
+      "Miami",
+      "Neon Nights",
+      "Sunset",
+      "Magenta Pop",
+      "Afterglow",
+      "Vice Breathe"
     ],
     "exclude": [
-      "All off",
-      "Rave"
+      "All off"
     ],
-    "interval_minutes": 5.0,
+    "interval_minutes": 8.0,
     "order": "shuffle",
     "avoid_repeat": true,
-    "hold_after_manual_minutes": 15.0
+    "hold_after_manual_minutes": 20.0,
+    "dayparts": [
+      {
+        "name": "Late night",
+        "start": "00:00",
+        "interval_minutes": 8.0,
+        "playlist": [
+          "Ultraviolet",
+          "After Hours",
+          "Deep Fade",
+          "Hypnotic"
+        ]
+      },
+      {
+        "name": "Sunrise chill",
+        "start": "05:00",
+        "interval_minutes": 12.0,
+        "playlist": [
+          "Sunrise",
+          "Dawn Breathe",
+          "Ember Glow"
+        ]
+      },
+      {
+        "name": "Daytime",
+        "start": "09:00",
+        "interval_minutes": 10.0,
+        "playlist": [
+          "Vice",
+          "Sunblast",
+          "Electric Blue",
+          "Magenta Pop"
+        ]
+      },
+      {
+        "name": "Golden hour",
+        "start": "17:00",
+        "interval_minutes": 7.0,
+        "playlist": [
+          "Sunset",
+          "Magic Hour",
+          "Afterglow",
+          "Neon Dusk"
+        ]
+      },
+      {
+        "name": "Party",
+        "start": "20:00",
+        "interval_minutes": 5.0,
+        "playlist": [
+          "Miami",
+          "Neon Nights",
+          "Cyberpunk",
+          "Rainbow VICE",
+          "Vice Breathe",
+          "Jump Party"
+        ]
+      }
+    ],
+    "attract": [
+      "Coffee Call",
+      "Fresh Brew",
+      "Wake Up"
+    ],
+    "attract_interval_minutes": 4.0
   },
   "mode_names": {
     "0x80": "static red",
@@ -246,36 +305,29 @@
   ],
   "scenes": [
     {
-      "id": "drift",
-      "name": "Drift",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 138,
-          "speed": 30
-        }
-      ],
-      "stagger": 1.0
-    },
-    {
-      "id": "slowburn",
-      "name": "Slow burn",
+      "id": "56efe27a",
+      "name": "Sunrise",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
-          "color": "#ffffff",
+          "color": "#ff8c2a",
           "brightness": 100,
-          "mode": 137,
-          "speed": 20
+          "mode": null,
+          "speed": null
         },
         {
-          "target": "group:drink",
+          "target": "group:cup",
           "power": true,
-          "color": "#22d3ee",
+          "color": "#ff80c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffe0a0",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -284,251 +336,75 @@
       "stagger": 0.0
     },
     {
-      "id": "carousel",
-      "name": "Carousel",
+      "id": "4a3d3862",
+      "name": "Dawn Breathe",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
           "color": "#ffffff",
           "brightness": 100,
-          "mode": 138,
-          "speed": 40
+          "mode": 144,
+          "speed": 22
         },
         {
           "target": "group:cup",
           "power": true,
           "color": "#ffffff",
           "brightness": 100,
-          "mode": 137,
-          "speed": 40
+          "mode": 143,
+          "speed": 22
         },
         {
           "target": "group:straw",
           "power": true,
           "color": "#ffffff",
+          "brightness": 100,
+          "mode": 145,
+          "speed": 22
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "eb475222",
+      "name": "Ember Glow",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#e0407a",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffb000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ff6a00",
           "brightness": 100,
           "mode": null,
           "speed": null
         }
       ],
-      "stagger": 1.5
-    },
-    {
-      "id": "pulse",
-      "name": "Pulse",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 144,
-          "speed": 100
-        },
-        {
-          "target": "group:cup",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 143,
-          "speed": 100
-        },
-        {
-          "target": "group:straw",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 145,
-          "speed": 100
-        }
-      ],
       "stagger": 0.0
     },
     {
-      "id": "heartbeat",
-      "name": "Heartbeat",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 139,
-          "speed": 100
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "neondrift",
-      "name": "Neon drift",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 144,
-          "speed": 100
-        },
-        {
-          "target": "group:drink",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 143,
-          "speed": 100
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "ocean",
-      "name": "Ocean",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 141,
-          "speed": 100
-        },
-        {
-          "target": "group:cup",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 143,
-          "speed": 100
-        },
-        {
-          "target": "group:straw",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 145,
-          "speed": 100
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "ember",
-      "name": "Ember",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 139,
-          "speed": 100
-        },
-        {
-          "target": "group:cup",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 142,
-          "speed": 100
-        },
-        {
-          "target": "group:straw",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 139,
-          "speed": 100
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "counter",
-      "name": "Counterpoint",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 137,
-          "speed": 15
-        },
-        {
-          "target": "group:drink",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 138,
-          "speed": 60
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "sides",
-      "name": "Two faces",
-      "steps": [
-        {
-          "target": "group:side-a",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 138,
-          "speed": 30
-        },
-        {
-          "target": "group:side-b",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 137,
-          "speed": 30
-        }
-      ],
-      "stagger": 1.2
-    },
-    {
-      "id": "jumpcut",
-      "name": "Jump cut",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 136,
-          "speed": 20
-        }
-      ],
-      "stagger": 0.8
-    },
-    {
-      "id": "rave",
-      "name": "Rave",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ffffff",
-          "brightness": 100,
-          "mode": 135,
-          "speed": 70
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "vice",
+      "id": "2e1cd879",
       "name": "Vice",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
-          "color": "#ff2d78",
+          "color": "#ff0a5a",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -536,7 +412,7 @@
         {
           "target": "group:cup",
           "power": true,
-          "color": "#22d3ee",
+          "color": "#00b4d8",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -544,7 +420,7 @@
         {
           "target": "group:straw",
           "power": true,
-          "color": "#ffffff",
+          "color": "#ff0a5a",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -553,13 +429,13 @@
       "stagger": 0.0
     },
     {
-      "id": "neon",
-      "name": "Neon",
+      "id": "cf8fd685",
+      "name": "Sunblast",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
-          "color": "#8000ff",
+          "color": "#ff0030",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -567,38 +443,7 @@
         {
           "target": "group:cup",
           "power": true,
-          "color": "#ff2d78",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:straw",
-          "power": true,
-          "color": "#22d3ee",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "miami",
-      "name": "Miami",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ff40a0",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:cup",
-          "power": true,
-          "color": "#00e5c0",
+          "color": "#ff6a00",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -615,7 +460,69 @@
       "stagger": 0.0
     },
     {
-      "id": "sunset",
+      "id": "c0867d95",
+      "name": "Electric Blue",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#0060ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#00e5c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "f383b9fe",
+      "name": "Magenta Pop",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#c800ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#8000ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "f4538bf0",
       "name": "Sunset",
       "steps": [
         {
@@ -646,7 +553,162 @@
       "stagger": 0.0
     },
     {
-      "id": "cyberpunk",
+      "id": "033b6944",
+      "name": "Magic Hour",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 144,
+          "speed": 35
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff6a00",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffb000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "16b18f94",
+      "name": "Afterglow",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#8000ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ff5a00",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "98d45e69",
+      "name": "Neon Dusk",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff00d0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#00e5c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffd000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "8dbb8193",
+      "name": "Miami",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ff40a0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#00e5c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffd000",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "982d9bf2",
+      "name": "Neon Nights",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#8000ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#22d3ee",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "a0587d7f",
       "name": "Cyberpunk",
       "steps": [
         {
@@ -677,13 +739,37 @@
       "stagger": 0.0
     },
     {
-      "id": "ice",
-      "name": "Ice",
+      "id": "55a02bb5",
+      "name": "Rainbow VICE",
       "steps": [
         {
-          "target": "group:letters",
+          "target": "group:V",
           "power": true,
-          "color": "#00d0ff",
+          "color": "#ff2d78",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:I",
+          "power": true,
+          "color": "#ff8c00",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:C",
+          "power": true,
+          "color": "#00e5c0",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        },
+        {
+          "target": "group:E",
+          "power": true,
+          "color": "#8000ff",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -699,7 +785,7 @@
         {
           "target": "group:straw",
           "power": true,
-          "color": "#4060ff",
+          "color": "#ff2d78",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -708,38 +794,69 @@
       "stagger": 0.0
     },
     {
-      "id": "acid",
-      "name": "Acid",
+      "id": "e13de36c",
+      "name": "Vice Breathe",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
-          "color": "#a0ff00",
+          "color": "#ffffff",
           "brightness": 100,
-          "mode": null,
-          "speed": null
+          "mode": 144,
+          "speed": 55
         },
         {
           "target": "group:cup",
           "power": true,
-          "color": "#ffe000",
+          "color": "#ffffff",
           "brightness": 100,
-          "mode": null,
-          "speed": null
+          "mode": 143,
+          "speed": 55
         },
         {
           "target": "group:straw",
           "power": true,
-          "color": "#00ff80",
+          "color": "#ffffff",
           "brightness": 100,
-          "mode": null,
-          "speed": null
+          "mode": 144,
+          "speed": 55
         }
       ],
       "stagger": 0.0
     },
     {
-      "id": "ultraviolet",
+      "id": "4b5a959d",
+      "name": "Jump Party",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 136,
+          "speed": 55
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 136,
+          "speed": 55
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 136,
+          "speed": 55
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "8d4888bc",
       "name": "Ultraviolet",
       "steps": [
         {
@@ -770,13 +887,13 @@
       "stagger": 0.0
     },
     {
-      "id": "candy",
-      "name": "Candy",
+      "id": "c41ee2fa",
+      "name": "After Hours",
       "steps": [
         {
           "target": "group:letters",
           "power": true,
-          "color": "#ff80c0",
+          "color": "#4000ff",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -784,38 +901,100 @@
         {
           "target": "group:cup",
           "power": true,
-          "color": "#ffffff",
+          "color": "#ff0080",
           "brightness": 100,
           "mode": null,
           "speed": null
         },
         {
           "target": "group:straw",
+          "power": true,
+          "color": "#00d0ff",
+          "brightness": 100,
+          "mode": null,
+          "speed": null
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "d44960cf",
+      "name": "Deep Fade",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 22
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 22
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 138,
+          "speed": 22
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "9ff689bc",
+      "name": "Hypnotic",
+      "steps": [
+        {
+          "target": "group:letters",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 141,
+          "speed": 22
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 144,
+          "speed": 22
+        },
+        {
+          "target": "group:straw",
+          "power": true,
+          "color": "#ffffff",
+          "brightness": 100,
+          "mode": 143,
+          "speed": 22
+        }
+      ],
+      "stagger": 0.0
+    },
+    {
+      "id": "84a76357",
+      "name": "Coffee Call",
+      "steps": [
+        {
+          "target": "group:letters",
           "power": true,
           "color": "#ff2d78",
           "brightness": 100,
           "mode": null,
           "speed": null
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "fire",
-      "name": "Fire",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ff2000",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
         },
         {
           "target": "group:cup",
           "power": true,
-          "color": "#ff8000",
+          "color": "#ff8c2a",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -823,7 +1002,7 @@
         {
           "target": "group:straw",
           "power": true,
-          "color": "#ffd000",
+          "color": "#ffd070",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -832,29 +1011,29 @@
       "stagger": 0.0
     },
     {
-      "id": "mint",
-      "name": "Mint",
+      "id": "2bbac64b",
+      "name": "Fresh Brew",
       "steps": [
         {
           "target": "group:letters",
-          "power": true,
-          "color": "#00ffa0",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:cup",
           "power": true,
           "color": "#ffffff",
           "brightness": 100,
+          "mode": 144,
+          "speed": 35
+        },
+        {
+          "target": "group:cup",
+          "power": true,
+          "color": "#ff6a00",
+          "brightness": 100,
           "mode": null,
           "speed": null
         },
         {
           "target": "group:straw",
           "power": true,
-          "color": "#00d0d0",
+          "color": "#ffcc66",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -863,8 +1042,8 @@
       "stagger": 0.0
     },
     {
-      "id": "gold",
-      "name": "Gold",
+      "id": "2a0eb549",
+      "name": "Wake Up",
       "steps": [
         {
           "target": "group:letters",
@@ -877,7 +1056,7 @@
         {
           "target": "group:cup",
           "power": true,
-          "color": "#fff0c0",
+          "color": "#ff2d78",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -885,7 +1064,7 @@
         {
           "target": "group:straw",
           "power": true,
-          "color": "#ff6000",
+          "color": "#ff6a00",
           "brightness": 100,
           "mode": null,
           "speed": null
@@ -894,75 +1073,14 @@
       "stagger": 0.0
     },
     {
-      "id": "split",
-      "name": "Split",
-      "steps": [
-        {
-          "target": "group:side-a",
-          "power": true,
-          "color": "#ff2d78",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:side-b",
-          "power": true,
-          "color": "#22d3ee",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "warm",
-      "name": "Warm",
-      "steps": [
-        {
-          "target": "all",
-          "power": true,
-          "color": "#ff8c2a",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "lettersonly",
-      "name": "Letters only",
-      "steps": [
-        {
-          "target": "group:letters",
-          "power": true,
-          "color": "#ff2d78",
-          "brightness": 100,
-          "mode": null,
-          "speed": null
-        },
-        {
-          "target": "group:drink",
-          "power": false,
-          "color": "#000000",
-          "brightness": 0,
-          "mode": null,
-          "speed": null
-        }
-      ],
-      "stagger": 0.0
-    },
-    {
-      "id": "off",
+      "id": "63f5a4ea",
       "name": "All off",
       "steps": [
         {
           "target": "all",
           "power": false,
           "color": "#000000",
-          "brightness": 0,
+          "brightness": 100,
           "mode": null,
           "speed": null
         }
@@ -970,26 +1088,7 @@
       "stagger": 0.0
     }
   ],
-  "schedules": [
-    {
-      "id": "dusk",
-      "name": "Dusk",
-      "scene": "Vice",
-      "time": "19:30",
-      "days": [],
-      "enabled": true,
-      "last_fired": ""
-    },
-    {
-      "id": "dawn",
-      "name": "Dawn off",
-      "scene": "All off",
-      "time": "06:30",
-      "days": [],
-      "enabled": true,
-      "last_fired": ""
-    }
-  ],
+  "schedules": [],
   "timers": [],
   "matrix": {
     "enabled": false,
@@ -1001,15 +1100,29 @@
     "height": 16,
     "brightness": 100,
     "playlist": false,
-    "schedule": false,
     "default_dwell": 20.0,
+    "paging": true,
+    "page_seconds": 5.0,
+    "text_font": "narrow",
+    "bitmap_order": "msb",
+    "text_reversed": false,
+    "color_mode": 0,
+    "h_align": 1,
+    "v_align": 1,
     "chunk": 20,
+    "write_response": true,
+    "batch_writes": true,
     "frame_delay": 0.02,
-    "commands": {},
     "text_mode": "pixels",
+    "scale": "auto",
+    "stretch": true,
+    "bold": "auto",
+    "pixel_layout": "agrb",
     "fill_background": false,
     "png_opt": 0,
-    "png_buffer": 0
+    "png_buffer": 0,
+    "commands": {},
+    "schedule": false
   },
   "messages": [],
   "temperature": {

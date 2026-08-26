@@ -71,6 +71,14 @@ DEFAULT_ROTATION = {
     # Touching the controls should win. Any manual command pauses rotation for
     # this long, so the sign does not fight you while you are looking at it.
     "hold_after_manual_minutes": 15.0,
+    # Time-of-day scheduling. Each day-part: {name, start "HH:MM",
+    # interval_minutes, playlist:[scene names]}. Empty = one playlist all day.
+    # The active part is the latest whose start has passed, wrapping midnight.
+    "dayparts": [],
+    # Scenes played while a coffee service is on (from the event calendar),
+    # whatever the hour. Empty = the feature is off.
+    "attract": [],
+    "attract_interval_minutes": 4.0,
 }
 
 # A sweep takes ~50s; anything near that leaves the radio permanently busy and
@@ -260,7 +268,45 @@ def _rotation(raw) -> dict:
             0.0, float(value.get("hold_after_manual_minutes", 15.0)))
     except (TypeError, ValueError):
         value["hold_after_manual_minutes"] = 15.0
+    value["dayparts"] = _dayparts(value.get("dayparts"))
+    value["attract"] = [str(n).strip() for n in (value.get("attract") or [])
+                        if str(n).strip()]
+    try:
+        value["attract_interval_minutes"] = max(
+            MIN_ROTATION_MINUTES, float(value.get("attract_interval_minutes", 4.0)))
+    except (TypeError, ValueError):
+        value["attract_interval_minutes"] = 4.0
     return value
+
+
+def _dayparts(raw) -> list:
+    """Validate the day-part list: named windows with a start and a playlist."""
+    out = []
+    for part in raw or []:
+        if not isinstance(part, dict):
+            continue
+        start = str(part.get("start") or "").strip()
+        try:
+            hour, minute = (int(x) for x in start.split(":"))
+            if not (0 <= hour < 24 and 0 <= minute < 60):
+                raise ValueError
+        except (ValueError, TypeError):
+            log.warning("dropping day-part with a bad start time: %r", start)
+            continue
+        try:
+            interval = max(MIN_ROTATION_MINUTES,
+                           float(part.get("interval_minutes", 8.0)))
+        except (TypeError, ValueError):
+            interval = 8.0
+        out.append({
+            "name": str(part.get("name") or start).strip(),
+            "start": "%02d:%02d" % (hour, minute),
+            "interval_minutes": interval,
+            "playlist": [str(n).strip() for n in (part.get("playlist") or [])
+                         if str(n).strip()],
+        })
+    out.sort(key=lambda d: d["start"])
+    return out
 
 
 def _temperature(raw) -> dict:
@@ -987,11 +1033,17 @@ class ConfigStore:
 
         return self.mutate(apply)
 
-    def rotation_scenes(self) -> list:
-        """The scenes rotation may play, in config order, honouring exclusions."""
+    def rotation_scenes(self, playlist=None) -> list:
+        """The scenes rotation may play, in config order, honouring exclusions.
+
+        ``playlist`` overrides the configured one -- the rotation passes the
+        active day-part's list so the same filtering (exclude, existence) runs
+        against it.
+        """
         rotation = self.rotation()
         excluded = {n.strip().lower() for n in rotation["exclude"]}
-        chosen = [n.strip().lower() for n in rotation["playlist"]]
+        source = rotation["playlist"] if playlist is None else playlist
+        chosen = [str(n).strip().lower() for n in source]
         names = []
         for scene in self.scenes():
             key = scene["name"].strip().lower()

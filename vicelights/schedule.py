@@ -208,6 +208,22 @@ class Schedule:
             log.debug("temperature source failed: %s", exc)   # take the panel down
             return None
 
+    def attract_now(self) -> bool:
+        """Is a coffee service on right now? Drives the lights' attract look.
+
+        Same source as the panel's coffee promos, so the sign pulls people in
+        with light at the exact moment it is shouting about iced coffee. Needs
+        a set clock; without one there is no date to place an event on, so it
+        is simply off.
+        """
+        try:
+            if not self.clock.clock_ok():
+                return False
+            now = self.clock.now()
+        except Exception:
+            return False
+        return any(e.title == "COFFEE + TEA SERVICE" for e in active_events(now))
+
     def messages(self) -> list:
         """The slots to rotate, in order, right now.
 

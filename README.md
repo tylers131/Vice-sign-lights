@@ -24,6 +24,7 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
 | `vicelights/thermometer.py` | DHT11/DHT22 read, on demand. Retries and medians. |
 | `vicelights/schedule.py` | Calendar-driven panel messages: today, tomorrow, temp. |
+| `vicelights/lightshow.py` | The around-the-clock show: the scene palette and the time-of-day day-parts. |
 | `vicelights/qr.py` | Self-contained QR encoder for the Wi-Fi join code. |
 | `vicelights/matrix.py` | BLE text panel: drivers, fingerprints, 5x7 font. |
 | `vicelights/messages.py` | The message queue and its dwell timer. |
@@ -36,6 +37,7 @@ no internet, no cloud, no CDN, no NTP.
 | `scripts/install.sh` | Installer for Pi OS Lite. |
 | `scripts/setup_ap_networkmanager.sh` | Access point via NetworkManager (Bookworm). |
 | `scripts/setup_ap_hostapd.sh` | Access point via hostapd + dnsmasq (Bullseye). |
+| `scripts/load_lightshow.py` | Installs the around-the-clock show into the live config. |
 | `config.example.json` | Starter config carrying the sign's 12 real BLE addresses. |
 
 ---
@@ -95,6 +97,91 @@ On connect the code prefers `0000fff3-0000-1000-8000-00805f9b34fb`, then
 `0000ffe1-...`, and otherwise takes the first characteristic with `write` or
 `write-without-response`. Whichever it picks is cached back into `config.json`
 per device (`char_uuid`), so later connects skip the guessing.
+
+---
+
+## The around-the-clock light show
+
+The sign is meant to run itself: lit 24/7, always doing *something*, and shifting
+mood with the time of day. That whole design lives in one file,
+`vicelights/lightshow.py` — the scene palette and the day-parts that schedule it —
+and it is installed into the config with one command (see *Loading it* below).
+
+### What it does
+
+- **Never dark.** Every scene lights all twelve zones (the letters, both cups,
+  both straws), and rotation re-sends the current scene on its interval. That
+  re-send is also what re-wakes a controller whose Bluetooth had dropped — the
+  usual reason a zone was found dark — so the sign heals itself as it runs. The
+  old scheduled "Dawn off" that blanked the sign at 06:30 every morning is gone.
+- **One identity, many moods.** It is a VICE sign: hot pink and teal are the
+  spine, sunset orange and violet the accents. Every day-part is a variation on
+  that, never a random palette.
+- **The mood follows the clock** when the clock is set:
+
+  | Day-part | From | Changes every | The look |
+  | --- | --- | --- | --- |
+  | Late night | 00:00 | 8 min | hypnotic, slow, violet-blue |
+  | Sunrise chill | 05:00 | 12 min | warm, slow, breathing |
+  | Daytime | 09:00 | 10 min | saturated solids that fight the desert sun |
+  | Golden hour | 17:00 | 7 min | sunset palette, a little motion |
+  | Party | 20:00 | 5 min | vibrant, varied, moving — the showpieces |
+
+  The day-part in force is the latest whose start has passed, wrapping past
+  midnight (Party owns 03:00 as much as 21:00 until Late night's 00:00… the list
+  begins at midnight, so every minute maps).
+- **Daylight is the hard case.** LED strips wash out in direct sun, so the
+  daytime scenes drop white and pastels and lean on the colours that still
+  punch through: saturated pink, red, deep blue, magenta.
+- **Motion without churn.** These are analogue controllers — one colour or one
+  built-in animation per zone. Scenes that should breathe on their own between
+  rotations use a single-colour *fade* mode (a slow swell in one hue); the party
+  scenes use the seven-colour jump for real energy.
+- **Coffee attract.** While a coffee service is on — the same calendar that
+  drives the panel's "NOW SERVING" text (`schedule.py`) — rotation switches to a
+  warm come-here set (Coffee Call / Fresh Brew / Wake Up), whatever the hour, so
+  the lights pull people in at the exact moment the sign is shouting about iced
+  coffee. This one needs no clock, only a set date; with no clock at all the sign
+  falls back to a best-of mix so it always has a good look.
+- **Manual override, then back to normal.** Touch the controls — a scene from the
+  phone or the touchscreen — and rotation holds still for
+  `hold_after_manual_minutes` (20 in the show), then quietly goes back to running
+  itself. That is the only exception to the 24/7 norm.
+
+The *Timing* tab on the phone shows the mood in force ("mood **Party**") next to
+the current scene and the countdown, and `/api/rotation` reports it as `daypart`.
+
+### Loading it
+
+The show is applied to the installed config in one shot. It replaces the scenes
+and the rotation and points the boot scene at a signature look, and leaves
+everything else — your twelve devices, their groups, the panel, saved messages,
+the temperature block, the learned mode names — exactly as it was:
+
+```bash
+# see what would change, touch nothing:
+sudo /opt/vice-sign-lights/venv/bin/python /opt/vice-sign-lights/scripts/load_lightshow.py
+
+# write it:
+sudo /opt/vice-sign-lights/venv/bin/python /opt/vice-sign-lights/scripts/load_lightshow.py --apply
+```
+
+(Run it with the venv's Python so it can import the package; `--config PATH` if the
+config is not at `/etc/vice-lights/config.json`.) It is safe to re-run. The sign
+picks the change up on the next reload — `curl -X POST http://localhost/api/config/reload`
+or `sudo systemctl restart vice-lights`.
+
+A fresh install already has it: `config.example.json` ships the same scenes and
+day-parts, so a Pi seeded from the example runs the show out of the box.
+
+### Editing the schedule
+
+The day-parts, the coffee attract list, the intervals and the fallback are the
+data at the top of `lightshow.py` (`DAYPARTS`, `ATTRACT`, `FALLBACK_PLAYLIST`).
+Edit there and re-run the loader to change the plan. The rotation block also
+accepts a hand-edited `dayparts` array in the config directly — each entry is
+`{name, start "HH:MM", interval_minutes, playlist:[scene names]}` — for a one-off
+tweak without touching code.
 
 ---
 

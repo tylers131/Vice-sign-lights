@@ -39,39 +39,123 @@ DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 class Rotation:
-    """Cycle scenes all night so the sign keeps changing.
+    """Cycle scenes all day so the sign keeps changing.
 
     Timed on ``time.monotonic``, never the wall clock: the Zero W forgets the
-    time across a cold boot and there is no NTP on the playa, so anything
-    depending on knowing the date would simply not run. Rotation has to work
-    from the moment the Pi powers on, knowing nothing.
+    time across a cold boot and there is no NTP on the playa, so the *pace* of
+    rotation has to work from the moment the Pi powers on, knowing nothing.
+
+    But *which* scenes it draws from can follow the time of day when the clock
+    is set. Three sources, in priority order (see ``_resolve``):
+
+    * **Coffee attract** -- while a service is on (``service_active``), the
+      warm come-here scenes, so the lights pull people in at the same moment
+      the panel is shouting about iced coffee.
+    * **Day-part** -- the mood for this hour (chill at dawn, bold in the sun,
+      party after dark), from the rotation config's ``dayparts``.
+    * **Fallback** -- the plain ``playlist``, used whenever the clock is unset
+      or no day-parts are configured. The sign always has a good look.
+
+    Re-sending the current mood on every interval is also what re-wakes a
+    controller whose Bluetooth dropped, so the sign heals itself as it runs.
     """
 
-    def __init__(self, store, worker):
+    def __init__(self, store, worker, timekeeper=None, service_active=None):
         self.store = store
         self.worker = worker
+        self.timekeeper = timekeeper
+        # A zero-arg callable -> bool: is a coffee service on right now? None
+        # (or one that raises) simply means the attract look never triggers.
+        self._service_active = service_active
         self._lock = threading.Lock()
         self._bag = []
         self._last_played = None
         self._next_at = None          # monotonic
         self._current = None
+        self._active_key = None       # which mood is running (see _resolve)
         self._warned_empty = False
 
-    # ------------------------------------------------------------------ state
+    # --------------------------------------------------------- time of day
 
-    def _interval(self, rotation) -> float:
-        return float(rotation["interval_minutes"]) * 60.0
+    def _clock_now(self):
+        """The wall clock, or None if unset or unavailable."""
+        if self.timekeeper is None:
+            return None
+        try:
+            if not self.timekeeper.clock_ok():
+                return None
+            return self.timekeeper.now()
+        except Exception:
+            return None
+
+    def _coffee_on(self) -> bool:
+        if self._service_active is None:
+            return False
+        try:
+            return bool(self._service_active())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _active_daypart(dayparts, now):
+        """The day-part in force at ``now`` -- the latest whose start has passed.
+
+        Day-parts arrive sorted by start time. Before the first one's start we
+        have wrapped past midnight, so the last part of the day is still on
+        (e.g. a Party that begins at 20:00 owns 03:00 too).
+        """
+        now_min = now.hour * 60 + now.minute
+        chosen = None
+        for part in dayparts:
+            hour, _, minute = part["start"].partition(":")
+            if int(hour) * 60 + int(minute) <= now_min:
+                chosen = part
+        return chosen or dayparts[-1]
+
+    def _resolve(self, rotation):
+        """Pick the mood right now: (key, playlist names, interval minutes).
+
+        ``key`` is a stable label for the mood -- rotation switches promptly
+        when it changes (a day-part boundary, or coffee starting or ending)
+        rather than finishing the old mood's interval first.
+        """
+        attract = rotation.get("attract") or []
+        if attract and self._coffee_on():
+            return ("attract", attract,
+                    float(rotation.get("attract_interval_minutes", 4.0)))
+        dayparts = rotation.get("dayparts") or []
+        if dayparts:
+            now = self._clock_now()
+            if now is not None:
+                part = self._active_daypart(dayparts, now)
+                return ("daypart:" + part["name"], part["playlist"],
+                        float(part["interval_minutes"]))
+        return ("base", rotation.get("playlist") or [],
+                float(rotation["interval_minutes"]))
+
+    @staticmethod
+    def _mood_label(key):
+        """Human name for a resolved key, for the UI. None for the plain list."""
+        if key == "attract":
+            return "Coffee attract"
+        if key.startswith("daypart:"):
+            return key.split(":", 1)[1]
+        return None
+
+    # ------------------------------------------------------------------ state
 
     def reschedule(self, delay: float = None):
         """Push the next change out, e.g. after a config edit or a manual skip."""
         rotation = self.store.rotation()
+        _, _, minutes = self._resolve(rotation)
         with self._lock:
             self._next_at = time.monotonic() + (
-                self._interval(rotation) if delay is None else delay)
+                minutes * 60.0 if delay is None else delay)
 
     def status(self) -> dict:
         rotation = self.store.rotation()
-        names = self.store.rotation_scenes()
+        key, playlist, minutes = self._resolve(rotation)
+        names = self.store.rotation_scenes(playlist)
         with self._lock:
             next_at, current = self._next_at, self._current
         remaining = None
@@ -80,16 +164,23 @@ class Rotation:
         return {
             "enabled": rotation["enabled"],
             "order": rotation["order"],
+            # The base pace, so the editor round-trips it. The mood in force may
+            # move faster or slower -- that is active_interval_minutes.
             "interval_minutes": rotation["interval_minutes"],
+            "active_interval_minutes": minutes,
             "hold_after_manual_minutes": rotation["hold_after_manual_minutes"],
             "playlist": rotation["playlist"],
             "exclude": rotation["exclude"],
             "avoid_repeat": rotation["avoid_repeat"],
+            # The scenes actually in play right now (the active mood's set).
             "scenes": names,
             "current": current,
             "next_in_seconds": remaining,
             "holding": self._hold_remaining(rotation) > 0,
             "hold_remaining_seconds": int(self._hold_remaining(rotation)),
+            # Which mood is driving the sign: "Party", "Coffee attract", ...
+            # or null when it is just the plain playlist.
+            "daypart": self._mood_label(key),
         }
 
     def _hold_remaining(self, rotation) -> float:
@@ -126,17 +217,23 @@ class Rotation:
         """Record a scene as the current one without playing it.
 
         Used for the boot scene: rotation should treat it as this interval's
-        pick rather than immediately replacing it with another 50s sweep.
+        pick rather than immediately replacing it with another 50s sweep. The
+        mood key is recorded too, so the first tick does not read a boundary
+        crossing that never happened.
         """
+        rotation = self.store.rotation()
+        key, _, minutes = self._resolve(rotation)
         with self._lock:
             self._last_played = name
             self._current = name
-            self._next_at = time.monotonic() + self._interval(self.store.rotation())
+            self._next_at = time.monotonic() + minutes * 60.0
+            self._active_key = key
 
     def play_next(self, force: bool = False) -> str:
         """Advance to the next scene now. Returns the name, or None."""
         rotation = self.store.rotation()
-        names = self.store.rotation_scenes()
+        key, playlist, minutes = self._resolve(rotation)
+        names = self.store.rotation_scenes(playlist)
         if not names:
             if not self._warned_empty:
                 log.warning("rotation has no scenes to play (check playlist/exclude)")
@@ -144,19 +241,25 @@ class Rotation:
             return None
         self._warned_empty = False
         if len(names) == 1 and not force:
+            # Nothing to advance to, but keep the mood current so a later
+            # day-part change is still seen as a change.
+            with self._lock:
+                self._active_key = key
             return None
 
         with self._lock:
             name = self._next_name(names, rotation)
             self._last_played = name
             self._current = name
-            self._next_at = time.monotonic() + self._interval(rotation)
+            self._next_at = time.monotonic() + minutes * 60.0
+            self._active_key = key
 
         scene = self.store.scene(name)
         if not scene:
             log.error("rotation picked missing scene '%s'", name)
             return None
-        log.info("rotation -> '%s' (next in %.0f min)", name, rotation["interval_minutes"])
+        log.info("rotation -> '%s' (%s, next in %.0f min)", name,
+                 self._mood_label(key) or "playlist", minutes)
         self.worker.submit_scene(scene)
         return name
 
@@ -167,13 +270,21 @@ class Rotation:
         if not rotation["enabled"]:
             with self._lock:
                 self._next_at = None
+                self._active_key = None
             return
 
+        key, _, _ = self._resolve(rotation)
         with self._lock:
             if self._next_at is None:
                 # Freshly enabled: change on the next tick rather than making
                 # someone wait a full interval to see that it works.
                 self._next_at = time.monotonic()
+            elif self._active_key is not None and key != self._active_key:
+                # The mood changed under us -- a day-part boundary passed, or a
+                # coffee service started or ended. Switch now, drawing fresh
+                # from the new set, rather than finishing the old interval.
+                self._next_at = time.monotonic()
+                self._bag = []
             due = time.monotonic() >= self._next_at
 
         if not due:
@@ -366,14 +477,18 @@ class Scheduler:
         self.store = store
         self.worker = worker
         self.timekeeper = timekeeper
-        self.rotation = Rotation(store, worker)
         # The temperature the schedule shows, sampled on its own thread so a
         # ten-second sensor read never stalls the radio pacing here.
         self.temperature = TemperatureSampler(store)
         # What the panel should say, built from the clock, the calendar and
         # that sampler. It only decides text; the runner still does the
-        # sending and cycling.
+        # sending and cycling. Built before rotation because rotation borrows
+        # its calendar to know when a coffee service is on.
         self.schedule = Schedule(timekeeper, temperature=self.temperature.current)
+        # Cycle scenes all day. Time-of-day aware: it reads the clock for the
+        # hour's mood and the schedule's calendar for the coffee attract look.
+        self.rotation = Rotation(store, worker, timekeeper=timekeeper,
+                                 service_active=self.schedule.attract_now)
         # The text panel cycles on this same thread. It is a different device
         # on a different protocol, but it is the same "wait, then send one
         # thing" shape, and giving it its own thread would only add a second
