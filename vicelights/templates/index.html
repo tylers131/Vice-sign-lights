@@ -488,13 +488,19 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
           text. Add a second identical panel and it mirrors the first
           automatically — same message, same colour, same moment.</p>
         <div id="panelList"></div>
-        <div class="row" style="margin-top:8px">
-          <input id="panelAddr2" placeholder="AA:BB:CC:DD:EE:FF">
-          <input id="panelName2" placeholder="Name (e.g. Sign 2)">
+        <div style="margin-top:12px">
+          <button class="btn sm" onclick="scanForSign()">Scan for another sign</button>
+          <p id="panelSignScan" class="muted" style="margin-top:8px;display:none"></p>
+          <div id="panelAddCandidates" style="margin-top:8px"></div>
         </div>
-        <button class="btn sm" style="margin-top:8px" onclick="addPanel()">Add this sign</button>
-        <p class="muted" style="margin-top:8px">Power the second sign on, tap
-          <b>Scan</b> on the Devices tab to find its address, then enter it here.</p>
+        <details style="margin-top:10px">
+          <summary class="muted" style="cursor:pointer">Add by address instead</summary>
+          <div class="row" style="margin-top:8px">
+            <input id="panelAddr2" placeholder="AA:BB:CC:DD:EE:FF">
+            <input id="panelName2" placeholder="Name (e.g. Sign 2)">
+          </div>
+          <button class="btn sm" style="margin-top:8px" onclick="addPanel()">Add this sign</button>
+        </details>
       </div>
 
       <div style="margin-top:14px;border-top:1px solid #26262e;padding-top:12px">
@@ -1281,8 +1287,16 @@ function pollScan(tries){
     loadScan();
   }).catch(function(){ SCAN_JOB=null; scanStatus("Lost contact with the sign."); });
 }
+function scanForSign(){
+  var box = $("panelSignScan");
+  var what = PANEL && (PANEL.family_label || PANEL.name)
+    ? (" Your first sign is a " + esc(PANEL.family_label || PANEL.family || "panel")
+       + "; the second looks the same.") : "";
+  if(box){ box.style.display=""; box.innerHTML="Scanning… power the second sign on." + what; }
+  startScan();
+}
 function scanStatus(message){
-  ["scanStatus","panelScanStatus"].forEach(function(id){
+  ["scanStatus","panelScanStatus","panelSignScan"].forEach(function(id){
     var box = $(id);
     if(box){ box.textContent = message; box.style.display = message ? "" : "none"; }
   });
@@ -1333,7 +1347,33 @@ function loadScan(){
              +esc(d.name||"")+'\')">Pair</button></div>';
       }).join("") : empty;
     }
+    renderSignCandidates(found);
   });
+}
+function renderSignCandidates(found){
+  var host = $("panelAddCandidates"); if(!host) return;
+  var have = {};
+  (PANEL && PANEL.panels ? PANEL.panels : []).forEach(function(p){
+    have[p.address.toUpperCase()] = true; });
+  var cands = (found || []).filter(function(d){
+    return d.is_panel && !have[d.address.toUpperCase()]; });
+  if(!found || !found.length){ host.innerHTML = ""; return; }
+  if(!cands.length){
+    host.innerHTML = '<p class="muted">No new sign in that scan. Power the second '
+      + 'sign on and scan again — it looks the same as your first, and the '
+      + 'closest one has the strongest signal (rssi nearest 0).</p>';
+    return;
+  }
+  var pcount = (PANEL && PANEL.panels ? PANEL.panels.length : 1);
+  host.innerHTML = cands.map(function(d, i){
+    var name = d.name || ("Sign " + (pcount + 1));
+    return '<div class="item"><span class="dot ok"></span>'
+      + '<div class="grow"><div class="name">'+esc(d.name || "(no name)")+'</div>'
+      + '<div class="meta">'+d.address+' &middot; rssi '+(d.rssi==null?"?":d.rssi)
+      + (d.family?(' &middot; looks like '+esc(d.family)):'')+'</div></div>'
+      + '<button class="btn sm" onclick="addPanelByAddress(\''+d.address+'\',\''
+         +esc(name)+'\')">Add</button></div>';
+  }).join("");
 }
 function addFound(addr,name){
   post("/api/devices",{address:addr,name:name}).then(function(){
@@ -1693,17 +1733,22 @@ function savePanels(panels){
     if(j.ok){ renderPanel(j.matrix); loadState(); }
     else toast(j.error || "could not save"); });
 }
-function addPanel(){
-  var addr = $("panelAddr2").value.trim();
+function addPanelByAddress(addr, name){
+  addr = (addr || "").trim();
   if(!addr){ toast("Enter the sign’s address"); return; }
-  var name = $("panelName2").value.trim();
   var panels = currentPanels();
   if(panels.some(function(p){ return p.address.toUpperCase()===addr.toUpperCase(); })){
     toast("That sign is already added"); return;
   }
-  panels.push({address:addr, name:name||addr, enabled:true});
-  savePanels(panels).then(function(){
-    $("panelAddr2").value=""; $("panelName2").value=""; toast("Sign added"); });
+  panels.push({address:addr, name:(name||"").trim()||("Sign "+(panels.length+1)),
+               enabled:true});
+  return savePanels(panels).then(function(){
+    $("panelAddr2").value=""; $("panelName2").value="";
+    if($("panelAddCandidates")) $("panelAddCandidates").innerHTML="";
+    toast("Sign added — it now mirrors the first"); });
+}
+function addPanel(){
+  addPanelByAddress($("panelAddr2").value, $("panelName2").value);
 }
 function removePanel(addr){
   if(!confirm("Remove this sign?")) return;
