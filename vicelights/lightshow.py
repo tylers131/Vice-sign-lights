@@ -127,13 +127,13 @@ SCENES = [
         _solid("group:V", PINK), _solid("group:I", "#ff8c00"),
         _solid("group:C", MINT), _solid("group:E", VIOLET),
         _solid("group:cup", "#ffffff"), _solid("group:straw", PINK)]},
-    _scene("Vice Breathe", _breathe("group:letters", BREATHE_PINK, MED),
-           _breathe("group:cup", BREATHE_CYAN, MED),
-           _breathe("group:straw", BREATHE_PINK, MED)),
+    _scene("Vice Breathe", _breathe("group:letters", BREATHE_PINK, FAST),
+           _breathe("group:cup", BREATHE_CYAN, FAST),
+           _breathe("group:straw", BREATHE_PINK, FAST)),
     # Whole sign cutting colour together -- big and loud.
-    _scene("Jump Party", _breathe("group:letters", JUMP_SEVEN, MED),
-           _breathe("group:cup", JUMP_SEVEN, MED),
-           _breathe("group:straw", JUMP_SEVEN, MED)),
+    _scene("Jump Party", _breathe("group:letters", JUMP_SEVEN, FAST),
+           _breathe("group:cup", JUMP_SEVEN, FAST),
+           _breathe("group:straw", JUMP_SEVEN, FAST)),
 
     # -- Late night / deep (00:00-05:00): hypnotic, slow, violet-blue.
     _scene("Ultraviolet", _solid("group:letters", "#6000ff"),
@@ -170,13 +170,15 @@ SCENES = [
 DAYPARTS = [
     {"name": "Late night", "start": "00:00", "interval_minutes": 8.0,
      "playlist": ["Ultraviolet", "After Hours", "Deep Fade", "Hypnotic"]},
-    {"name": "Sunrise chill", "start": "05:00", "interval_minutes": 12.0,
+    # Dawn is deliberately the slowest change of the day -- calm, barely moving.
+    {"name": "Sunrise chill", "start": "05:00", "interval_minutes": 18.0,
      "playlist": ["Sunrise", "Dawn Breathe", "Ember Glow"]},
     {"name": "Daytime", "start": "09:00", "interval_minutes": 10.0,
      "playlist": ["Vice", "Sunblast", "Electric Blue", "Magenta Pop"]},
     {"name": "Golden hour", "start": "17:00", "interval_minutes": 7.0,
      "playlist": ["Sunset", "Magic Hour", "Afterglow", "Neon Dusk"]},
-    {"name": "Party", "start": "20:00", "interval_minutes": 5.0,
+    # Party is the fastest -- a new look every few minutes, high-energy motion.
+    {"name": "Party", "start": "20:00", "interval_minutes": 3.0,
      "playlist": ["Miami", "Neon Nights", "Cyberpunk", "Rainbow VICE",
                   "Vice Breathe", "Jump Party"]},
 ]
@@ -210,6 +212,12 @@ def rotation_config() -> dict:
         "dayparts": [dict(d) for d in DAYPARTS],
         "attract": list(ATTRACT),
         "attract_interval_minutes": ATTRACT_INTERVAL_MINUTES,
+        # Nightly downtime, off by default. Turn it on from the phone or the
+        # tablet mid-week if the battery is not lasting 24/7: the sign goes dark
+        # between auto_off_at and auto_on_at and wakes itself back into the show.
+        "auto_off_enabled": False,
+        "auto_off_at": "00:00",
+        "auto_on_at": "06:00",
     }
 
 

@@ -79,6 +79,14 @@ DEFAULT_ROTATION = {
     # whatever the hour. Empty = the feature is off.
     "attract": [],
     "attract_interval_minutes": 4.0,
+    # Nightly downtime to save battery, set from the phone or tablet mid-week.
+    # While on, and the clock is set, the sign is dark between these two
+    # wall-clock times (wrapping midnight) and wakes itself back into the show.
+    # Enforced only while rotation is on -- rotation is what turns it dark and
+    # what brings it back, so there is never a way to get stuck off.
+    "auto_off_enabled": False,
+    "auto_off_at": "00:00",
+    "auto_on_at": "06:00",
 }
 
 # A sweep takes ~50s; anything near that leaves the radio permanently busy and
@@ -288,7 +296,21 @@ def _rotation(raw) -> dict:
             MIN_ROTATION_MINUTES, float(value.get("attract_interval_minutes", 4.0)))
     except (TypeError, ValueError):
         value["attract_interval_minutes"] = 4.0
+    value["auto_off_enabled"] = bool(value.get("auto_off_enabled"))
+    value["auto_off_at"] = _hhmm(value.get("auto_off_at"), "00:00")
+    value["auto_on_at"] = _hhmm(value.get("auto_on_at"), "06:00")
     return value
+
+
+def _hhmm(value, default: str) -> str:
+    """A validated "HH:MM" 24-hour string, or ``default`` for anything bad."""
+    try:
+        hour, minute = (int(x) for x in str(value).strip().split(":"))
+        if 0 <= hour < 24 and 0 <= minute < 60:
+            return "%02d:%02d" % (hour, minute)
+    except (ValueError, TypeError):
+        pass
+    return default
 
 
 def _dayparts(raw) -> list:

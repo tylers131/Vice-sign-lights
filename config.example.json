@@ -51,7 +51,7 @@
       {
         "name": "Sunrise chill",
         "start": "05:00",
-        "interval_minutes": 12.0,
+        "interval_minutes": 18.0,
         "playlist": [
           "Sunrise",
           "Dawn Breathe",
@@ -83,7 +83,7 @@
       {
         "name": "Party",
         "start": "20:00",
-        "interval_minutes": 5.0,
+        "interval_minutes": 3.0,
         "playlist": [
           "Miami",
           "Neon Nights",
@@ -99,7 +99,10 @@
       "Fresh Brew",
       "Wake Up"
     ],
-    "attract_interval_minutes": 4.0
+    "attract_interval_minutes": 4.0,
+    "auto_off_enabled": false,
+    "auto_off_at": "00:00",
+    "auto_on_at": "06:00"
   },
   "mode_names": {
     "0x80": "static red",
@@ -305,7 +308,7 @@
   ],
   "scenes": [
     {
-      "id": "56efe27a",
+      "id": "24c69c76",
       "name": "Sunrise",
       "steps": [
         {
@@ -336,7 +339,7 @@
       "stagger": 0.0
     },
     {
-      "id": "4a3d3862",
+      "id": "e746469d",
       "name": "Dawn Breathe",
       "steps": [
         {
@@ -367,7 +370,7 @@
       "stagger": 0.0
     },
     {
-      "id": "eb475222",
+      "id": "f5d9b416",
       "name": "Ember Glow",
       "steps": [
         {
@@ -398,7 +401,7 @@
       "stagger": 0.0
     },
     {
-      "id": "2e1cd879",
+      "id": "0d6e2b3b",
       "name": "Vice",
       "steps": [
         {
@@ -429,7 +432,7 @@
       "stagger": 0.0
     },
     {
-      "id": "cf8fd685",
+      "id": "78a188f4",
       "name": "Sunblast",
       "steps": [
         {
@@ -460,7 +463,7 @@
       "stagger": 0.0
     },
     {
-      "id": "c0867d95",
+      "id": "08bca922",
       "name": "Electric Blue",
       "steps": [
         {
@@ -491,7 +494,7 @@
       "stagger": 0.0
     },
     {
-      "id": "f383b9fe",
+      "id": "d476bcdc",
       "name": "Magenta Pop",
       "steps": [
         {
@@ -522,7 +525,7 @@
       "stagger": 0.0
     },
     {
-      "id": "f4538bf0",
+      "id": "7f044306",
       "name": "Sunset",
       "steps": [
         {
@@ -553,7 +556,7 @@
       "stagger": 0.0
     },
     {
-      "id": "033b6944",
+      "id": "322e319f",
       "name": "Magic Hour",
       "steps": [
         {
@@ -584,7 +587,7 @@
       "stagger": 0.0
     },
     {
-      "id": "16b18f94",
+      "id": "b9078f21",
       "name": "Afterglow",
       "steps": [
         {
@@ -615,7 +618,7 @@
       "stagger": 0.0
     },
     {
-      "id": "98d45e69",
+      "id": "e9af40be",
       "name": "Neon Dusk",
       "steps": [
         {
@@ -646,7 +649,7 @@
       "stagger": 0.0
     },
     {
-      "id": "8dbb8193",
+      "id": "85aa5f89",
       "name": "Miami",
       "steps": [
         {
@@ -677,7 +680,7 @@
       "stagger": 0.0
     },
     {
-      "id": "982d9bf2",
+      "id": "fb017c56",
       "name": "Neon Nights",
       "steps": [
         {
@@ -708,7 +711,7 @@
       "stagger": 0.0
     },
     {
-      "id": "a0587d7f",
+      "id": "67cee249",
       "name": "Cyberpunk",
       "steps": [
         {
@@ -739,7 +742,7 @@
       "stagger": 0.0
     },
     {
-      "id": "55a02bb5",
+      "id": "77caa7dd",
       "name": "Rainbow VICE",
       "steps": [
         {
@@ -794,7 +797,7 @@
       "stagger": 0.0
     },
     {
-      "id": "e13de36c",
+      "id": "f37279b6",
       "name": "Vice Breathe",
       "steps": [
         {
@@ -803,7 +806,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 144,
-          "speed": 55
+          "speed": 72
         },
         {
           "target": "group:cup",
@@ -811,7 +814,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 143,
-          "speed": 55
+          "speed": 72
         },
         {
           "target": "group:straw",
@@ -819,13 +822,13 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 144,
-          "speed": 55
+          "speed": 72
         }
       ],
       "stagger": 0.0
     },
     {
-      "id": "4b5a959d",
+      "id": "7c79dae0",
       "name": "Jump Party",
       "steps": [
         {
@@ -834,7 +837,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 136,
-          "speed": 55
+          "speed": 72
         },
         {
           "target": "group:cup",
@@ -842,7 +845,7 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 136,
-          "speed": 55
+          "speed": 72
         },
         {
           "target": "group:straw",
@@ -850,13 +853,13 @@
           "color": "#ffffff",
           "brightness": 100,
           "mode": 136,
-          "speed": 55
+          "speed": 72
         }
       ],
       "stagger": 0.0
     },
     {
-      "id": "8d4888bc",
+      "id": "a25d54d6",
       "name": "Ultraviolet",
       "steps": [
         {
@@ -887,7 +890,7 @@
       "stagger": 0.0
     },
     {
-      "id": "c41ee2fa",
+      "id": "26defa50",
       "name": "After Hours",
       "steps": [
         {
@@ -918,7 +921,7 @@
       "stagger": 0.0
     },
     {
-      "id": "d44960cf",
+      "id": "d406fbed",
       "name": "Deep Fade",
       "steps": [
         {
@@ -949,7 +952,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9ff689bc",
+      "id": "8700edfe",
       "name": "Hypnotic",
       "steps": [
         {
@@ -980,7 +983,7 @@
       "stagger": 0.0
     },
     {
-      "id": "84a76357",
+      "id": "64889a2c",
       "name": "Coffee Call",
       "steps": [
         {
@@ -1011,7 +1014,7 @@
       "stagger": 0.0
     },
     {
-      "id": "2bbac64b",
+      "id": "9fadf615",
       "name": "Fresh Brew",
       "steps": [
         {
@@ -1042,7 +1045,7 @@
       "stagger": 0.0
     },
     {
-      "id": "2a0eb549",
+      "id": "afed764d",
       "name": "Wake Up",
       "steps": [
         {
@@ -1073,7 +1076,7 @@
       "stagger": 0.0
     },
     {
-      "id": "63f5a4ea",
+      "id": "28005697",
       "name": "All off",
       "steps": [
         {

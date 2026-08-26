@@ -228,7 +228,7 @@ class Resolution(unittest.TestCase):
         rot = self._rotation(dt.datetime(2026, 9, 2, 22, 0))   # party time
         key, playlist, interval = rot._resolve(self.store.rotation())
         self.assertEqual(key, "daypart:Party")
-        self.assertEqual(interval, 5.0)
+        self.assertEqual(interval, 3.0)
         self.assertIn("Miami", playlist)
 
     def test_late_night_wraps_past_midnight(self):
@@ -355,6 +355,63 @@ class SelfHeal(unittest.TestCase):
             [p for p in L.DAYPARTS if p["name"] == "Party"][0]["playlist"]))
         self.assertIn(played, party)
         self.assertEqual(rot._active_key, "daypart:Party")
+
+
+class AutoOff(unittest.TestCase):
+    """The nightly downtime: dark on a wall-clock window, waking into the show."""
+
+    def setUp(self):
+        self.store = build_store()
+        self.store.update_rotation({"enabled": True, "auto_off_enabled": True,
+                                    "auto_off_at": "23:00", "auto_on_at": "06:00"})
+
+    def _rot(self, when=None, coffee=False):
+        return Rotation(self.store, FakeWorker(), timekeeper=FakeClock(when),
+                        service_active=lambda: coffee)
+
+    def _key(self, hour, minute=0, when=True, coffee=False):
+        clock = dt.datetime(2026, 9, 2, hour, minute) if when else None
+        return self._rot(clock, coffee)._resolve_scenes(self.store.rotation())[0]
+
+    def test_dark_inside_the_window_wrapping_midnight(self):
+        for hour in (23, 0, 3, 5):
+            self.assertEqual(self._key(hour), "quiet", "%02d:00 should be dark" % hour)
+
+    def test_lit_outside_the_window(self):
+        self.assertNotEqual(self._key(22), "quiet")     # before it starts
+        self.assertNotEqual(self._key(6), "quiet")      # exactly at wake
+        self.assertNotEqual(self._key(12), "quiet")
+
+    def test_quiet_resolves_to_the_blackout_scene(self):
+        rot = self._rot(dt.datetime(2026, 9, 2, 2, 0))
+        key, names, _ = rot._resolve_scenes(self.store.rotation())
+        self.assertEqual(key, "quiet")
+        self.assertEqual(names, ["All off"])
+        self.assertEqual(rot.play_next(), "All off")    # actually sends it
+
+    def test_auto_off_beats_coffee_attract(self):
+        # An explicit "be dark now" wins even over a coffee service.
+        self.assertEqual(self._key(2, coffee=True), "quiet")
+
+    def test_no_clock_never_auto_offs(self):
+        self.assertNotEqual(self._key(2, when=False), "quiet")
+
+    def test_zero_length_window_is_never_dark(self):
+        self.store.update_rotation({"auto_off_at": "06:00", "auto_on_at": "06:00"})
+        self.assertNotEqual(self._key(6), "quiet")
+
+    def test_disabled_runs_the_normal_show(self):
+        self.store.update_rotation({"auto_off_enabled": False})
+        self.assertTrue(self._key(2).startswith("daypart:"))
+
+    def test_label_and_status_expose_the_window(self):
+        rot = self._rot(dt.datetime(2026, 9, 2, 2, 0))
+        st = rot.status()
+        self.assertTrue(st["auto_off_enabled"])
+        self.assertEqual(st["auto_off_at"], "23:00")
+        self.assertEqual(st["auto_on_at"], "06:00")
+        self.assertTrue(st["sleeping"])
+        self.assertEqual(st["daypart"], "Auto off")
 
 
 class ConfigHardening(unittest.TestCase):

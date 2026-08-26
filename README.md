@@ -122,10 +122,10 @@ and it is installed into the config with one command (see *Loading it* below).
   | Day-part | From | Changes every | The look |
   | --- | --- | --- | --- |
   | Late night | 00:00 | 8 min | hypnotic, slow, violet-blue |
-  | Sunrise chill | 05:00 | 12 min | warm, slow, breathing |
+  | Sunrise chill | 05:00 | 18 min | warm, barely moving — the calmest part of the day |
   | Daytime | 09:00 | 10 min | saturated solids that fight the desert sun |
   | Golden hour | 17:00 | 7 min | sunset palette, a little motion |
-  | Party | 20:00 | 5 min | vibrant, varied, moving — the showpieces |
+  | Party | 20:00 | 3 min | fastest change, high-energy motion — the showpieces |
 
   The day-part in force is the latest whose start has passed, wrapping past
   midnight (Party owns 03:00 as much as 21:00 until Late night's 00:00… the list
@@ -150,6 +150,26 @@ and it is installed into the config with one command (see *Loading it* below).
 
 The *Timing* tab on the phone shows the mood in force ("mood **Party**") next to
 the current scene and the countdown, and `/api/rotation` reports it as `daypart`.
+
+### Auto off (battery saver)
+
+The sign wants to run 24/7, but a battery might not. So there is an optional
+nightly downtime you set **from the phone or the tablet, mid-week**, the moment
+you realise the charge is not lasting: the sign goes dark between two wall-clock
+times and wakes itself back into the show.
+
+* **Phone** — the *Timing* tab: a switch and two time fields (go dark at / wake
+  at).
+* **Tablet** — the *System* tab has an **Auto off** card; tap it for a
+  fingertip editor with a toggle and −1h / −15 / +15 / +1h steppers, so it can
+  be set at the sign without a keyboard.
+
+It needs the clock set (a wall-clock window has no meaning on an unset clock, so
+the sign stays lit rather than guess), the window may wrap midnight (dark 23:00,
+wake 06:00), and it only acts while rotation is on — rotation is what turns the
+sign dark and what brings it back, so there is no way to get stuck off. Turn it
+off and the sign is back to running around the clock. `/api/rotation` carries
+`auto_off_enabled`, `auto_off_at`, `auto_on_at` and a live `sleeping` flag.
 
 ### Loading it
 

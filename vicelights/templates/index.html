@@ -243,6 +243,23 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     </div>
     <label>Pause after I touch the controls (minutes)</label>
     <input id="rotHold" type="number" min="0" step="1" value="15" onchange="saveRotation()">
+    <hr>
+    <label class="switch" style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="rotAutoOff" style="width:auto" onchange="saveAutoOff()">
+      <span>Auto off overnight (battery saver)</span></label>
+    <div class="muted" style="font-size:13px;margin:2px 0 6px">
+      Turn the sign dark for a stretch each night. Needs the clock set.</div>
+    <div class="row">
+      <div>
+        <label>Go dark at</label>
+        <input id="rotOffAt" type="time" value="00:00" onchange="saveAutoOff()">
+      </div>
+      <div>
+        <label>Wake at</label>
+        <input id="rotOnAt" type="time" value="06:00" onchange="saveAutoOff()">
+      </div>
+    </div>
+    <div id="rotAutoOffNote" class="muted" style="font-size:13px;margin-top:4px"></div>
     <div id="rotStatus" style="margin-top:10px"></div>
     <button class="btn" style="margin-top:10px" onclick="rotateNow()">Skip to next scene</button>
     <hr>
@@ -767,6 +784,15 @@ function renderRotation(r){
   $("rotInterval").value = r.interval_minutes;
   $("rotOrder").value = r.order;
   $("rotHold").value = r.hold_after_manual_minutes;
+  $("rotAutoOff").checked = !!r.auto_off_enabled;
+  if(r.auto_off_at) $("rotOffAt").value = r.auto_off_at;
+  if(r.auto_on_at) $("rotOnAt").value = r.auto_on_at;
+  var aoNote = $("rotAutoOffNote");
+  if(aoNote){
+    aoNote.innerHTML = !r.auto_off_enabled ? ""
+      : r.sleeping ? "Sleeping now &middot; wakes at <b>"+esc(r.auto_on_at)+"</b>"
+      : "Dark <b>"+esc(r.auto_off_at)+"</b>&ndash;<b>"+esc(r.auto_on_at)+"</b> each night";
+  }
 
   var bits = [];
   if(r.current) bits.push("showing <b>"+esc(r.current)+"</b>");
@@ -814,6 +840,14 @@ function saveRotation(){
     order: $("rotOrder").value,
     hold_after_manual_minutes: parseFloat($("rotHold").value)
   }).then(function(j){ if(j.ok){ renderRotation(j.rotation); toast("Rotation saved"); } });
+}
+function saveAutoOff(){
+  post("/api/rotation",{
+    auto_off_enabled: $("rotAutoOff").checked,
+    auto_off_at: $("rotOffAt").value,
+    auto_on_at: $("rotOnAt").value
+  }).then(function(j){ if(j.ok){ renderRotation(j.rotation);
+    toast($("rotAutoOff").checked ? "Auto off saved" : "Auto off turned off"); } });
 }
 function savePlaylist(){
   var names = [];

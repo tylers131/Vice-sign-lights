@@ -112,13 +112,47 @@ class Rotation:
                 chosen = part
         return chosen or dayparts[-1]
 
+    @staticmethod
+    def _hhmm_min(hhmm) -> int:
+        hour, _, minute = str(hhmm).partition(":")
+        return int(hour) * 60 + int(minute)
+
+    def _quiet_now(self, rotation) -> bool:
+        """Is the sign in its nightly auto-off downtime right now?
+
+        A wall-clock window, so it needs a set clock; with none there is no way
+        to know it is night, and the sign stays lit rather than guess. The
+        window may wrap midnight (off 23:00, on 06:00). Only meaningful while
+        rotation is on -- rotation is what darkens the sign here and what wakes
+        it -- which the caller (tick) already guarantees.
+        """
+        if not rotation.get("auto_off_enabled"):
+            return False
+        now = self._clock_now()
+        if now is None:
+            return False
+        try:
+            off = self._hhmm_min(rotation.get("auto_off_at", "00:00"))
+            on = self._hhmm_min(rotation.get("auto_on_at", "06:00"))
+        except (ValueError, TypeError):
+            return False
+        if off == on:
+            return False          # a zero-length window is "never off"
+        cur = now.hour * 60 + now.minute
+        if off < on:
+            return off <= cur < on
+        return cur >= off or cur < on     # wraps past midnight
+
     def _resolve(self, rotation):
         """Pick the mood right now: (key, playlist names, interval minutes).
 
         ``key`` is a stable label for the mood -- rotation switches promptly
-        when it changes (a day-part boundary, or coffee starting or ending)
-        rather than finishing the old mood's interval first.
+        when it changes (auto-off starting/ending, a day-part boundary, or
+        coffee starting/ending) rather than finishing the old interval first.
         """
+        # Auto-off wins over everything: a dark sign is the whole point of it.
+        if self._quiet_now(rotation):
+            return ("quiet", ["All off"], float(rotation["interval_minutes"]))
         attract = rotation.get("attract") or []
         if attract and self._coffee_on():
             return ("attract", attract,
@@ -144,6 +178,10 @@ class Rotation:
         detection and the on-screen label are unaffected.
         """
         key, playlist, minutes = self._resolve(rotation)
+        if key == "quiet":
+            # Force the blackout scene, past the exclude that normally hides it.
+            names = ["All off"] if self.store.scene("All off") else []
+            return key, names, minutes
         names = self.store.rotation_scenes(playlist)
         if not names and key != "base":
             names = self.store.rotation_scenes(rotation.get("playlist") or [])
@@ -152,6 +190,8 @@ class Rotation:
     @staticmethod
     def _mood_label(key):
         """Human name for a resolved key, for the UI. None for the plain list."""
+        if key == "quiet":
+            return "Auto off"
         if key == "attract":
             return "Coffee attract"
         if key.startswith("daypart:"):
@@ -193,9 +233,14 @@ class Rotation:
             "next_in_seconds": remaining,
             "holding": self._hold_remaining(rotation) > 0,
             "hold_remaining_seconds": int(self._hold_remaining(rotation)),
-            # Which mood is driving the sign: "Party", "Coffee attract", ...
-            # or null when it is just the plain playlist.
+            # Which mood is driving the sign: "Party", "Coffee attract",
+            # "Auto off", ... or null when it is just the plain playlist.
             "daypart": self._mood_label(key),
+            # The nightly auto-off downtime, and whether it is dark right now.
+            "auto_off_enabled": rotation["auto_off_enabled"],
+            "auto_off_at": rotation["auto_off_at"],
+            "auto_on_at": rotation["auto_on_at"],
+            "sleeping": key == "quiet",
         }
 
     def _hold_remaining(self, rotation) -> float:

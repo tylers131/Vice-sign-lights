@@ -746,6 +746,8 @@ class Panel:
         # A pending prompt, drawn over the middle third. Nothing that changes
         # the machine happens without one.
         self.confirm = None
+        # The Auto-off editor overlay (the nightly downtime), when open.
+        self.autooff = False
         # The full-screen Wi-Fi join code, when open.
         self.showing_wifi = False
         # The Devices tab scrolls -- the only tab that does. Offset in pixels,
@@ -1712,9 +1714,36 @@ class Panel:
                       "%d not answering: %s" % (len(down), names),
                       PINK_SOFT, topleft=(left.x, y + int(6 * s)))
 
-        # -- right: the Wi-Fi name and a join QR, tap to enlarge
+        # -- right: the nightly auto-off, then the Wi-Fi name and join QR
+        rotation = state.get("rotation") or {}
+        y = self.divider("Auto off", right.y, right.w, x=right.x)
+        ao_on = bool(rotation.get("auto_off_enabled"))
+        if rotation.get("sleeping"):
+            ao_sub = "sleeping · wakes %s" % rotation.get("auto_on_at", "")
+        elif ao_on:
+            ao_sub = "dark %s–%s nightly" % (rotation.get("auto_off_at", ""),
+                                                  rotation.get("auto_on_at", ""))
+        else:
+            ao_sub = "off — runs 24/7"
+        ao = pygame.Rect(right.x, y, right.w, int(44 * s))
+        self.rounded(self.screen, ao,
+                     over(OLIVE, 0.12) if ao_on else CARD,
+                     over(OLIVE, 0.40) if ao_on else over(WHITE, 0.08),
+                     radius=int(10 * s))
+        self.text(self.screen, self.f_body2, "AUTO OFF",
+                  OLIVE_SOFT if ao_on else INK,
+                  topleft=(ao.x + int(12 * s), ao.y + int(6 * s)))
+        self.text(self.screen, self.f_tiny, ao_sub,
+                  over(OLIVE_SOFT, 0.7) if ao_on else MUTED,
+                  topleft=(ao.x + int(12 * s), ao.y + int(24 * s)))
+        set_img = self.f_tiny.render("SET ›", True, MUTED)
+        self.screen.blit(set_img, (ao.right - int(12 * s) - set_img.get_width(),
+                                   ao.centery - set_img.get_height() // 2))
+        self.buttons.append(Button(ao, "AUTO OFF", "autooff-open"))
+
+        # -- the Wi-Fi name and a join QR, tap to enlarge
         wifi = state.get("wifi") or {}
-        y = self.divider("Wi-Fi", right.y, right.w, x=right.x)
+        y = self.divider("Wi-Fi", ao.bottom + int(10 * s), right.w, x=right.x)
         ssid = wifi.get("ssid") or ""
         if ssid:
             self.text(self.screen, self.f_head2, ssid[:18], CYAN_SOFT,
@@ -2180,6 +2209,74 @@ class Panel:
         self.text(self.screen, self.f_body, "CANCEL", INK, center=cancel.center)
         self.buttons.append(Button(cancel, "CANCEL", "confirm-no"))
 
+    def draw_autooff(self, state):
+        """The nightly-downtime editor, over the middle third.
+
+        Big steppers so the window can be set at the sign with a fingertip and
+        no keyboard -- enabling this here is how the camp gives the battery a
+        rest mid-week without reaching for the phone. Toggle on the left, the
+        two times with -1h/-15/+15/+1h either side, DONE bottom-right.
+        """
+        s = self.k
+        rotation = state.get("rotation") or {}
+        on = bool(rotation.get("auto_off_enabled"))
+        panel = pygame.Rect(self.middle.x, self.middle.y - int(4 * s),
+                            self.middle.w, self.middle.h)
+        self.rounded(self.screen, panel, CARD_ALT, over(OLIVE, 0.35),
+                     radius=int(16 * s))
+        pad = int(18 * s)
+        self.text(self.screen, self.f_body, "Auto off — overnight downtime",
+                  INK, topleft=(panel.x + pad, panel.y + int(8 * s)))
+        self.text(self.screen, self.f_tiny,
+                  "Dark for a stretch each night to save battery · needs the clock set",
+                  MUTED, topleft=(panel.x + pad, panel.y + int(32 * s)))
+
+        # toggle (left) and DONE (right) share the top control row
+        rh = int(42 * s)
+        row_y = panel.y + int(52 * s)
+        toggle = pygame.Rect(panel.x + pad, row_y, int(230 * s), rh)
+        self.rounded(self.screen, toggle,
+                     over(OLIVE, 0.16) if on else CARD,
+                     over(OLIVE, 0.5) if on else LINE, radius=rh // 2)
+        self.text(self.screen, self.f_body,
+                  "ON · dark nightly" if on else "OFF · runs 24/7",
+                  OLIVE_SOFT if on else INK, center=toggle.center)
+        self.actions.append(Button(toggle, "toggle", "ao-toggle"))
+
+        dw = int(150 * s)
+        done = pygame.Rect(panel.right - pad - dw, row_y, dw, rh)
+        self.rounded(self.screen, done, over(CYAN, 0.14), over(CYAN, 0.6),
+                     radius=rh // 2)
+        self.text(self.screen, self.f_body, "DONE", CYAN_SOFT, center=done.center)
+        self.actions.append(Button(done, "DONE", "ao-done"))
+
+        # the two times, each with -1h / -15 / value / +15 / +1h steppers
+        bh, bw, gap = int(42 * s), int(52 * s), int(6 * s)
+        ry = toggle.bottom + int(12 * s)
+        for label, field in (("Go dark at", "auto_off_at"), ("Wake at", "auto_on_at")):
+            self.text(self.screen, self.f_small, label, MUTED,
+                      topleft=(panel.x + pad, ry + int(11 * s)))
+            value = rotation.get(field, "00:00")
+            bx = panel.x + int(126 * s)
+            for lab, delta in (("−1h", -60), ("−15", -15)):
+                spot = pygame.Rect(bx, ry, bw, bh)
+                self.rounded(self.screen, spot, CARD, LINE, radius=int(10 * s))
+                self.text(self.screen, self.f_body, lab, INK, center=spot.center)
+                self.actions.append(Button(spot, lab, "ao-bump", (field, delta)))
+                bx += bw + gap
+            tv = pygame.Rect(bx, ry, int(112 * s), bh)
+            self.rounded(self.screen, tv, over(CYAN, 0.10), over(CYAN, 0.4),
+                         radius=int(10 * s))
+            self.text(self.screen, self.f_head2, value, CYAN_SOFT, center=tv.center)
+            bx += tv.w + gap
+            for lab, delta in (("+15", 15), ("+1h", 60)):
+                spot = pygame.Rect(bx, ry, bw, bh)
+                self.rounded(self.screen, spot, CARD, LINE, radius=int(10 * s))
+                self.text(self.screen, self.f_body, lab, INK, center=spot.center)
+                self.actions.append(Button(spot, lab, "ao-bump", (field, delta)))
+                bx += bw + gap
+            ry += bh + int(10 * s)
+
     def target_options(self, state):
         """The named groups, one finger-sized row's worth.
 
@@ -2326,6 +2423,7 @@ class Panel:
         self.locked = True
         self.compose = None
         self.confirm = None
+        self.autooff = False
 
     def tap(self, position):
         if self.showing_wifi:
@@ -2359,6 +2457,20 @@ class Panel:
             self.sign.say("Locked \u2014 touch UNLOCK first")
             return
         self.touched = time.monotonic()
+        if self.autooff:
+            # While the editor is up it is the only thing live, so a stray tap
+            # on a tab or the actions row cannot navigate away mid-edit.
+            button = self._hit(position, self.actions,
+                               kinds=("ao-toggle", "ao-bump", "ao-done"))
+            if button is not None:
+                if button.kind == "ao-toggle":
+                    self._autooff_toggle()
+                elif button.kind == "ao-bump":
+                    field, delta = button.payload
+                    self._autooff_bump(field, delta)
+                else:
+                    self.autooff = False
+            return
         if self.confirm:
             # While a prompt is up nothing else is live, so a stray finger on
             # the tab row cannot dismiss it by navigating away.
@@ -2499,6 +2611,8 @@ class Panel:
                                  "danger": True}]}
             elif kind == "activity":
                 self.tab = "system"
+            elif kind == "autooff-open":
+                self.autooff = True
             elif kind == "wifi":
                 self.showing_wifi = True
             elif kind == "clear-queue":
@@ -2712,6 +2826,40 @@ class Panel:
         except Exception:
             self.sign.say("no answer from the sign")
 
+    def _autooff_save(self, changes):
+        """POST an auto-off change and fold the reply back into local state.
+
+        Updating self.sign.rotation from the reply means the overlay reflects a
+        stepper tap on the very next frame, without waiting for the poll.
+        """
+        def run():
+            try:
+                reply = _post("/api/rotation", changes)
+                if reply.get("ok") and reply.get("rotation"):
+                    with self.sign.lock:
+                        self.sign.rotation = reply["rotation"]
+                elif reply.get("error"):
+                    self.sign.say(reply["error"])
+            except Exception:
+                self.sign.say("no answer from the sign")
+        threading.Thread(target=run, daemon=True).start()
+
+    def _autooff_toggle(self):
+        with self.sign.lock:
+            want = not bool(self.sign.rotation.get("auto_off_enabled"))
+        self.sign.say("Auto off on" if want else "Auto off off")
+        self._autooff_save({"auto_off_enabled": want})
+
+    def _autooff_bump(self, field, delta):
+        with self.sign.lock:
+            current = self.sign.rotation.get(field, "00:00")
+        try:
+            hour, minute = (int(x) for x in str(current).split(":"))
+        except (ValueError, TypeError):
+            hour, minute = 0, 0
+        total = (hour * 60 + minute + delta) % (24 * 60)
+        self._autooff_save({field: "%02d:%02d" % (total // 60, total % 60)})
+
     def present(self):
         if self.fb:
             self.fb.blit(self.screen)
@@ -2812,6 +2960,8 @@ class Panel:
                     self.actions = []
                 if self.confirm:
                     self.draw_confirm()
+                elif self.autooff:
+                    self.draw_autooff(state)
                 elif self.compose is not None:
                     self.draw_compose()
                 elif self.tab == "scenes":

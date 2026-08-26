@@ -733,7 +733,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if request.method == "POST":
             body = _body()
             allowed = ("enabled", "playlist", "exclude", "interval_minutes",
-                       "order", "avoid_repeat", "hold_after_manual_minutes")
+                       "order", "avoid_repeat", "hold_after_manual_minutes",
+                       "auto_off_enabled", "auto_off_at", "auto_on_at")
             changes = {k: body[k] for k in allowed if k in body}
             was = store.rotation()["enabled"]
             try:
