@@ -809,6 +809,26 @@ phone you are reading the result on.
 The web UI on a phone keeps working regardless; the panel is an addition to it,
 never the only way in.
 
+### A second text sign
+
+The Pi can drive more than one text panel, all showing the same words at the
+same moment -- point a matching sign at each entrance, say. They are identical
+hardware, so nothing about a message changes per sign: it is rendered once and
+written to each panel in turn on the one radio.
+
+Pair the first as usual, then on the phone's *LED Text Display* tab, under
+**Signs showing this text**, add the second by address (power it on, tap *Scan*
+on the *Devices* tab to read its address, enter it there). Each sign has an on
+switch and shows whether it is answering; *Remove* drops one, *Unpair all* clears
+them. In the config this is `matrix.panels` -- a list of `{address, name,
+enabled}` -- and the old single `matrix.address` is still honoured as the first
+sign, so a config from before this change needs no editing.
+
+Everything else -- the message queue, the calendar text, the size and font --
+is shared, because the signs are the same and meant to match. A write to two
+signs is two connects on one radio, so text lands a little slower with the
+second attached; the twelve light controllers are unaffected.
+
 ### A corrupt config can no longer stop the sign from starting
 
 `load()` used to call `json.load()` with nothing catching it, so an unparseable

@@ -378,33 +378,49 @@ class BleWorker:
         have to guard every call.
         """
         matrix = self.store.matrix()
-        address = matrix.get("address")
-        if not address:
+        panels = [p for p in matrix.get("panels") or []
+                  if p.get("address") and p.get("enabled", True)]
+        if not panels and matrix.get("address"):
+            # A config too old to have the list, or all panels disabled but a
+            # legacy address present: fall back to the single primary.
+            panels = [{"address": matrix["address"],
+                       "name": matrix.get("name") or "panel",
+                       "char_uuid": matrix.get("char_uuid") or ""}]
+        if not panels:
             log.debug("no matrix panel configured; dropping %s", label)
             return None
         driver = matrix_module.driver_for(matrix)
-        char_uuid = driver.characteristic()
-        if not char_uuid:
-            log.warning("matrix panel %s has no write characteristic; "
-                        "run matrix_probe.py to fingerprint it", address)
-            return None
+        default_char = driver.characteristic()
         frames = [bytes(f) for f in frames if f]
         if not frames:
             log.debug("nothing to send to the panel for %s", label)
             return None
-        item = self._item(address, frames,
-                          name=matrix.get("name") or "panel",
-                          char_uuid=char_uuid,
-                          frame_delay=matrix.get("frame_delay", 0.02),
-                          # Every pixel matters here: one dropped write is one
-                          # dark LED in the middle of a letter.
-                          response=matrix.get("write_response", True),
-                          batch=matrix.get("batch_writes", True))
-        job = Job("matrix", label, [item],
+        # The same frames go to every panel -- identical hardware showing the
+        # same text -- as one job with one item per panel, so both are written
+        # in a single pass of the radio rather than racing two jobs for it.
+        items = []
+        for panel in panels:
+            char_uuid = panel.get("char_uuid") or default_char
+            if not char_uuid:
+                log.warning("matrix panel %s has no write characteristic; "
+                            "run matrix_probe.py to fingerprint it", panel["address"])
+                continue
+            items.append(self._item(panel["address"], frames,
+                                    name=panel.get("name") or "panel",
+                                    char_uuid=char_uuid,
+                                    frame_delay=matrix.get("frame_delay", 0.02),
+                                    # Every pixel matters here: one dropped write
+                                    # is one dark LED in the middle of a letter.
+                                    response=matrix.get("write_response", True),
+                                    batch=matrix.get("batch_writes", True)))
+        if not items:
+            return None
+        job = Job("matrix", label, items,
                   coalesce_key=coalesce_key or "matrix",
                   payload=dict(payload or {}), manual=manual)
-        log.info("queued %s: %d frame(s), %d bytes to %s via %s",
-                 label, len(frames), sum(len(f) for f in frames), address, char_uuid)
+        log.info("queued %s: %d frame(s), %d bytes to %d panel(s): %s",
+                 label, len(frames), sum(len(f) for f in frames), len(items),
+                 ", ".join(p["address"] for p in panels))
         return self._register(job)
 
     def submit_scan(self, seconds: float = None) -> Job:

@@ -105,6 +105,10 @@ DEFAULT_MATRIX = {
     # to fingerprint a panel that none of them match.
     "family": "auto",
     "char_uuid": "",
+    # More than one identical panel, all showing the same text. The canonical
+    # list; the single "address" above is folded in as panel one for the
+    # configs that predate this. Each: {address, name, char_uuid, enabled}.
+    "panels": [],
     # THE PANEL'S REAL PIXEL COUNT. Not a preference: everything drawn is
     # placed against these, so a wrong value puts the message off the edge of
     # the display -- a failure that looks exactly like a broken protocol. This
@@ -412,6 +416,42 @@ def _matrix(raw) -> dict:
         family = DEFAULT_FAMILY
     value["family"] = family
     value["char_uuid"] = str(value.get("char_uuid") or "").strip().lower()
+
+    # The panel list. Every panel shows the same text; they differ only in
+    # where they are. Build the canonical list, folding the legacy single
+    # address in as panel one, and mirror panel one back onto the flat fields
+    # so everything that still reads matrix["address"] points at the primary.
+    panels = []
+    seen_panels = set()
+    for entry in _as_list(value.get("panels")):
+        if not isinstance(entry, dict):
+            continue
+        try:
+            paddr = normalize_address(entry.get("address"))
+        except ValueError as exc:
+            log.error("dropping matrix panel: %s", exc)
+            continue
+        if paddr in seen_panels:
+            continue
+        seen_panels.add(paddr)
+        panels.append({
+            "address": paddr,
+            "name": str(entry.get("name") or paddr).strip()[:60],
+            "char_uuid": str(entry.get("char_uuid") or "").strip().lower(),
+            "enabled": bool(entry.get("enabled", True)),
+        })
+    if address and address not in seen_panels:
+        panels.insert(0, {"address": address,
+                          "name": value["name"] or address,
+                          "char_uuid": value["char_uuid"],
+                          "enabled": True})
+    value["panels"] = panels
+    if panels:
+        value["address"] = panels[0]["address"]
+        value["name"] = panels[0]["name"]
+        if not value["char_uuid"]:
+            value["char_uuid"] = panels[0]["char_uuid"]
+
     mode = str(value.get("text_mode") or "pixels").strip().lower()
     value["text_mode"] = mode if mode in ("pixels", "png", "native") else "pixels"
     from .matrix import TEXT_FONTS, BITMAP_ORDERS

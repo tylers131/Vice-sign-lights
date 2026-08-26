@@ -458,7 +458,22 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <div class="row" style="margin-top:10px">
         <button class="btn sm" onclick="post('/api/matrix/power',{on:true})">Screen on</button>
         <button class="btn sm" onclick="post('/api/matrix/power',{on:false})">Screen off</button>
-        <button class="btn sm bad" onclick="unpairPanel()">Unpair</button>
+        <button class="btn sm bad" onclick="unpairPanel()">Unpair all</button>
+      </div>
+
+      <div style="margin-top:14px;border-top:1px solid #26262e;padding-top:12px">
+        <label>Signs showing this text</label>
+        <p class="muted" style="margin:4px 0 8px">Every sign listed shows the same
+          text. Add a second identical panel and it mirrors the first
+          automatically — same message, same colour, same moment.</p>
+        <div id="panelList"></div>
+        <div class="row" style="margin-top:8px">
+          <input id="panelAddr2" placeholder="AA:BB:CC:DD:EE:FF">
+          <input id="panelName2" placeholder="Name (e.g. Sign 2)">
+        </div>
+        <button class="btn sm" style="margin-top:8px" onclick="addPanel()">Add this sign</button>
+        <p class="muted" style="margin-top:8px">Power the second sign on, tap
+          <b>Scan</b> on the Devices tab to find its address, then enter it here.</p>
       </div>
 
       <div style="margin-top:14px;border-top:1px solid #26262e;padding-top:12px">
@@ -1316,6 +1331,7 @@ function renderPanel(p){
   $("panelUnpaired").style.display = paired ? "none" : "";
   $("panelBody").style.display = paired ? "" : "none";
   if(!paired) return;
+  renderPanelList(p);
 
   var caps = p.capabilities || {};
   var bits = [esc(p.name || p.address), esc(p.family_label || p.family || "unknown type"),
@@ -1596,11 +1612,60 @@ function pairFound(addr, name){
   });
 }
 function unpairPanel(){
-  if(!confirm("Unpair the panel? Queued messages are kept.")) return;
+  if(!confirm("Unpair every sign? Queued messages are kept.")) return;
   post("/api/matrix", {enabled:false, address:"", name:"", family:"auto",
-                       char_uuid:"", playlist:false}).then(function(j){
+                       char_uuid:"", playlist:false, panels:[]}).then(function(j){
     if(j.ok){ toast("Unpaired"); loadState(); }
   });
+}
+function renderPanelList(p){
+  var host = $("panelList"); if(!host) return;
+  var panels = p.panels || [];
+  if(!panels.length){ host.innerHTML = '<p class="muted">No signs yet.</p>'; return; }
+  host.innerHTML = panels.map(function(pn, i){
+    var flag = pn.last_error ? ' <span class="pill bad">'+esc(pn.last_error)+'</span>'
+             : (pn.failures ? ' <span class="pill warn">not answering</span>'
+                            : ' <span class="pill ok">ok</span>');
+    return '<div class="item"><div class="grow"><div class="name">'+esc(pn.name)
+      + (i===0?' <span class="muted">· primary</span>':'')+'</div>'
+      + '<div class="meta">'+esc(pn.address)+flag+'</div></div>'
+      + '<label style="display:flex;align-items:center;gap:4px;margin-right:8px">'
+      + '<input type="checkbox" style="width:auto"'+(pn.enabled?' checked':'')
+      + ' onchange="togglePanel(\''+esc(pn.address)+'\',this.checked)"><span>on</span></label>'
+      + (panels.length>1 ? '<button class="btn sm bad" onclick="removePanel(\''
+          +esc(pn.address)+'\')">Remove</button>' : '')
+      + '</div>';
+  }).join("");
+}
+function currentPanels(){
+  return (PANEL && PANEL.panels ? PANEL.panels : []).map(function(p){
+    return {address:p.address, name:p.name, enabled:p.enabled}; });
+}
+function savePanels(panels){
+  return post("/api/matrix", {panels:panels}).then(function(j){
+    if(j.ok){ renderPanel(j.matrix); loadState(); }
+    else toast(j.error || "could not save"); });
+}
+function addPanel(){
+  var addr = $("panelAddr2").value.trim();
+  if(!addr){ toast("Enter the sign’s address"); return; }
+  var name = $("panelName2").value.trim();
+  var panels = currentPanels();
+  if(panels.some(function(p){ return p.address.toUpperCase()===addr.toUpperCase(); })){
+    toast("That sign is already added"); return;
+  }
+  panels.push({address:addr, name:name||addr, enabled:true});
+  savePanels(panels).then(function(){
+    $("panelAddr2").value=""; $("panelName2").value=""; toast("Sign added"); });
+}
+function removePanel(addr){
+  if(!confirm("Remove this sign?")) return;
+  savePanels(currentPanels().filter(function(p){ return p.address!==addr; }));
+}
+function togglePanel(addr, on){
+  var panels = currentPanels();
+  panels.forEach(function(p){ if(p.address===addr) p.enabled = on; });
+  savePanels(panels);
 }
 
 /* -------------------------------------------------------------- timing */

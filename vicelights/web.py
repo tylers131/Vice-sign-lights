@@ -854,6 +854,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         if request.method == "POST":
             body = _body()
             allowed = ("enabled", "address", "name", "family", "char_uuid",
+                       "panels",
                        "playlist", "schedule", "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
@@ -910,6 +911,19 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                     changes["address"] = normalize_address(changes["address"])
                 except ValueError as exc:
                     return _json_error(exc)
+            # Reject a bad panel address where the caller can be told, rather
+            # than letting the store quietly drop it and answer 200 to "add
+            # this second sign".
+            if "panels" in changes:
+                if not isinstance(changes["panels"], list):
+                    return _json_error("panels must be a list")
+                for panel in changes["panels"]:
+                    if not isinstance(panel, dict):
+                        return _json_error("each panel must be an object")
+                    try:
+                        panel["address"] = normalize_address(panel.get("address"))
+                    except ValueError as exc:
+                        return _json_error(exc)
             try:
                 store.update_matrix(changes)
             except ConfigError as exc:

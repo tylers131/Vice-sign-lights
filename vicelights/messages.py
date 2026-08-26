@@ -120,11 +120,26 @@ class MatrixRunner:
         remaining = None
         if next_at is not None and current and (current.get("dwell") or 0) > HOLD:
             remaining = max(0, int(next_at - time.monotonic()))
+        # Every panel and how it is faring, so the UI can show two signs and
+        # flag one that has stopped answering. The worker keys its per-device
+        # health by address, panels included.
+        states = self.worker.device_state
+        panels = []
+        for entry in matrix.get("panels") or []:
+            health = states.get(entry["address"], {})
+            panels.append({
+                "address": entry["address"],
+                "name": entry.get("name") or entry["address"],
+                "enabled": bool(entry.get("enabled", True)),
+                "last_error": health.get("last_error", ""),
+                "failures": int(health.get("consecutive_failures", 0)),
+            })
         return {
             "enabled": bool(matrix.get("enabled")),
             "configured": self.configured(),
             "address": matrix.get("address", ""),
             "name": matrix.get("name", ""),
+            "panels": panels,
             # Two different things: which driver is in use, and what the
             # config asked for. A panel set to "auto" that fell back to a guess
             # must not look like a panel someone chose that driver for.
