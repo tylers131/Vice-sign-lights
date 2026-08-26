@@ -375,7 +375,7 @@ def _coffee(raw) -> dict:
             out["overrides"][str(date)] = {
                 "enabled": bool(entry.get("enabled", True)),
                 "start": _hhmm(entry.get("start"), "14:00"),
-                "end": _hhmm(entry.get("end"), "18:00"),
+                "end": _hhmm(entry.get("end"), "16:00"),
             }
     return out
 

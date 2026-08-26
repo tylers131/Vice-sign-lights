@@ -2715,14 +2715,15 @@ queue. Turn it on -- **LED Text Display &rarr; SCHEDULE** on the touchscreen,
 or **Event schedule &rarr; Start** on the phone -- and it rotates:
 
 * **VICE**
-* **today's offerings** -- "TODAY 830A BLOODY MARYS / 1P BEARD SPA / 2P COFFEE
-  / 2P TAROT / NAIL SPA 24/7"
+* **today's offerings** -- "TODAY 9A BLOODY MARYS / 1P BEARD SPA / 2P ICED
+  COFFEE + TEA / 2P TAROT / MUSIC 2-4P / NAIL SPA 24/7"
 * **tomorrow's** -- same shape, next day
 * **the temperature** -- "NOW 75F / 22C", when a sensor is fitted (§9c)
 
-and while an event is actually happening it adds its shouts -- the coffee's
-two by name ("NOW SERVING VIETNAMESE ICED COFFEE!", "GET YOUR GAY ICED COFFEE
-HERE!") and a "NOW: ..." line naming everything on at once. A quiet hour is
+and while an event is actually happening it adds its shouts -- the service's
+two by name ("NOW SERVING VIETNAMESE ICED COFFEE + THAI ICED TEA!", "GET YOUR
+GAY ICED COFFEE + TEA HERE!") and a "NOW: ..." line naming everything on at
+once, the day's DJ included. A quiet hour is
 calm; a live event is loud. It updates on its own as the week goes on, off the
 clock -- **so the clock has to be set** (§9b). The RTC handles that now.
 

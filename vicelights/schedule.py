@@ -67,28 +67,38 @@ class Event:
         return start <= minutes < end
 
 
-# Coffee is the headline, so its two promos ride along whenever it is being
-# poured -- first service, regular service or the last cup on burn day.
+# The service is the headline: Vietnamese iced coffee AND Thai iced tea. Its two
+# promos ride along whenever it is being poured -- first pour, regular service,
+# or the last pour on burn day.
 _COFFEE_PROMOS = (
-    "NOW SERVING VIETNAMESE ICED COFFEE!",
-    "GET YOUR GAY ICED COFFEE HERE!",
+    "NOW SERVING VIETNAMESE ICED COFFEE + THAI ICED TEA!",
+    "GET YOUR GAY ICED COFFEE + TEA HERE!",
 )
 
 
-COFFEE_TITLE = "COFFEE + TEA SERVICE"
+# The NOW-line shout. Kept short so a busy 2pm (service + tarot + music) does not
+# page forever; the full "Vietnamese ... Thai Iced Tea" branding lives in the
+# promos and the VICE header. This string is also the internal id the override
+# and the lights' attract look match on, so every reference uses the constant.
+COFFEE_TITLE = "ICED COFFEE + THAI TEA"
 
 
 def _coffee(start, end, offering):
     return Event(start, end, offering, COFFEE_TITLE, _COFFEE_PROMOS)
 
 
+def _music(name: str) -> "Event":
+    """Music runs 2-4pm on the weekdays; the NOW shout names the act."""
+    return Event("14:00", "16:00", "MUSIC 2-4P", "MUSIC: " + name)
+
+
 def _coffee_label(start: str) -> str:
-    """"3P COFFEE" / "830A COFFEE" -- the day-summary tag for a coffee window."""
+    """"3P ICED COFFEE + TEA" -- the day-summary tag for a phone-set window."""
     hour, minute = int(start[:2]), int(start[3:5])
     suffix = "A" if hour < 12 else "P"
     h12 = hour % 12 or 12
     stamp = "%d%s" % (h12, suffix) if minute == 0 else "%d%02d%s" % (h12, minute, suffix)
-    return stamp + " COFFEE"
+    return stamp + " ICED COFFEE + TEA"
 
 
 def _coffee_event(start: str, end: str) -> "Event":
@@ -116,35 +126,54 @@ def _apply_coffee_override(events: list, override: dict) -> list:
 # The nail spa runs the whole event; one object, reused every day.
 _NAIL = Event(None, None, "NAIL SPA 24/7", "24/7 DIY NAIL SPA")
 
-# End times are assumptions -- the sheet gives only start times. They set when
-# an event stops shouting "NOW", nothing more. Adjust freely.
+# From the camp flyer (Black Rock City 2026). Service is daily 2-4pm, first pour
+# Sun 5:30pm, last pour Sat 12:30pm. End times other than those are assumptions
+# -- they only decide when an event stops shouting "NOW". Music is 2-4pm on the
+# weekdays, one act a day, Mon->Fri (the flyer lists the acts over MON-FRI).
+_BLOODY = ("BLOODY MARYS W/ BLACK VELVETEEN!",)
 EVENTS = {
-    # Sunday: gates open. First coffee is late, at 5:30pm.
-    "2026-08-30": [_coffee("17:30", "21:00", "530P FIRST COFFEE"), _NAIL],
-    "2026-08-31": [_coffee("14:00", "18:00", "2P COFFEE"), _NAIL],
-    "2026-09-01": [
-        Event("08:30", "11:30", "830A BLOODY MARYS", "BLOODY MARY MORNINGS"),
-        Event("13:00", "15:00", "1P BEARD SPA", "BEARD SPA"),
-        _coffee("14:00", "18:00", "2P COFFEE"),
-        Event("14:00", "17:00", "2P TAROT", "TAROT READING"),
+    # Sunday: gates open. First pour is late, at 5:30pm.
+    "2026-08-30": [_coffee("17:30", "21:00", "530P FIRST POUR"), _NAIL],
+    # Monday.
+    "2026-08-31": [
+        _coffee("14:00", "16:00", "2P ICED COFFEE + TEA"),
+        _music("COPELAND"),
         _NAIL,
     ],
+    # Tuesday: the busy day.
+    "2026-09-01": [
+        Event("09:00", "11:00", "9A BLOODY MARYS", "BLOODY MARY MORNINGS", _BLOODY),
+        Event("13:00", "15:00", "1P BEARD SPA", "BEARD SPA"),
+        _coffee("14:00", "16:00", "2P ICED COFFEE + TEA"),
+        Event("14:00", "17:00", "2P TAROT", "TAROT READING"),
+        _music("DAVID CRAWFORD"),
+        _NAIL,
+    ],
+    # Wednesday: karaoke night.
     "2026-09-02": [
-        _coffee("14:00", "18:00", "2P COFFEE"),
+        _coffee("14:00", "16:00", "2P ICED COFFEE + TEA"),
+        _music("JEN WOOLFE"),
         Event("20:00", "23:00", "8P KARAOKE", "KARAOKE"),
         _NAIL,
     ],
+    # Thursday: the busy day again.
     "2026-09-03": [
-        Event("08:30", "11:30", "830A BLOODY MARYS", "BLOODY MARY MORNINGS"),
+        Event("09:00", "11:00", "9A BLOODY MARYS", "BLOODY MARY MORNINGS", _BLOODY),
         Event("13:00", "15:00", "1P BEARD SPA", "BEARD SPA"),
-        _coffee("14:00", "18:00", "2P COFFEE"),
+        _coffee("14:00", "16:00", "2P ICED COFFEE + TEA"),
         Event("14:00", "17:00", "2P TAROT", "TAROT READING"),
+        _music("DJ SIMPA"),
         _NAIL,
     ],
-    "2026-09-04": [_coffee("14:00", "18:00", "2P COFFEE"), _NAIL],
-    # Saturday: the Man burns tonight. Coffee is the last of the week, at noon.
+    # Friday.
+    "2026-09-04": [
+        _coffee("14:00", "16:00", "2P ICED COFFEE + TEA"),
+        _music("DJ KINKI"),
+        _NAIL,
+    ],
+    # Saturday: the Man burns tonight. Last pour of the week, at 12:30pm.
     "2026-09-05": [
-        _coffee("12:00", "15:00", "12P LAST COFFEE"),
+        _coffee("12:30", "15:00", "1230P LAST POUR"),
         _NAIL,
         Event(None, None, "MAN BURNS TONIGHT", "THE MAN BURNS TONIGHT"),
     ],

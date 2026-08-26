@@ -149,15 +149,15 @@ class Temperature(unittest.TestCase):
 
 class DuringEvents(unittest.TestCase):
     def test_coffee_promos_appear_while_coffee_is_served(self):
-        # 2:30pm Tuesday: coffee runs 2-6pm.
+        # 2:30pm Tuesday: service runs 2-4pm.
         promos = texts(at(2026, 9, 1, 14, 30))
-        self.assertIn("NOW SERVING VIETNAMESE ICED COFFEE!", promos)
-        self.assertIn("GET YOUR GAY ICED COFFEE HERE!", promos)
+        self.assertIn("NOW SERVING VIETNAMESE ICED COFFEE + THAI ICED TEA!", promos)
+        self.assertIn("GET YOUR GAY ICED COFFEE + TEA HERE!", promos)
 
     def test_coffee_promos_gone_once_coffee_ends(self):
-        # 7pm Tuesday: coffee is over, tarot is over, spa still on.
-        promos = texts(at(2026, 9, 1, 19, 0))
-        self.assertNotIn("NOW SERVING VIETNAMESE ICED COFFEE!", promos)
+        # 5pm Tuesday: service is over, spa still on.
+        promos = texts(at(2026, 9, 1, 17, 0))
+        self.assertNotIn("NOW SERVING VIETNAMESE ICED COFFEE + THAI ICED TEA!", promos)
 
     def test_the_now_line_names_what_is_on(self):
         now = by_id(at(2026, 9, 1, 14, 30), "sched-now")
@@ -175,7 +175,7 @@ class DuringEvents(unittest.TestCase):
     def test_a_quiet_hour_has_no_promos_but_still_has_the_basics(self):
         # 4am Tuesday: only the all-day spa is on.
         messages = at(2026, 9, 1, 4, 0)
-        self.assertNotIn("GET YOUR GAY ICED COFFEE HERE!", texts(messages))
+        self.assertNotIn("GET YOUR GAY ICED COFFEE + TEA HERE!", texts(messages))
         self.assertEqual(messages[0]["text"], "VICE")
         self.assertIsNotNone(by_id(messages, "sched-today"))
 
@@ -227,7 +227,7 @@ class CoffeeOverride(unittest.TestCase):
 
     def test_override_replaces_the_window(self):
         ov = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
-        self.assertEqual(self._window(S.events_for(self.DAY)), ("14:00", "18:00"))
+        self.assertEqual(self._window(S.events_for(self.DAY)), ("14:00", "16:00"))
         self.assertEqual(self._window(S.events_for(self.DAY, ov)), ("19:00", "22:00"))
 
     def test_disabled_override_drops_coffee(self):
@@ -248,7 +248,7 @@ class CoffeeOverride(unittest.TestCase):
 
     def test_today_line_shows_the_new_label(self):
         ov = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
-        self.assertIn("7P COFFEE", S.today_line(self.DAY, ov))
+        self.assertIn("7P ICED COFFEE", S.today_line(self.DAY, ov))
 
     def test_schedule_attract_and_text_use_the_override(self):
         store = {"2026-09-02": {"enabled": True, "start": "19:00", "end": "22:00"}}
@@ -259,7 +259,7 @@ class CoffeeOverride(unittest.TestCase):
         self.assertFalse(s3.attract_now())      # printed 3pm, but overridden away
         self.assertTrue(s8.attract_now())        # overridden to 8pm
         texts = " ".join(m["text"] for m in s8.messages())
-        self.assertIn("7P COFFEE", texts)
+        self.assertIn("7P ICED COFFEE", texts)
 
     def test_bad_override_provider_is_ignored(self):
         def boom():
@@ -269,10 +269,10 @@ class CoffeeOverride(unittest.TestCase):
         self.assertTrue(s.attract_now())         # falls back to the printed 14-18
 
     def test_coffee_label_formats(self):
-        self.assertEqual(S._coffee_label("19:00"), "7P COFFEE")
-        self.assertEqual(S._coffee_label("08:30"), "830A COFFEE")
-        self.assertEqual(S._coffee_label("00:00"), "12A COFFEE")
-        self.assertEqual(S._coffee_label("12:00"), "12P COFFEE")
+        self.assertEqual(S._coffee_label("19:00"), "7P ICED COFFEE + TEA")
+        self.assertEqual(S._coffee_label("08:30"), "830A ICED COFFEE + TEA")
+        self.assertEqual(S._coffee_label("00:00"), "12A ICED COFFEE + TEA")
+        self.assertEqual(S._coffee_label("12:00"), "12P ICED COFFEE + TEA")
 
 
 if __name__ == "__main__":
