@@ -89,6 +89,10 @@ class FullDrinkNames(unittest.TestCase):
             d = dt.date.fromisoformat(date)
             for hour in range(24):
                 for m in at(d.year, d.month, d.day, hour, temp=20.0):
+                    # The fun quips are deliberate wordplay ("spill the tea",
+                    # "gay ass ice coffee") and are exempt from the menu rule.
+                    if m["id"] == "sched-quip":
+                        continue
                     text = m["text"].upper()
                     if "COFFEE" in text:
                         self.assertIn("VIETNAMESE ICED COFFEE", text, m["text"])
@@ -240,7 +244,9 @@ class Preview(unittest.TestCase):
 
     def test_off_pre_event_shows_only_vice(self):
         msgs = self._sched().messages(preview=False)
-        self.assertEqual([m["id"] for m in msgs], ["sched-vice"])
+        # VICE is the only scheduled line pre-event; a fun quip may ride along.
+        self.assertEqual([m["id"] for m in msgs if m["id"] != "sched-quip"],
+                         ["sched-vice"])
 
     def test_preview_shows_event_days_pre_event(self):
         import time
@@ -273,6 +279,51 @@ class Preview(unittest.TestCase):
         sched = self._sched()
         sched.messages(preview=True)
         self.assertFalse(sched.attract_now())    # Aug 27: no real coffee on
+
+
+class Quips(unittest.TestCase):
+    """The fun one-liners sprinkled through the day."""
+
+    def test_a_window_is_deterministic(self):
+        # The same window must give the same answer, or the rotating queue
+        # would flicker under the runner.
+        for bucket in range(50):
+            self.assertEqual(S.pick_quip(bucket, False),
+                             S.pick_quip(bucket, False))
+
+    def test_some_windows_carry_a_quip_and_some_do_not(self):
+        picks = [S.pick_quip(b, False) for b in range(200)]
+        self.assertTrue(any(p is None for p in picks))       # sprinkled, not
+        self.assertTrue(any(p is not None for p in picks))   # constant
+
+    def test_every_quip_is_from_the_pool(self):
+        allowed = set(S._QUIPS) | set(S._COFFEE_QUIPS)
+        for b in range(300):
+            pick = S.pick_quip(b, True)
+            if pick is not None:
+                self.assertIn(pick, allowed)
+
+    def test_the_coffee_quip_only_rides_during_coffee(self):
+        # With coffee off it can never appear; with coffee on it eventually does.
+        off = {S.pick_quip(b, False) for b in range(400)}
+        self.assertNotIn(S._COFFEE_QUIPS[0], off)
+        on = {S.pick_quip(b, True) for b in range(400)}
+        self.assertIn(S._COFFEE_QUIPS[0], on)
+
+    def test_no_quip_mentions_a_bar(self):
+        for phrase in S._QUIPS + S._COFFEE_QUIPS:
+            self.assertNotIn("bar", phrase.lower(), phrase)
+
+    def test_the_quip_slot_rides_as_a_valid_stable_message(self):
+        # When a window carries a quip, messages() appends it under a stable id.
+        sched = S.Schedule(FakeClock(dt.datetime(*TUE, 14, 30)))
+        sched._quip = lambda coffee_on: "VICE VICE BABY"
+        quip = by_id(sched.messages(), "sched-quip")
+        self.assertIsNotNone(quip)
+        self.assertEqual(quip["text"], "VICE VICE BABY")
+        self.assertGreater(quip["dwell"], 0)
+        sched._quip = lambda coffee_on: None
+        self.assertIsNone(by_id(sched.messages(), "sched-quip"))
 
 
 class CoffeeOverride(unittest.TestCase):

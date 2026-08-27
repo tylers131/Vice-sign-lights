@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import random
 import time
 
 from . import matrix as matrix_module
@@ -110,6 +111,51 @@ COFFEE_TITLE = SERVICE
 
 def _coffee(start, end, offering):
     return Event(start, end, offering, COFFEE_TITLE, _COFFEE_PROMOS)
+
+
+# Fun one-liners sprinkled through the day for flavour -- NOT on a fixed
+# cadence: a quip shows up now and then between the real lines, some windows
+# get one and some do not. Upper-cased like the rest of the sign. The first set
+# is always eligible; the coffee set only rides while coffee is actually being
+# poured. Edit the tuples to change what the sign says for fun.
+_QUIPS = (
+    "VICE VICE BABY",
+    "HAVE A VICE DAY",
+    "SCISSOR ME TIMBERS",
+    "NOW WITH 50% LESS ATTITUDE!",
+    "PLEASE DON'T SPILL THE TEA.",
+    "YOU LOOK GREAT.",
+    "DON'T STAY UP TOO LATE.",
+    "SPILL YOUR TEA",
+    "SPILL THE TEA",
+    "CUM 4 COFFEE",
+    "CUM ON OVER",
+    "CUM @ ME BRO",
+)
+_COFFEE_QUIPS = (
+    "GET YOUR GAY ASS ICE COFFEE HERE!",
+)
+
+# A quip decision holds for one window (so the rotating queue does not flicker),
+# and only some windows carry a quip -- that is what makes it a sprinkle rather
+# than a metronome. Tune QUIP_CHANCE down for rarer, up for more frequent.
+QUIP_WINDOW_SECONDS = 180.0
+QUIP_CHANCE = 0.5
+
+
+def pick_quip(bucket: int, coffee_on: bool) -> str | None:
+    """The quip for one time window, or None if this window carries none.
+
+    Deterministic in ``bucket`` so every call within the same window agrees --
+    the rotation queue stays stable while the runner cycles it -- yet it varies
+    window to window and skips some entirely. ``coffee_on`` widens the pool to
+    the coffee-only lines while a service is live.
+    """
+    rng = random.Random((int(bucket) * 2654435761) & 0xFFFFFFFF)
+    if rng.random() >= QUIP_CHANCE:
+        return None
+    pool = list(_QUIPS) + (list(_COFFEE_QUIPS) if coffee_on else [])
+    return rng.choice(pool)
 
 
 def _music(name: str) -> "Event":
@@ -390,7 +436,24 @@ class Schedule:
 
         if now is not None:
             out.extend(self._event_messages(now, overrides))
+
+        coffee_on = bool(now is not None and any(
+            e.title == COFFEE_TITLE for e in active_events(now, overrides)))
+        quip = self._quip(coffee_on)
+        if quip:
+            # One stable slot ("sched-quip") whose text is the current window's
+            # pick, so the runner shows whatever quip is up when it lands here.
+            out.append(_message("sched-quip", quip, color="#f5c542", dwell=11.0))
         return out
+
+    def _quip(self, coffee_on: bool) -> str | None:
+        """This window's quip, on the same monotonic clock the rotation runs on.
+
+        A window is QUIP_WINDOW_SECONDS wide; within it the pick is fixed so the
+        queue does not change under the runner, and only some windows carry one.
+        """
+        bucket = int(time.monotonic() / QUIP_WINDOW_SECONDS)
+        return pick_quip(bucket, coffee_on)
 
     def _event_messages(self, now: dt.datetime, overrides=None) -> list:
         """The shouts for whatever is happening at ``now``.

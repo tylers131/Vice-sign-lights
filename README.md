@@ -2775,11 +2775,22 @@ everything on at once, the day's DJ included. A quiet hour is
 calm; a live event is loud. It updates on its own as the week goes on, off the
 clock -- **so the clock has to be set** (§9b). The RTC handles that now.
 
-It lives in `vicelights/schedule.py`. Nothing there talks to the panel: it
-only decides the *text*, and hands back the same message dicts the runner
-already cycles, so a schedule message and a hand-typed one travel the identical
-road -- paging, colour, rotation, all unchanged. Each rotation slot has a
-**stable id** (`sched-today` is always `sched-today`), so the list can be
+**Fun quips.** Sprinkled between the real lines, a rotating set of one-liners
+("VICE VICE BABY", "SCISSOR ME TIMBERS", "SPILL THE TEA", ...) shows up now and
+then -- *not* on a fixed cadence. The day is cut into short windows; only some
+windows carry a quip and the pick is fixed within a window (so the rotating
+queue does not flicker), which is what makes it a sprinkle rather than a
+metronome. One line ("GET YOUR GAY ASS ICE COFFEE HERE!") only rides while
+coffee is actually being poured. These are deliberate wordplay and are the one
+exception to the full-drink-name rule. Edit `_QUIPS` / `_COFFEE_QUIPS` in
+`vicelights/schedule.py` to change them, or `QUIP_CHANCE` to make them rarer or
+more frequent.
+
+The schedule lives in `vicelights/schedule.py`. Nothing there talks to the
+panel: it only decides the *text*, and hands back the same message dicts the
+runner already cycles, so a schedule message and a hand-typed one travel the
+identical road -- paging, colour, rotation, all unchanged. Each rotation slot
+has a **stable id** (`sched-today` is always `sched-today`), so the list can be
 rebuilt every few seconds to stay current with the clock and the thermometer
 while the rotation still advances cleanly.
 
