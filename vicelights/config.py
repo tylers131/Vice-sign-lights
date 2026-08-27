@@ -140,6 +140,11 @@ DEFAULT_MATRIX = {
     # the default because the glyph bit order it wants is undocumented -- run
     # matrix_probe.py text --sweep at the sign and set what looked right.
     "text_font": "narrow",      # 8x16 cells: the one this panel is proven on
+    # In native text mode the panel animates the message itself. This is the
+    # default animation for a message that does not name its own: "scroll" makes
+    # a too-long line slide by instead of paging. Only applies with
+    # text_mode="native". static | scroll | marquee | scroll_up | scroll_down.
+    "text_animation": "static",
     "bitmap_order": "msb",
     "text_reversed": False,     # for a panel that lays characters right to left
     "color_mode": 0,            # 0 solid; 2-4 are the panel's own gradients
@@ -474,6 +479,9 @@ def _matrix(raw) -> dict:
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     value["text_reversed"] = bool(value.get("text_reversed"))
+    from .matrix import TEXT_ANIMATIONS
+    anim = str(value.get("text_animation") or "static").strip().lower()
+    value["text_animation"] = anim if anim in TEXT_ANIMATIONS else "static"
     value["night_dim_enabled"] = bool(value.get("night_dim_enabled"))
     value["night_dim_start"] = _hhmm(value.get("night_dim_start"), "23:00")
     value["night_dim_end"] = _hhmm(value.get("night_dim_end"), "06:00")

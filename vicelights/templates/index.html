@@ -460,6 +460,16 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
           </select>
         </div>
       </div>
+      <div style="margin-top:12px;border-top:1px solid #26262e;padding-top:12px">
+        <label class="switch" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="panelScroll" style="width:auto" onchange="toggleScroll()">
+          <span>Scroll long messages (instead of paging)</span></label>
+        <div id="panelScrollNote" class="muted" style="font-size:13px;margin-top:4px">
+          Long lines slide by using the panel's own scrolling — smoother than
+          jumping page to page, and lighter on the radio. If the letters come
+          out garbled, the panel needs a one-time font calibration; turn this
+          back off, or run <code>matrix_probe.py text --sweep</code> on the Pi.</div>
+      </div>
       <div id="panelBrightRow">
         <label>Daytime brightness <b id="panelBrightVal">100%</b></label>
         <input type="range" id="panelBright" min="5" max="100" step="5" value="100"
@@ -1444,6 +1454,7 @@ function renderPanel(p){
   if(fam && document.activeElement !== fam) fam.value = p.family_setting || "auto";
   var sc = $("panelScale");
   if(sc && document.activeElement !== sc) sc.value = String(p.scale || "auto");
+  if($("panelScroll")) $("panelScroll").checked = !!p.scrolling;
   $("panelBrightRow").style.display = caps.brightness ? "" : "none";
   if(document.activeElement !== $("panelBright")){
     $("panelBright").value = p.brightness;
@@ -1695,6 +1706,17 @@ function setPanelFamily(){
 function setPanelScale(){
   post("/api/matrix", {scale:$("panelScale").value}).then(function(j){
     if(j.ok){ toast("Text size set"); loadState(); }
+  });
+}
+function toggleScroll(){
+  var on = $("panelScroll").checked;
+  /* Scrolling is the panel's own native animation; paging is the pixel path. */
+  var body = on ? {text_mode:"native", text_animation:"scroll"}
+                : {text_mode:"pixels", text_animation:"static"};
+  post("/api/matrix", body).then(function(j){
+    if(j.ok){ toast(on ? "Scrolling long messages" : "Back to paging");
+      loadState(); post("/api/matrix/next").then(refreshStatus); }
+    else { toast(j.error || "could not change it"); $("panelScroll").checked = !on; }
   });
 }
 function setPanelBrightness(){

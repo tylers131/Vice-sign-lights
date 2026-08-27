@@ -308,7 +308,7 @@
   ],
   "scenes": [
     {
-      "id": "991deff5",
+      "id": "435047b9",
       "name": "Sunrise",
       "steps": [
         {
@@ -339,7 +339,7 @@
       "stagger": 0.0
     },
     {
-      "id": "dd63c55c",
+      "id": "ea8a534f",
       "name": "Dawn Breathe",
       "steps": [
         {
@@ -370,7 +370,7 @@
       "stagger": 0.0
     },
     {
-      "id": "31699ef2",
+      "id": "cb084e5f",
       "name": "Ember Glow",
       "steps": [
         {
@@ -401,7 +401,7 @@
       "stagger": 0.0
     },
     {
-      "id": "7b7bbd33",
+      "id": "be3ca56c",
       "name": "Vice",
       "steps": [
         {
@@ -432,7 +432,7 @@
       "stagger": 0.0
     },
     {
-      "id": "15e1c0a9",
+      "id": "e388f9b1",
       "name": "Sunblast",
       "steps": [
         {
@@ -463,7 +463,7 @@
       "stagger": 0.0
     },
     {
-      "id": "ef79c314",
+      "id": "2bd624e2",
       "name": "Electric Blue",
       "steps": [
         {
@@ -494,7 +494,7 @@
       "stagger": 0.0
     },
     {
-      "id": "5aa2943b",
+      "id": "4c622b97",
       "name": "Magenta Pop",
       "steps": [
         {
@@ -525,7 +525,7 @@
       "stagger": 0.0
     },
     {
-      "id": "81908cff",
+      "id": "db427683",
       "name": "Sunset",
       "steps": [
         {
@@ -556,7 +556,7 @@
       "stagger": 0.0
     },
     {
-      "id": "5e1ae076",
+      "id": "2c50a926",
       "name": "Magic Hour",
       "steps": [
         {
@@ -587,7 +587,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9a64a997",
+      "id": "b49b7b30",
       "name": "Afterglow",
       "steps": [
         {
@@ -618,7 +618,7 @@
       "stagger": 0.0
     },
     {
-      "id": "449703c1",
+      "id": "31ec65a3",
       "name": "Neon Dusk",
       "steps": [
         {
@@ -649,7 +649,7 @@
       "stagger": 0.0
     },
     {
-      "id": "d1e3017c",
+      "id": "7cad9bd5",
       "name": "Miami",
       "steps": [
         {
@@ -680,7 +680,7 @@
       "stagger": 0.0
     },
     {
-      "id": "bcc006e5",
+      "id": "70c00783",
       "name": "Neon Nights",
       "steps": [
         {
@@ -711,7 +711,7 @@
       "stagger": 0.0
     },
     {
-      "id": "bbce3f66",
+      "id": "dbbd2b6e",
       "name": "Cyberpunk",
       "steps": [
         {
@@ -742,7 +742,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9a891d2e",
+      "id": "7a7bc099",
       "name": "Rainbow VICE",
       "steps": [
         {
@@ -797,7 +797,7 @@
       "stagger": 0.0
     },
     {
-      "id": "b07570ea",
+      "id": "3453288d",
       "name": "Vice Breathe",
       "steps": [
         {
@@ -828,7 +828,7 @@
       "stagger": 0.0
     },
     {
-      "id": "c93b3955",
+      "id": "dfa1a666",
       "name": "Jump Party",
       "steps": [
         {
@@ -859,7 +859,7 @@
       "stagger": 0.0
     },
     {
-      "id": "28f9570d",
+      "id": "6a8ca71b",
       "name": "Ultraviolet",
       "steps": [
         {
@@ -890,7 +890,7 @@
       "stagger": 0.0
     },
     {
-      "id": "da16adac",
+      "id": "5dba04e9",
       "name": "After Hours",
       "steps": [
         {
@@ -921,7 +921,7 @@
       "stagger": 0.0
     },
     {
-      "id": "f1934773",
+      "id": "78190c90",
       "name": "Deep Fade",
       "steps": [
         {
@@ -952,7 +952,7 @@
       "stagger": 0.0
     },
     {
-      "id": "389e7d55",
+      "id": "4d7360d0",
       "name": "Hypnotic",
       "steps": [
         {
@@ -983,7 +983,7 @@
       "stagger": 0.0
     },
     {
-      "id": "f603354a",
+      "id": "ccfd362f",
       "name": "Coffee Call",
       "steps": [
         {
@@ -1014,7 +1014,7 @@
       "stagger": 0.0
     },
     {
-      "id": "94b4dcee",
+      "id": "01fc5f42",
       "name": "Fresh Brew",
       "steps": [
         {
@@ -1045,7 +1045,7 @@
       "stagger": 0.0
     },
     {
-      "id": "d145e1ff",
+      "id": "84721a75",
       "name": "Wake Up",
       "steps": [
         {
@@ -1076,7 +1076,7 @@
       "stagger": 0.0
     },
     {
-      "id": "ec27cdd1",
+      "id": "62657cd0",
       "name": "All off",
       "steps": [
         {
@@ -1112,6 +1112,7 @@
     "paging": true,
     "page_seconds": 5.0,
     "text_font": "narrow",
+    "text_animation": "static",
     "bitmap_order": "msb",
     "text_reversed": false,
     "color_mode": 0,

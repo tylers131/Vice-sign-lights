@@ -862,6 +862,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "pixel_layout", "scale", "write_response", "stretch",
                        "bold", "batch_writes", "paging", "page_seconds",
                        "text_font", "bitmap_order", "text_reversed",
+                       "text_animation",
                        "color_mode", "h_align", "v_align",
                        "night_dim_enabled", "night_dim_start", "night_dim_end",
                        "night_brightness")
@@ -877,6 +878,7 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             # typed is not.
             choices = {
                 "text_mode": ("pixels", "png", "native"),
+                "text_animation": tuple(matrix.TEXT_ANIMATIONS),
                 "pixel_layout": matrix.PIXEL_LAYOUTS,
                 "bitmap_order": matrix.BITMAP_ORDERS,
                 "text_font": tuple(sorted(matrix.TEXT_FONTS)),

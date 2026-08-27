@@ -163,6 +163,9 @@ class MatrixRunner:
             # only matter on the native one. Reported so "did that actually
             # save" is a question the API answers.
             "text_mode": matrix.get("text_mode", "pixels"),
+            "text_animation": matrix.get("text_animation", "static"),
+            "scrolling": (matrix.get("text_mode") == "native"
+                          and matrix.get("text_animation", "static") != "static"),
             "bitmap_order": matrix.get("bitmap_order", "msb"),
             "text_reversed": bool(matrix.get("text_reversed")),
             "char_uuid": driver.characteristic() or "",

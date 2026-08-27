@@ -900,8 +900,11 @@ class MatrixDriver:
         gets coerced is the mode used for *this* draw, and the label that goes
         with it, so the log does not claim a scroll that never scrolled.
         """
-        mode = str((message or {}).get("mode") or DEFAULT_MODE).strip().lower()
-        return mode if mode in self.modes else self.modes[0]
+        mode = str((message or {}).get("mode") or "").strip().lower()
+        if mode in self.modes:
+            return mode
+        default = str(self.config.get("text_animation") or DEFAULT_MODE).strip().lower()
+        return default if default in self.modes else self.modes[0]
 
     def characteristic(self):
         return self.config.get("char_uuid") or self.write_uuid
@@ -1153,7 +1156,12 @@ class IPixel(MatrixDriver):
             return 0
 
     def animation_for(self, message: dict) -> int:
-        mode = str((message or {}).get("mode") or DEFAULT_MODE).strip().lower()
+        # A message keeps its own mode if it set one; otherwise the panel's
+        # configured default animation applies, so turning on "scroll" once
+        # scrolls the calendar text and the saved queue alike.
+        mode = str((message or {}).get("mode") or "").strip().lower()
+        if mode not in TEXT_ANIMATIONS:
+            mode = str(self.config.get("text_animation") or DEFAULT_MODE).strip().lower()
         return TEXT_ANIMATIONS.get(mode, TEXT_ANIMATIONS["static"])
 
     def native_text_frames(self, message: dict, slot: int = 0,

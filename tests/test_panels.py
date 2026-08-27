@@ -183,5 +183,36 @@ class NightDim(unittest.TestCase):
         self.assertTrue(self.store.setting("force_full_brightness"))
 
 
+class Scrolling(unittest.TestCase):
+    """The panel's native scroll: on for long messages, off is paging."""
+
+    def _driver(self, text_mode, animation):
+        from vicelights import matrix as M
+        return M.driver_for({"family": "ipixel", "char_uuid": CHAR,
+                             "text_mode": text_mode, "text_animation": animation})
+
+    def test_scroll_default_applies_to_a_message_without_a_mode(self):
+        from vicelights import matrix as M
+        d = self._driver("native", "scroll")
+        self.assertTrue(d.animates)
+        self.assertEqual(d.animation_for({"text": "hi"}), M.TEXT_ANIMATIONS["scroll"])
+        self.assertEqual(d.mode_for({"text": "hi"}), "scroll")
+
+    def test_a_message_keeps_its_own_mode(self):
+        from vicelights import matrix as M
+        d = self._driver("native", "scroll")
+        self.assertEqual(d.animation_for({"text": "hi", "mode": "static"}),
+                         M.TEXT_ANIMATIONS["static"])
+
+    def test_pixels_mode_never_scrolls(self):
+        d = self._driver("pixels", "scroll")
+        self.assertFalse(d.animates)         # pages in software, does not scroll
+        self.assertEqual(d.modes, ("static",))
+
+    def test_config_rejects_a_bad_animation(self):
+        store = _store({"text_animation": "wobble"})
+        self.assertEqual(store.matrix()["text_animation"], "static")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

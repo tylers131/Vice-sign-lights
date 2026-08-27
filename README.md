@@ -829,6 +829,19 @@ is shared, because the signs are the same and meant to match. A write to two
 signs is two connects on one radio, so text lands a little slower with the
 second attached; the twelve light controllers are unaffected.
 
+### Scrolling long messages
+
+By default a message too wide for the panel is shown a **page at a time** --
+software paging, because scrolling in software moves nearly every pixel every
+frame and would hold the one radio the twelve controllers share. The panel can
+also **scroll in its own firmware**: one packet, then it slides the text by on
+its own with no more radio at all -- smoother than paging *and* lighter on the
+lights. *LED Text Display &rarr; Scroll long messages* turns it on (it sets
+`text_mode: native` + `text_animation: scroll`). The catch: these panels do not
+document their font byte-order, so native text can come out garbled until it is
+calibrated once -- turn the toggle back off, or run `matrix_probe.py text
+--sweep` at the sign and set the order that looked right.
+
 ### Dimming the panel at night
 
 The text panel is far brighter than the sign's LED strips and glares after
