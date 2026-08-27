@@ -2762,8 +2762,9 @@ or **Event schedule &rarr; Start** on the phone -- and it rotates:
 **Preview the week.** Before the event, the real "today" is empty, so the
 schedule shows only VICE. **LED Text Display &rarr; Preview the week** (next to
 the schedule toggle) walks representative moments of every day -- a new one
-every ~90s (first pour, the busy afternoon, a Bloody Mary morning, karaoke, the
-burns) -- so you can see how it all looks on the sign in advance. It only
+every couple of minutes (first pour, the busy afternoon, a Bloody Mary morning,
+karaoke, the burns) -- so you can see how it all looks on the sign in advance,
+each day held long enough for its lines to scroll by. It only
 changes which *date* the text is built for; the lights and the attract look are
 untouched. Turn it off once the event starts. (`matrix.schedule_preview`.)
 

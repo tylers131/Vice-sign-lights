@@ -53,7 +53,10 @@ PREVIEW_SAMPLES = [
     ("2026-09-05", 13, 0),    # Sat: last pour + the Man burns
     ("2026-09-06", 20, 0),    # Sun: the Temple burns
 ]
-PREVIEW_SECONDS = 90.0        # how long each moment stays up before advancing
+PREVIEW_SECONDS = 150.0       # how long each moment stays up before advancing.
+# Wide enough that a busy afternoon shows several of its lines before the day
+# rolls over -- a scrolling line now lingers long enough to finish its pass, so
+# fewer fit in a short window.
 
 
 class Event:

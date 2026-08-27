@@ -267,8 +267,33 @@ class ScrollSpeed(unittest.TestCase):
         self.assertLess(M.DEFAULT_TEXT_SPEED, 50)
 
     def test_config_clamps_a_wild_speed(self):
+        # Floored at 5 (a frozen scroll is not a speed) and capped at 100, so
+        # every value round-trips through the UI slider's own 5-100 range.
         self.assertEqual(_store({"text_speed": 999}).matrix()["text_speed"], 100)
-        self.assertEqual(_store({"text_speed": -5}).matrix()["text_speed"], 0)
+        self.assertEqual(_store({"text_speed": -5}).matrix()["text_speed"], 5)
+        self.assertEqual(_store({"text_speed": 0}).matrix()["text_speed"], 5)
+
+    def test_hold_grows_as_the_scroll_slows(self):
+        # The hold must track the crawl: dropping the speed lengthens the time
+        # the line needs to cross, so the hold has to lengthen with it or the
+        # line is swapped out mid-scroll again.
+        from vicelights import matrix as M
+        from vicelights.messages import MatrixRunner
+        line = M.normalize_message({"text": "X" * 40, "dwell": 5.0})
+        store_fast = _store({"enabled": True, "address": A, "family": "ipixel",
+                             "char_uuid": CHAR, "text_mode": "native",
+                             "text_animation": "scroll",
+                             "text_speed": M.DEFAULT_TEXT_SPEED})
+        store_slow = _store({"enabled": True, "address": A, "family": "ipixel",
+                             "char_uuid": CHAR, "text_mode": "native",
+                             "text_animation": "scroll", "text_speed": 5})
+        fast = MatrixRunner(store_fast, _SendWorker())
+        slow = MatrixRunner(store_slow, _SendWorker())
+        hold_fast = fast._hold_for(store_fast.matrix(),
+                                   M.driver_for(store_fast.matrix()), line, 5.0)
+        hold_slow = slow._hold_for(store_slow.matrix(),
+                                   M.driver_for(store_slow.matrix()), line, 5.0)
+        self.assertGreater(hold_slow, hold_fast)
 
     def test_only_travelling_animations_count_as_scrolling(self):
         self.assertTrue(self._driver(text_animation="scroll").scrolls({"text": "x"}))
@@ -315,6 +340,26 @@ class RestingLine(unittest.TestCase):
         runner.tick()
         self.assertEqual(runner.worker.resting_sends(), [])   # blank stays blank
         self.assertTrue(runner._rest_suppressed)
+
+    def test_playing_with_an_empty_queue_rests_once_not_every_tick(self):
+        # The playlist is on but nothing is queued: the panel rests, and the
+        # idle line must be painted once, not re-sent on every scheduler tick.
+        runner, _ = self._runner(playlist=True)   # no saved messages -> empty
+        for _ in range(4):
+            runner.tick()
+        self.assertEqual(len(runner.worker.resting_sends()), 1)
+        self.assertTrue(runner._resting)
+
+    def test_program_is_not_overwritten_by_the_resting_line(self):
+        # Storing the queue in the panel's own slots turns the software playlist
+        # off; the idle line must not then paint over the stored playlist.
+        runner, store = self._runner()
+        store.upsert_message({"text": "STORED LINE"})
+        result = runner.program()
+        self.assertTrue(result["ok"])
+        self.assertTrue(runner._rest_suppressed)
+        runner.tick()
+        self.assertEqual(runner.worker.resting_sends(), [])
 
     def test_hold_extends_a_long_scroll_past_its_dwell(self):
         from vicelights import matrix as M

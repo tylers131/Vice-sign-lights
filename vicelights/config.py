@@ -497,8 +497,11 @@ def _matrix(raw) -> dict:
     # long the runner then leaves a travelling line up so it finishes at least
     # one pass before the next one replaces it. Both are clamped so a bad value
     # cannot freeze the rotation or spin it too fast to read.
+    # Floor of 5, not 0: 0 would ask the panel never to advance the scroll,
+    # which reads as a frozen line. The floor also matches the UI slider so any
+    # value the slider can show round-trips exactly.
     try:
-        value["text_speed"] = max(0, min(100, int(value.get("text_speed",
+        value["text_speed"] = max(5, min(100, int(value.get("text_speed",
                                                             DEFAULT_TEXT_SPEED))))
     except (TypeError, ValueError):
         value["text_speed"] = DEFAULT_TEXT_SPEED

@@ -38,6 +38,12 @@ class MatrixRunner:
         # created without one -- then schedule mode simply has no effect.
         self.schedule = schedule
         self._lock = threading.Lock()
+        # Orders a paint against the flag that would have suppressed it. The
+        # idle line is decided on the scheduler thread while a hand-send or a
+        # blank arrives on a web thread; without this the idle line can be
+        # enqueued *after* the message that was meant to stand, and win. Always
+        # taken before _lock, never the other way, so the two cannot deadlock.
+        self._paint_lock = threading.Lock()
         self._next_at = None          # monotonic
         self._current = None          # the message the panel is showing
         self._current_at = None       # wall clock, for the UI
@@ -408,16 +414,20 @@ class MatrixRunner:
         # went anywhere.
         driver = matrix_module.driver_for(matrix)
         hold = self._hold_for(matrix, driver, message, hold)
-        ok = self._send(message,
-                        "panel: %s" % matrix_module.describe_message(
-                            message, driver.mode_for(message)),
-                        hold, manual=True)
-        with self._lock:
-            # A hand-sent line stands until something replaces it; the idle
-            # line must not paint over it on the next quiet tick.
-            self._resting = False
-            self._rest_suppressed = True
-            error = self._last_error
+        # Paint and mark under _paint_lock so a resting paint deciding on the
+        # scheduler thread cannot slip in after this and cover the hand-sent
+        # line: whoever holds the lock enqueues last and so lands last.
+        with self._paint_lock:
+            ok = self._send(message,
+                            "panel: %s" % matrix_module.describe_message(
+                                message, driver.mode_for(message)),
+                            hold, manual=True)
+            with self._lock:
+                # A hand-sent line stands until something replaces it; the idle
+                # line must not paint over it on the next quiet tick.
+                self._resting = False
+                self._rest_suppressed = True
+                error = self._last_error
         return {"sent": ok, "message": message, "error": error}
 
     def _hold_for(self, matrix: dict, driver, message: dict, dwell: float) -> float:
@@ -428,6 +438,12 @@ class MatrixRunner:
         Hold a travelling line for the longer of its dwell and an estimate from
         its length -- a floor plus a per-character allowance -- so it finishes
         at least one pass. A held or paged line is unaffected.
+
+        The allowance tracks the scroll speed: the per-character constant is
+        tuned at the default speed, and a slower crawl (a lower ``text_speed``)
+        takes proportionally longer to cross, so the hold scales up with it.
+        Otherwise dragging the speed slider down would slow the panel but not
+        the hold, and the line would still be swapped out before it finished.
         """
         try:
             if not driver.scrolls(message):
@@ -440,6 +456,14 @@ class MatrixRunner:
             floor = float(matrix.get("scroll_min_seconds", 6.0))
         except (TypeError, ValueError):
             per_char, floor = 0.6, 6.0
+        try:
+            speed = max(1, min(100, int(driver.speed_for(message))))
+        except (TypeError, ValueError, AttributeError):
+            speed = matrix_module.DEFAULT_TEXT_SPEED
+        ref = matrix_module.DEFAULT_TEXT_SPEED or 35
+        # Slower crawl (lower speed) -> longer to cross -> longer hold. At the
+        # default speed the factor is 1.0, so the tuned allowance is unchanged.
+        per_char *= ref / speed
         return max(dwell, floor + len(text) * per_char)
 
     def play_next(self, force: bool = False) -> dict:
@@ -499,21 +523,24 @@ class MatrixRunner:
         """
         matrix = self.store.matrix()
         driver = matrix_module.driver_for(matrix)
-        ok = self._send_control(driver.clear_frames(), "panel: clear", "clear")
-        if matrix.get("playlist"):
-            self.store.update_matrix({"playlist": False})
-            log.info("panel cleared; playlist stopped")
-        with self._lock:
-            self._current = None
-            self._current_at = None
-            self._next_at = None
-            self._unsure = []
-            self._landed = None
-            # Blank means blank: the idle line must not refill the panel a tick
-            # later. It stays off until the playlist/schedule turns back on.
-            self._resting = False
-            self._rest_suppressed = True
-            self._reset_pages()
+        # Blank and suppress under _paint_lock so a resting paint on the
+        # scheduler thread cannot land the idle line after this blank.
+        with self._paint_lock:
+            ok = self._send_control(driver.clear_frames(), "panel: clear", "clear")
+            if matrix.get("playlist"):
+                self.store.update_matrix({"playlist": False})
+                log.info("panel cleared; playlist stopped")
+            with self._lock:
+                self._current = None
+                self._current_at = None
+                self._next_at = None
+                self._unsure = []
+                self._landed = None
+                # Blank means blank: the idle line must not refill the panel a
+                # tick later. It stays off until the playlist/schedule is on.
+                self._resting = False
+                self._rest_suppressed = True
+                self._reset_pages()
         return ok
 
     def program(self) -> dict:
@@ -555,6 +582,11 @@ class MatrixRunner:
             self._last_error = ""
             self._reset_pages()
             self._current = None
+            # The panel is now cycling its own stored slots with the software
+            # playlist off. Suppress the idle line so the next quiet tick does
+            # not paint VICE over that stored playlist.
+            self._resting = False
+            self._rest_suppressed = True
         log.info("panel: stored %d message(s) in its own slots", len(queue))
         return {"ok": True, "stored": len(queue)}
 
@@ -711,9 +743,16 @@ class MatrixRunner:
         message = matrix_module.normalize_message(
             {"id": "matrix-resting", "text": text, "dwell": 0.0},
             matrix.get("default_dwell", 20.0))
-        ok = self._send(message, "panel: resting on %r" % text, self._forever())
-        with self._lock:
-            self._resting = bool(ok)
+        # Ordered against a hand-send/blank arriving on a web thread: re-check
+        # the suppress flag with the paint held, so a message meant to stand is
+        # never enqueued before this and then painted over by the idle line.
+        with self._paint_lock:
+            with self._lock:
+                if self._rest_suppressed:
+                    return
+            ok = self._send(message, "panel: resting on %r" % text, self._forever())
+            with self._lock:
+                self._resting = bool(ok)
 
     def tick(self):
         """Called from the scheduler thread every few seconds."""
@@ -750,20 +789,23 @@ class MatrixRunner:
             # stale message (or the vendor's boot text) sitting there.
             self._rest(matrix)
             return
-        if self._resting:
-            # Real content just turned on while we were resting on the idle
-            # line, which parked _next_at 24 hours out. Advance now, not then.
-            with self._lock:
-                self._resting = False
-                self._next_at = time.monotonic()
         queue = self._queue()
         if not queue:
+            # Set to play but with nothing to cycle (an empty saved queue, or a
+            # schedule gap): rest on the idle line. _resting is left as-is so
+            # _rest's own guard paints it once rather than every tick.
             if not self._warned_unconfigured:
                 log.info("panel is set to play but has nothing to show")
                 self._warned_unconfigured = True
             self._rest(matrix)
             return
         self._warned_unconfigured = False
+        if self._resting:
+            # Real content just turned on while we were resting on the idle
+            # line, which parked _next_at 24 hours out. Advance now, not then.
+            with self._lock:
+                self._resting = False
+                self._next_at = time.monotonic()
         with self._lock:
             if self._next_at is None:
                 self._next_at = time.monotonic()

@@ -421,8 +421,12 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       </div>
       <p class="muted" style="margin:8px 0 0">Before the event, "today" is empty,
         so the schedule looks blank. Preview walks each day of the week (one
-        moment every ~90s) so you can see how it all looks on the sign now. Turn
+        moment every couple of minutes) so you can see how it all looks on the
+        sign now. Turn
         it off once the event starts.</p>
+      <p class="muted" style="margin:4px 0 0">Each day gets a couple of minutes
+        so its lines have time to scroll by; the whole week takes about half an
+        hour to walk through, then it loops.</p>
     </div>
 
     <div class="card">
@@ -472,7 +476,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
         <div id="panelSpeedRow" style="margin-top:12px">
           <label>Scroll speed <b id="panelSpeedVal">35</b> <span class="muted"
             style="font-weight:400">(lower = slower)</span></label>
-          <input type="range" id="panelSpeed" min="5" max="100" step="5" value="35"
+          <input type="range" id="panelSpeed" min="5" max="100" step="1" value="35"
                  oninput="$('panelSpeedVal').textContent=this.value"
                  onchange="setScrollSpeed()">
           <div class="muted" style="font-size:13px;margin-top:4px">
@@ -1523,7 +1527,7 @@ function renderPanel(p){
   if($("panelPreviewBtn")){
     $("panelPreviewBtn").textContent = p.schedule_preview ? "Stop" : "Start";
     $("panelPreviewMeta").textContent = p.schedule_preview
-      ? "walking the week -- a new day every ~90s"
+      ? "walking the week -- a new day every couple of minutes"
       : "off";
   }
   $("panelCycleBtn").textContent = p.playlist ? "Stop" : "Start";
