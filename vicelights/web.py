@@ -996,7 +996,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
         """
         if request.method == "POST":
             body = _body()
-            allowed = ("enabled", "pin", "model", "interval_minutes")
+            allowed = ("enabled", "source", "address", "pin", "model",
+                       "interval_minutes")
             changes = {k: body[k] for k in allowed if k in body}
             if not changes:
                 return _json_error("nothing to change")
@@ -1016,10 +1017,22 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                 "celsius": round(reading.celsius, 1),
                 "fahrenheit": reading.fahrenheit,
                 "humidity": reading.humidity,
+                "battery": getattr(reading, "battery", None),
+                "model": getattr(reading, "model", None),
                 "samples": reading.samples,
                 "age_seconds": int(reading.age()),
             },
         })
+
+    @app.route("/api/temperature/scan", methods=["POST"])
+    def api_temperature_scan():
+        """Kick off a passive scan for Govee sensors, on the shared radio."""
+        job = worker.submit_govee_scan(_body().get("seconds"))
+        return jsonify({"ok": True, "job": job.id})
+
+    @app.route("/api/temperature/scan/result")
+    def api_temperature_scan_result():
+        return jsonify({"ok": True, "scan": worker.last_govee_scan})
 
     # -- the queue itself
 

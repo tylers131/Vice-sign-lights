@@ -1142,6 +1142,8 @@
   "messages": [],
   "temperature": {
     "enabled": false,
+    "source": "dht",
+    "address": "",
     "pin": 13,
     "model": "DHT11",
     "interval_minutes": 20.0

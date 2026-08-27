@@ -430,6 +430,49 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     </div>
 
     <div class="card">
+      <h2>Temperature sensor</h2>
+      <p class="muted">Puts a "NOW 72F / 22C" line in the schedule. A Govee
+        Bluetooth sensor needs no wiring -- switch it on nearby and scan.</p>
+      <label class="switch" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="tempEnabled" style="width:auto" onchange="saveTemp()">
+        <span>Show the temperature</span></label>
+      <div id="tempBody" style="margin-top:10px">
+        <label>Sensor</label>
+        <select id="tempSource" onchange="saveTemp()">
+          <option value="govee">Govee (Bluetooth)</option>
+          <option value="dht">Wired DHT (GPIO)</option>
+        </select>
+        <div id="tempGovee" style="margin-top:10px">
+          <div id="tempReading" class="muted" style="margin-bottom:8px"></div>
+          <button class="btn sm" onclick="scanGovee()">Scan for Govee sensor</button>
+          <p id="tempScanNote" class="muted" style="margin-top:8px;display:none"></p>
+          <div id="tempCandidates" style="margin-top:8px"></div>
+        </div>
+        <div id="tempDht" style="margin-top:10px;display:none">
+          <div class="row">
+            <div>
+              <label>DHT model</label>
+              <select id="tempModel" onchange="saveTemp()">
+                <option value="DHT11">DHT11</option>
+                <option value="DHT22">DHT22</option>
+                <option value="AM2302">AM2302</option>
+              </select>
+            </div>
+            <div>
+              <label>BCM pin</label>
+              <input id="tempPin" type="number" min="0" max="40" value="13"
+                     onchange="saveTemp()" style="width:80px">
+            </div>
+          </div>
+        </div>
+        <label style="margin-top:10px">Read every <b id="tempIntervalVal">20</b> min</label>
+        <input type="range" id="tempInterval" min="1" max="60" step="1" value="20"
+               oninput="$('tempIntervalVal').textContent=this.value"
+               onchange="saveTemp()">
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Queue</h2>
       <div class="item" style="border-top:0">
         <div class="grow">
@@ -1058,6 +1101,106 @@ function resetCoffee(){
   post("/api/coffee", {clear: true}).then(function(c){
     if(c.ok){ renderCoffee(c); toast("Back to the printed schedule"); } });
 }
+var TEMP = null;            /* last /api/temperature config block */
+var GOVEE_JOB = null;
+function loadTemp(){
+  return get("/api/temperature").then(function(t){ if(t && t.ok) renderTemp(t); });
+}
+function renderTemp(t){
+  if(!$("tempEnabled")) return;
+  var focus = document.activeElement && document.activeElement.id &&
+              document.activeElement.id.indexOf("temp")===0;
+  TEMP = t.temperature || {};
+  if(!focus){
+    $("tempEnabled").checked = !!TEMP.enabled;
+    $("tempSource").value = TEMP.source || "govee";
+    if(TEMP.model) $("tempModel").value = TEMP.model;
+    if(TEMP.pin!=null) $("tempPin").value = TEMP.pin;
+    if(TEMP.interval_minutes!=null){
+      $("tempInterval").value = TEMP.interval_minutes;
+      $("tempIntervalVal").textContent = Math.round(TEMP.interval_minutes);
+    }
+  }
+  var govee = (TEMP.source || "govee") === "govee";
+  $("tempBody").style.display = TEMP.enabled ? "" : "none";
+  $("tempGovee").style.display = govee ? "" : "none";
+  $("tempDht").style.display = govee ? "none" : "";
+  var r = t.reading, box = $("tempReading");
+  if(r){
+    box.innerHTML = "Now reading <b>"+r.fahrenheit+"F / "+r.celsius+"C</b>"
+      + (r.humidity!=null ? " &middot; "+Math.round(r.humidity)+"% RH" : "")
+      + (r.battery!=null ? " &middot; battery "+r.battery+"%" : "")
+      + (r.model ? " &middot; "+esc(r.model) : "");
+  } else if(TEMP.enabled && govee){
+    box.innerHTML = TEMP.address
+      ? '<span class="muted">Waiting for '+esc(TEMP.address)+'… (up to a couple of minutes)</span>'
+      : '<span class="muted">No sensor picked yet — scan below.</span>';
+  } else box.innerHTML = "";
+}
+function saveTemp(){
+  var body = {
+    enabled: $("tempEnabled").checked,
+    source: $("tempSource").value,
+    model: $("tempModel").value,
+    pin: parseInt($("tempPin").value, 10),
+    interval_minutes: parseInt($("tempInterval").value, 10)
+  };
+  post("/api/temperature", body).then(function(t){
+    if(t.ok){ renderTemp(t); } else toast(t.error || "could not save"); });
+}
+function scanGovee(){
+  var note = $("tempScanNote");
+  note.style.display=""; note.textContent="Scanning for Govee sensors… keep it within a few metres.";
+  post("/api/temperature/scan", {seconds:10}).then(function(j){
+    if(!j.ok){ note.textContent = j.error || "could not start the scan"; return; }
+    GOVEE_JOB = j.job; setTimeout(function(){ pollGovee(0); }, 2000);
+  });
+}
+function pollGovee(tries){
+  if(!GOVEE_JOB) return;
+  get("/api/job/"+GOVEE_JOB).then(function(j){
+    if(!j.ok){ GOVEE_JOB=null; return; }
+    var state = j.job.state;
+    if(state==="queued" || state==="running"){
+      $("tempScanNote").textContent = "Scanning… "+(10+tries*2)+"s";
+      if(tries < 12){ setTimeout(function(){ pollGovee(tries+1); }, 2000); }
+      return;
+    }
+    GOVEE_JOB = null; $("tempScanNote").style.display="none";
+    loadGoveeScan();
+  }).catch(function(){ GOVEE_JOB=null; });
+}
+function loadGoveeScan(){
+  get("/api/temperature/scan/result").then(function(j){
+    var found = (j.scan && j.scan.devices) || [];
+    if(!found.length){
+      $("tempCandidates").innerHTML =
+        '<p class="muted">No Govee sensors heard. Make sure it is on and close, '
+        + 'then scan again.</p>';
+      return;
+    }
+    $("tempCandidates").innerHTML = found.map(function(d){
+      var head = esc(d.name || "(unnamed)") + (d.model ? " · "+esc(d.model) : "");
+      var read = d.decoded
+        ? d.fahrenheit + "F / " + d.celsius + "C"
+            + (d.humidity!=null ? " · "+Math.round(d.humidity)+"% RH" : "")
+            + (d.battery!=null ? " · batt "+d.battery+"%" : "")
+        : "couldn't decode this model — tap Use it and tell Tyler the raw bytes";
+      return '<div class="item"><div class="grow"><div class="name">'+head+'</div>'
+        + '<div class="meta">'+esc(d.address)+' · rssi '+(d.rssi==null?"?":d.rssi)
+        + ' · '+esc(read)+'</div></div>'
+        + '<button class="btn sm'+(d.selected?' primary':'')+'" onclick="pickGovee(\''
+        + esc(d.address)+'\')">'+(d.selected?'In use':'Use it')+'</button></div>';
+    }).join("");
+  });
+}
+function pickGovee(address){
+  post("/api/temperature", {enabled:true, source:"govee", address:address})
+    .then(function(t){
+      if(t.ok){ toast("Sensor set — reading will appear shortly");
+        renderTemp(t); loadTemp(); }
+      else toast(t.error || "could not set it"); });
+}
 function savePlaylist(){
   var names = [];
   Array.prototype.forEach.call(
@@ -1112,6 +1255,7 @@ function loadState(){
     renderSchedules(); renderTimers(j.timers); renderClock(j.time);
     renderRotation(j.rotation);
     loadCoffee();
+    loadTemp();
     if(j.panel_families) PANEL_FAMILIES = j.panel_families;
     renderPanel(j.panel);
     var locked = !!(j.settings && j.settings.force_full_brightness);

@@ -223,12 +223,20 @@ DEFAULT_MATRIX = {
 # BCM 13 is physical pin 33; VCC must be 3.3V, never 5V (see thermometer.py).
 DEFAULT_TEMPERATURE = {
     "enabled": False,
+    # Which kind of sensor: "dht" is the wired GPIO one; "govee" is a Govee
+    # Bluetooth beacon read passively off its advertisement (see govee.py).
+    "source": "dht",
     "pin": 13,
     "model": "DHT11",           # or DHT22 / AM2302 -- same three wires
+    # For a Govee sensor: which one, by BLE address. Empty means "the first
+    # Govee this Pi hears" -- fine with one sensor, set it when there are more.
+    "address": "",
     # A few times an hour is plenty for a number on a sign, and reading the
-    # DHT blocks for up to ten seconds, so this is not tight.
+    # DHT blocks for up to ten seconds (a Govee scan for ~8), so this is loose.
     "interval_minutes": 20.0,
 }
+
+TEMPERATURE_SOURCES = ("dht", "govee")
 
 DEFAULT_CONFIG = {
     "settings": dict(DEFAULT_SETTINGS),
@@ -402,7 +410,16 @@ def _temperature(raw) -> dict:
     if isinstance(raw, dict):
         value.update(raw)
     value["enabled"] = bool(value.get("enabled"))
+    source = str(value.get("source") or "dht").strip().lower()
+    value["source"] = source if source in TEMPERATURE_SOURCES else "dht"
     value["model"] = str(value.get("model") or "DHT11").strip().upper()
+    # The Govee sensor's BLE address, normalised like every other address, or
+    # blank for "the first Govee heard". A bad string becomes blank rather than
+    # locking the reader onto an address it can never match.
+    try:
+        value["address"] = normalize_address(value.get("address")) or ""
+    except (ConfigError, ValueError, TypeError):
+        value["address"] = ""
     try:
         value["pin"] = max(0, min(40, int(value.get("pin", 13))))
     except (TypeError, ValueError):

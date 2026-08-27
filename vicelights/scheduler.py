@@ -388,15 +388,44 @@ class TemperatureSampler:
         self._thread = None
         self._stop = threading.Event()
         self._probe = None
+        self._probe_sig = None
         self._reading = None
         self._lock = threading.Lock()
 
     def _config(self):
         return self.store.temperature()
 
-    def start(self):
-        if self._thread or not self._config().get("enabled"):
+    @staticmethod
+    def _probe_signature(config: dict) -> tuple:
+        """What, if changed, means a different sensor to build."""
+        return (config.get("source", "dht"), config.get("model", "DHT11"),
+                config.get("pin", 13), (config.get("address") or "").upper())
+
+    def _build_probe(self, config: dict):
+        """The reader the config asks for: the Govee beacon or the wired DHT."""
+        if config.get("source") == "govee":
+            from .govee import GoveeThermometer
+            return GoveeThermometer(address=config.get("address") or None)
+        return Thermometer(pin=config.get("pin", 13),
+                           model=config.get("model", "DHT11"))
+
+    def _close_probe(self):
+        probe, self._probe = self._probe, None
+        if probe is None:
             return
+        try:
+            probe.close()
+        except Exception as exc:
+            log.debug("closing the temperature probe: %s", exc)
+
+    def start(self):
+        # is_alive, not just "is there a thread": a sampler turned off from the
+        # UI exits its thread but leaves the (now dead) handle set, and toggling
+        # the sensor back on has to be able to start a fresh one.
+        if (self._thread and self._thread.is_alive()) \
+                or not self._config().get("enabled"):
+            return
+        self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="temperature",
                                         daemon=True)
         self._thread.start()
@@ -414,15 +443,31 @@ class TemperatureSampler:
         return reading
 
     def _run(self):
+        try:
+            self._loop()
+        finally:
+            # Whichever way the loop ends, leave no dead handle behind: clearing
+            # it is what lets start() spin a fresh thread when the sensor is
+            # switched back on, and dropping the probe frees the sensor.
+            self._thread = None
+            self._close_probe()
+            self._probe_sig = None
+
+    def _loop(self):
         while not self._stop.is_set():
             config = self._config()
             if not config.get("enabled"):
                 # Turned off from the UI while running: drop the sensor and
-                # idle. A later on-tick starts a fresh thread.
+                # idle. Toggling it back on starts a fresh thread.
                 return
-            if self._probe is None:
-                self._probe = Thermometer(pin=config.get("pin", 13),
-                                          model=config.get("model", "DHT11"))
+            signature = self._probe_signature(config)
+            if self._probe is None or signature != self._probe_sig:
+                # First read, or the sensor was changed from the UI (DHT to
+                # Govee, a different address): drop the old probe and build the
+                # one the config now asks for, without a restart.
+                self._close_probe()
+                self._probe = self._build_probe(config)
+                self._probe_sig = signature
             reading = self._probe.read()
             if reading is not None:
                 with self._lock:

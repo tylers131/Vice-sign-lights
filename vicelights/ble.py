@@ -121,6 +121,7 @@ class BleWorker:
         self._stop = False
         self.device_state = {}
         self.last_scan = {"at": None, "devices": []}
+        self.last_govee_scan = {"at": None, "devices": []}
         # Devices whose last queued command put them into a built-in pattern.
         # A solid colour aimed at one of these needs help getting out first.
         self._in_pattern = set()
@@ -187,6 +188,8 @@ class BleWorker:
             try:
                 if job.kind == "scan":
                     await self._do_scan(job)
+                elif job.kind == "govee_scan":
+                    await self._do_govee_scan(job)
                 else:
                     await self._do_writes(job)
                 job.state = "failed" if (job.error or (job.total and job.ok == 0)) else "done"
@@ -427,6 +430,18 @@ class BleWorker:
         seconds = float(seconds or self.store.setting("scan_seconds", 8.0))
         job = Job("scan", "scan %.0fs" % seconds, [], coalesce_key="scan",
                   payload={"seconds": seconds})
+        return self._register(job)
+
+    def submit_govee_scan(self, seconds: float = None) -> Job:
+        """Passive scan for Govee sensors, on the same thread as every write.
+
+        Through the worker rather than a scan of its own so it takes its turn
+        on the one radio the twelve controllers and the panels share, instead
+        of contending with a write already in flight.
+        """
+        seconds = float(seconds or 10.0)
+        job = Job("govee_scan", "govee scan %.0fs" % seconds, [],
+                  coalesce_key="govee_scan", payload={"seconds": seconds})
         return self._register(job)
 
     def _item(self, address, frames, state=None, name=None, char_uuid=None,
@@ -807,6 +822,44 @@ class BleWorker:
         job.result = found
         log.info("scan finished: %d device(s), %d look like ELK-BLEDOM",
                  len(found), sum(1 for e in found if e["is_elk"]))
+
+    async def _do_govee_scan(self, job):
+        """Passive scan for Govee sensors, each decoded to a live reading."""
+        from . import govee
+        seconds = float(job.payload.get("seconds", 10.0))
+        if not HAVE_BLEAK:
+            await asyncio.sleep(min(seconds, 2.0))
+            observations = []
+        else:
+            observations = await govee.scan_observations(seconds)
+        current = (self.store.temperature().get("address") or "").upper()
+        found = []
+        for obs in observations:
+            reading = govee.decode(obs.get("name"), obs.get("mfr_data"))
+            entry = {
+                "address": obs.get("address"),
+                "name": obs.get("name") or "",
+                "rssi": obs.get("rssi"),
+                "selected": bool(current) and obs.get("address") == current,
+                "raw": govee.describe_manufacturer(obs.get("mfr_data")),
+            }
+            if reading is not None:
+                entry.update({
+                    "celsius": round(reading.celsius, 1),
+                    "fahrenheit": round(reading.celsius * 9 / 5 + 32, 1),
+                    "humidity": reading.humidity,
+                    "battery": reading.battery,
+                    "model": reading.model or "",
+                    "decoded": True,
+                })
+            else:
+                entry["decoded"] = False
+            found.append(entry)
+        found.sort(key=lambda e: (not e.get("decoded"), -(e.get("rssi") or -999)))
+        self.last_govee_scan = {"at": time.time(), "devices": found}
+        job.result = found
+        log.info("govee scan finished: %d sensor(s), %d decoded",
+                 len(found), sum(1 for e in found if e.get("decoded")))
 
 
 def attribute_mtu(client, fallback=23) -> int:

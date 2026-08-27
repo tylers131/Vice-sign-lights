@@ -23,6 +23,7 @@ no internet, no cloud, no CDN, no NTP.
 | `vicelights/scheduler.py` | Pure-Python schedules + relative timers. |
 | `vicelights/timekeeper.py` | Clock handling for a Pi with no RTC and no NTP. |
 | `vicelights/thermometer.py` | DHT11/DHT22 read, on demand. Retries and medians. |
+| `vicelights/govee.py` | Govee Bluetooth temp/humidity sensor: decode its advertisement. |
 | `vicelights/schedule.py` | Calendar-driven panel messages: today, tomorrow, temp. |
 | `vicelights/lightshow.py` | The around-the-clock show: the scene palette and the time-of-day day-parts. |
 | `vicelights/qr.py` | Self-contained QR encoder for the Wi-Fi join code. |
@@ -2228,6 +2229,36 @@ sudo /opt/vice-sign-lights/venv/bin/pip install adafruit-circuitpython-dht
 Not in `requirements.txt`: it pulls in Blinka, which is Pi-only and heavy, for
 a sensor the sign works fine without. The driver is imported inside the read,
 so everything here installs and tests on a machine with no GPIO.
+
+### Govee Bluetooth sensor (no wiring)
+
+`vicelights/govee.py` reads a **Govee** temperature/humidity sensor instead of
+the DHT, chosen with `temperature.source = "govee"`. A Govee is a *beacon*: it
+broadcasts its reading in a BLE advertisement several times a minute, so there
+is no pairing and no connection -- the Pi just listens for a few seconds and
+decodes the packet. The phone app keeps working alongside it.
+
+Find and read it from the Pi:
+
+```bash
+python3 -m vicelights.govee scan            # list Govee sensors + live readings
+python3 -m vicelights.govee read AA:BB:..   # one reading from that sensor
+```
+
+Or from the phone: **Temperature sensor** card &rarr; *Govee (Bluetooth)* &rarr;
+**Scan for Govee sensor** &rarr; tap the one you want. That saves its address
+(`temperature.address`) so the sign locks onto your sensor and ignores any
+others nearby; leave the address blank and it takes the first Govee it hears.
+The scan runs through the same worker as every light write, so it takes its
+turn on the one radio rather than fighting a write in flight.
+
+**Models.** The decoder handles the well-established **H5075 / H5072 / H5074**
+packed format (manufacturer id `0xEC88`). Any other Govee still *shows up* in
+the scan by name, but rather than invent a number from a layout it has not been
+verified against, it prints the raw advertisement bytes -- the same "never a
+plausible-looking wrong reading" rule the DHT path follows. If your model shows
+raw bytes instead of a temperature, send that line and the exact model and its
+decoder gets added.
 
 ### Why one read is five reads
 
