@@ -411,6 +411,10 @@ def _matrix(raw) -> dict:
     # hand-typed queue. Independent of "playlist": schedule on means the
     # panel plays the schedule whether or not the saved queue is used.
     value["schedule"] = bool(value.get("schedule"))
+    # Preview the week: play the calendar for each event day in turn, so before
+    # the event -- when the real "today" is empty -- you can still see how it all
+    # looks. Turn off once the event starts.
+    value["schedule_preview"] = bool(value.get("schedule_preview"))
     address = str(value.get("address") or "").strip()
     if address:
         try:

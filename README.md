@@ -2722,6 +2722,14 @@ or **Event schedule &rarr; Start** on the phone -- and it rotates:
 * **tomorrow's** -- same shape, next day
 * **the temperature** -- "NOW 75F / 22C", when a sensor is fitted (§9c)
 
+**Preview the week.** Before the event, the real "today" is empty, so the
+schedule shows only VICE. **LED Text Display &rarr; Preview the week** (next to
+the schedule toggle) walks representative moments of every day -- a new one
+every ~90s (first pour, the busy afternoon, a Bloody Mary morning, karaoke, the
+burns) -- so you can see how it all looks on the sign in advance. It only
+changes which *date* the text is built for; the lights and the attract look are
+untouched. Turn it off once the event starts. (`matrix.schedule_preview`.)
+
 and while an event is actually happening it adds its shouts -- the service's
 two by name ("NOW SERVING VIETNAMESE ICED COFFEE + THAI ICED TEA!", "GET YOUR
 GAY VIETNAMESE ICED COFFEE + THAI ICED TEA HERE!") and a "NOW: ..." line naming

@@ -855,7 +855,8 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
             body = _body()
             allowed = ("enabled", "address", "name", "family", "char_uuid",
                        "panels",
-                       "playlist", "schedule", "width", "height", "default_dwell",
+                       "playlist", "schedule", "schedule_preview",
+                       "width", "height", "default_dwell",
                        "chunk", "frame_delay", "commands",
                        "text_mode", "fill_background", "png_opt", "png_buffer",
                        "pixel_layout", "scale", "write_response", "stretch",

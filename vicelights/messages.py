@@ -61,8 +61,15 @@ class MatrixRunner:
         return bool(matrix.get("enabled") and matrix.get("address"))
 
     def _scheduled(self) -> bool:
-        """Is the panel driven by the event calendar right now?"""
-        return bool(self.schedule and self.store.matrix().get("schedule"))
+        """Is the panel driven by the event calendar right now?
+
+        Preview counts: it drives the panel from the calendar too, just walking
+        the week's days on a timer instead of reading the real date -- so before
+        the event, when "today" is empty, you can still see how every day looks.
+        """
+        matrix = self.store.matrix()
+        return bool(self.schedule
+                    and (matrix.get("schedule") or matrix.get("schedule_preview")))
 
     def _queue(self):
         """What to rotate: the calendar's messages, or the saved queue.
@@ -74,7 +81,8 @@ class MatrixRunner:
         """
         if self._scheduled():
             try:
-                return self.schedule.messages()
+                return self.schedule.messages(
+                    preview=bool(self.store.matrix().get("schedule_preview")))
             except Exception:
                 log.exception("building the schedule failed; panel idle")
                 return []
@@ -167,6 +175,7 @@ class MatrixRunner:
             "night_brightness": matrix.get("night_brightness", 15),
             "playlist": bool(matrix.get("playlist")),
             "schedule": self._scheduled(),
+            "schedule_preview": bool(matrix.get("schedule_preview")),
             "default_dwell": matrix.get("default_dwell", 20.0),
             "size": {"width": matrix.get("width", 32), "height": matrix.get("height", 16)},
             "queue": queue,

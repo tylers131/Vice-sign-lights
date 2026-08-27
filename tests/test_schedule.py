@@ -231,6 +231,50 @@ class ActiveHelper(unittest.TestCase):
                              for e in S.active_events(dt.datetime(2026, 9, 1, 15, 30))))
 
 
+class Preview(unittest.TestCase):
+    """Before the event, preview walks the week so every day can be seen."""
+
+    def _sched(self):
+        # A pre-event clock: real "today" (Aug 27) has nothing scheduled.
+        return S.Schedule(FakeClock(dt.datetime(2026, 8, 27, 12, 0)))
+
+    def test_off_pre_event_shows_only_vice(self):
+        msgs = self._sched().messages(preview=False)
+        self.assertEqual([m["id"] for m in msgs], ["sched-vice"])
+
+    def test_preview_shows_event_days_pre_event(self):
+        import time
+        sched = self._sched()
+        seen_todays = set()
+        for i in range(len(S.PREVIEW_SAMPLES)):
+            sched._preview_start = time.monotonic() - (i * S.PREVIEW_SECONDS + 1)
+            today = by_id(sched.messages(preview=True), "sched-today")
+            self.assertIsNotNone(today)          # never the empty pre-event view
+            seen_todays.add(today["text"])
+        # Walking the samples surfaces several distinct days, not one repeated.
+        self.assertGreater(len(seen_todays), 3)
+
+    def test_preview_surfaces_the_morning_and_night_shouts(self):
+        import time
+        sched = self._sched()
+        nows = []
+        for i in range(len(S.PREVIEW_SAMPLES)):
+            sched._preview_start = time.monotonic() - (i * S.PREVIEW_SECONDS + 1)
+            now = by_id(sched.messages(preview=True), "sched-now")
+            if now:
+                nows.append(now["text"])
+        joined = " || ".join(nows)
+        self.assertIn("BLOODY MARY", joined)     # a morning-only shout
+        self.assertIn("KARAOKE", joined)         # a night-only shout
+        self.assertIn("VIETNAMESE ICED COFFEE + THAI ICED TEA", joined)
+
+    def test_preview_does_not_touch_the_lights_attract(self):
+        # attract_now reads the REAL clock, so preview never fires the lights.
+        sched = self._sched()
+        sched.messages(preview=True)
+        self.assertFalse(sched.attract_now())    # Aug 27: no real coffee on
+
+
 class CoffeeOverride(unittest.TestCase):
     """A phone-set coffee window moves the panel text and the attract lights."""
 

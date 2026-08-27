@@ -31,10 +31,29 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 
 from . import matrix as matrix_module
 
 log = logging.getLogger("vicelights.schedule")
+
+# "Preview the week": before the event, "today" is empty, so nothing interesting
+# shows. Preview mode walks these representative moments instead -- one every
+# PREVIEW_SECONDS -- so every day and every kind of shout (mornings, the
+# afternoon service, karaoke, the burns) can be seen on the real sign in advance.
+PREVIEW_SAMPLES = [
+    ("2026-08-30", 18, 0),    # Sun: first pour
+    ("2026-08-31", 14, 30),   # Mon: service + music
+    ("2026-09-01", 10, 0),    # Tue: bloody mary mornings
+    ("2026-09-01", 14, 30),   # Tue: the busy afternoon
+    ("2026-09-02", 14, 30),   # Wed: service + music
+    ("2026-09-02", 20, 30),   # Wed: karaoke
+    ("2026-09-03", 14, 30),   # Thu: the busy afternoon
+    ("2026-09-04", 14, 30),   # Fri: service + music
+    ("2026-09-05", 13, 0),    # Sat: last pour + the Man burns
+    ("2026-09-06", 20, 0),    # Sun: the Temple burns
+]
+PREVIEW_SECONDS = 90.0        # how long each moment stays up before advancing
 
 
 class Event:
@@ -274,6 +293,20 @@ class Schedule:
         # A zero-arg callable returning the per-date coffee overrides dict (the
         # store's), or None. Read fresh each call so a phone edit shows at once.
         self._coffee_overrides = coffee_overrides
+        self._preview_start = None     # monotonic, when preview mode began
+
+    def _preview_now(self):
+        """The simulated 'now' for preview mode: a moment from the week, advanced
+        one step every PREVIEW_SECONDS so the panel walks the whole event."""
+        if not PREVIEW_SAMPLES:
+            return None
+        if self._preview_start is None:
+            self._preview_start = time.monotonic()
+        elapsed = time.monotonic() - self._preview_start
+        iso, hour, minute = PREVIEW_SAMPLES[
+            int(elapsed / PREVIEW_SECONDS) % len(PREVIEW_SAMPLES)]
+        date = dt.date.fromisoformat(iso)
+        return dt.datetime(date.year, date.month, date.day, hour, minute)
 
     def _overrides(self):
         if self._coffee_overrides is None:
@@ -309,25 +342,31 @@ class Schedule:
         return any(e.title == COFFEE_TITLE
                    for e in active_events(now, self._overrides()))
 
-    def messages(self) -> list:
+    def messages(self, preview: bool = False) -> list:
         """The slots to rotate, in order, right now.
 
-        VICE always leads. Then, when the clock is set, today and tomorrow.
-        Then the temperature if there is a reading. Then, only while something
-        is happening, its shouts -- so a quiet afternoon is calm and a live
-        event is loud.
+        VICE always leads. Then, when the clock is set (or in preview), today
+        and tomorrow. Then the temperature if there is a reading. Then, only
+        while something is happening, its shouts -- so a quiet afternoon is calm
+        and a live event is loud.
+
+        ``preview`` walks the week instead of reading the real date, so before
+        the event you can see how every day looks. It only changes which *date*
+        the day/tomorrow/shout lines are built for; the temperature stays real.
         """
         out = [_message("sched-vice", "VICE", dwell=10.0)]
 
-        clock_ok = False
-        try:
-            clock_ok = self.clock.clock_ok()
-        except Exception:
-            clock_ok = False
+        if preview:
+            now = self._preview_now()
+        else:
+            self._preview_start = None      # reset so preview restarts clean
+            try:
+                now = self.clock.now() if self.clock.clock_ok() else None
+            except Exception:
+                now = None
 
-        overrides = self._overrides()
-        if clock_ok:
-            now = self.clock.now()
+        overrides = None if preview else self._overrides()
+        if now is not None:
             today = today_line(now.date(), overrides)
             if today:
                 out.append(_message("sched-today", today, color="#22d3ee",
@@ -346,8 +385,8 @@ class Schedule:
         if temp:
             out.append(_message("sched-temp", temp, color="#2fe3b0", dwell=10.0))
 
-        if clock_ok:
-            out.extend(self._event_messages(self.clock.now(), overrides))
+        if now is not None:
+            out.extend(self._event_messages(now, overrides))
         return out
 
     def _event_messages(self, now: dt.datetime, overrides=None) -> list:

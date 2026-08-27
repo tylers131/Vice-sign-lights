@@ -412,6 +412,17 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
         </div>
         <button class="btn sm" id="panelSchedBtn" onclick="toggleSchedule()">Start</button>
       </div>
+      <div class="item">
+        <div class="grow">
+          <div class="name">Preview the week</div>
+          <div class="meta" id="panelPreviewMeta">off</div>
+        </div>
+        <button class="btn sm" id="panelPreviewBtn" onclick="togglePreview()">Start</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Before the event, "today" is empty,
+        so the schedule looks blank. Preview walks each day of the week (one
+        moment every ~90s) so you can see how it all looks on the sign now. Turn
+        it off once the event starts.</p>
     </div>
 
     <div class="card">
@@ -1459,6 +1470,12 @@ function renderPanel(p){
       ? (panelShowing(p) + (p.next_in!=null ? " \u00b7 next in "+p.next_in+"s" : ""))
       : "off -- the panel plays the saved queue";
   }
+  if($("panelPreviewBtn")){
+    $("panelPreviewBtn").textContent = p.schedule_preview ? "Stop" : "Start";
+    $("panelPreviewMeta").textContent = p.schedule_preview
+      ? "walking the week -- a new day every ~90s"
+      : "off";
+  }
   $("panelCycleBtn").textContent = p.playlist ? "Stop" : "Start";
   $("panelCycleMeta").textContent = p.playlist
     ? (panelShowing(p)
@@ -1606,6 +1623,14 @@ function toggleSchedule(){
     /* Show the first schedule message right away rather than waiting a whole
        dwell for the next tick to notice. */
     if(j.ok){ loadState(); if(on) post("/api/matrix/next").then(refreshStatus); }
+  });
+}
+function togglePreview(){
+  if(!PANEL) return;
+  var on = !PANEL.schedule_preview;
+  post("/api/matrix", {schedule_preview:on}).then(function(j){
+    if(j.ok){ toast(on ? "Previewing the week" : "Preview off");
+      loadState(); if(on) post("/api/matrix/next").then(refreshStatus); }
   });
 }
 function clearPanel(){

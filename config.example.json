@@ -308,7 +308,7 @@
   ],
   "scenes": [
     {
-      "id": "c4f95f3c",
+      "id": "991deff5",
       "name": "Sunrise",
       "steps": [
         {
@@ -339,7 +339,7 @@
       "stagger": 0.0
     },
     {
-      "id": "96c9f498",
+      "id": "dd63c55c",
       "name": "Dawn Breathe",
       "steps": [
         {
@@ -370,7 +370,7 @@
       "stagger": 0.0
     },
     {
-      "id": "854e334b",
+      "id": "31699ef2",
       "name": "Ember Glow",
       "steps": [
         {
@@ -401,7 +401,7 @@
       "stagger": 0.0
     },
     {
-      "id": "b8317cc0",
+      "id": "7b7bbd33",
       "name": "Vice",
       "steps": [
         {
@@ -432,7 +432,7 @@
       "stagger": 0.0
     },
     {
-      "id": "27f11fe8",
+      "id": "15e1c0a9",
       "name": "Sunblast",
       "steps": [
         {
@@ -463,7 +463,7 @@
       "stagger": 0.0
     },
     {
-      "id": "6bdc26df",
+      "id": "ef79c314",
       "name": "Electric Blue",
       "steps": [
         {
@@ -494,7 +494,7 @@
       "stagger": 0.0
     },
     {
-      "id": "359db4da",
+      "id": "5aa2943b",
       "name": "Magenta Pop",
       "steps": [
         {
@@ -525,7 +525,7 @@
       "stagger": 0.0
     },
     {
-      "id": "39f7de54",
+      "id": "81908cff",
       "name": "Sunset",
       "steps": [
         {
@@ -556,7 +556,7 @@
       "stagger": 0.0
     },
     {
-      "id": "c2c6b78a",
+      "id": "5e1ae076",
       "name": "Magic Hour",
       "steps": [
         {
@@ -587,7 +587,7 @@
       "stagger": 0.0
     },
     {
-      "id": "aa85f5f9",
+      "id": "9a64a997",
       "name": "Afterglow",
       "steps": [
         {
@@ -618,7 +618,7 @@
       "stagger": 0.0
     },
     {
-      "id": "a588cbd3",
+      "id": "449703c1",
       "name": "Neon Dusk",
       "steps": [
         {
@@ -649,7 +649,7 @@
       "stagger": 0.0
     },
     {
-      "id": "1fb9eb82",
+      "id": "d1e3017c",
       "name": "Miami",
       "steps": [
         {
@@ -680,7 +680,7 @@
       "stagger": 0.0
     },
     {
-      "id": "6d45a5f9",
+      "id": "bcc006e5",
       "name": "Neon Nights",
       "steps": [
         {
@@ -711,7 +711,7 @@
       "stagger": 0.0
     },
     {
-      "id": "21ac6c40",
+      "id": "bbce3f66",
       "name": "Cyberpunk",
       "steps": [
         {
@@ -742,7 +742,7 @@
       "stagger": 0.0
     },
     {
-      "id": "fe70b64f",
+      "id": "9a891d2e",
       "name": "Rainbow VICE",
       "steps": [
         {
@@ -797,7 +797,7 @@
       "stagger": 0.0
     },
     {
-      "id": "80d218f6",
+      "id": "b07570ea",
       "name": "Vice Breathe",
       "steps": [
         {
@@ -828,7 +828,7 @@
       "stagger": 0.0
     },
     {
-      "id": "a00c1edd",
+      "id": "c93b3955",
       "name": "Jump Party",
       "steps": [
         {
@@ -859,7 +859,7 @@
       "stagger": 0.0
     },
     {
-      "id": "3d1b9dab",
+      "id": "28f9570d",
       "name": "Ultraviolet",
       "steps": [
         {
@@ -890,7 +890,7 @@
       "stagger": 0.0
     },
     {
-      "id": "406a3715",
+      "id": "da16adac",
       "name": "After Hours",
       "steps": [
         {
@@ -921,7 +921,7 @@
       "stagger": 0.0
     },
     {
-      "id": "f4ab9141",
+      "id": "f1934773",
       "name": "Deep Fade",
       "steps": [
         {
@@ -952,7 +952,7 @@
       "stagger": 0.0
     },
     {
-      "id": "fde55108",
+      "id": "389e7d55",
       "name": "Hypnotic",
       "steps": [
         {
@@ -983,7 +983,7 @@
       "stagger": 0.0
     },
     {
-      "id": "22aed264",
+      "id": "f603354a",
       "name": "Coffee Call",
       "steps": [
         {
@@ -1014,7 +1014,7 @@
       "stagger": 0.0
     },
     {
-      "id": "bce5763b",
+      "id": "94b4dcee",
       "name": "Fresh Brew",
       "steps": [
         {
@@ -1045,7 +1045,7 @@
       "stagger": 0.0
     },
     {
-      "id": "8a814384",
+      "id": "d145e1ff",
       "name": "Wake Up",
       "steps": [
         {
@@ -1076,7 +1076,7 @@
       "stagger": 0.0
     },
     {
-      "id": "9f25462b",
+      "id": "ec27cdd1",
       "name": "All off",
       "steps": [
         {
@@ -1130,7 +1130,8 @@
     "png_opt": 0,
     "png_buffer": 0,
     "commands": {},
-    "schedule": false
+    "schedule": false,
+    "schedule_preview": false
   },
   "messages": [],
   "temperature": {
