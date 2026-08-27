@@ -124,6 +124,8 @@ class _Sched:
 class _SendWorker:
     """Records panel control sends; each submit reports a completed job."""
 
+    busy = False
+
     def __init__(self):
         self.sent = []
 
@@ -133,6 +135,9 @@ class _SendWorker:
         class Job:
             state, ok = "done", 1
         return Job()
+
+    def resting_sends(self):
+        return [s for s in self.sent if "resting" in s]
 
 
 class NightDim(unittest.TestCase):
@@ -228,6 +233,107 @@ class Scrolling(unittest.TestCase):
     def test_config_rejects_a_bad_animation(self):
         store = _store({"text_animation": "wobble"})
         self.assertEqual(store.matrix()["text_animation"], "static")
+
+
+class ScrollSpeed(unittest.TestCase):
+    """One slider slows every scroll; a message's own speed still wins."""
+
+    def _driver(self, **cfg):
+        from vicelights import matrix as M
+        base = {"family": "ipixel", "char_uuid": CHAR, "text_mode": "native",
+                "text_animation": "scroll"}
+        base.update(cfg)
+        return M.driver_for(base)
+
+    def test_unspecified_speed_is_left_unset(self):
+        from vicelights import matrix as M
+        self.assertIsNone(M.normalize_message({"text": "hi"})["speed"])
+
+    def test_a_line_without_a_speed_inherits_the_panel_default(self):
+        from vicelights import matrix as M
+        d = self._driver(text_speed=20)
+        self.assertEqual(d.speed_for(M.normalize_message({"text": "SLOW"})), 20)
+
+    def test_a_message_keeps_its_own_speed(self):
+        from vicelights import matrix as M
+        d = self._driver(text_speed=20)
+        self.assertEqual(d.speed_for(M.normalize_message({"text": "hi", "speed": 70})),
+                         70)
+
+    def test_default_text_speed_is_calmer_than_the_old_fifty(self):
+        store = _store({"text_speed": None})
+        from vicelights import matrix as M
+        self.assertEqual(store.matrix()["text_speed"], M.DEFAULT_TEXT_SPEED)
+        self.assertLess(M.DEFAULT_TEXT_SPEED, 50)
+
+    def test_config_clamps_a_wild_speed(self):
+        self.assertEqual(_store({"text_speed": 999}).matrix()["text_speed"], 100)
+        self.assertEqual(_store({"text_speed": -5}).matrix()["text_speed"], 0)
+
+    def test_only_travelling_animations_count_as_scrolling(self):
+        self.assertTrue(self._driver(text_animation="scroll").scrolls({"text": "x"}))
+        self.assertTrue(self._driver(text_animation="marquee").scrolls({"text": "x"}))
+        self.assertFalse(self._driver(text_animation="flash").scrolls({"text": "x"}))
+        self.assertFalse(self._driver(text_animation="static").scrolls({"text": "x"}))
+
+
+class RestingLine(unittest.TestCase):
+    """When nothing plays, every sign rests on VICE rather than stale text."""
+
+    def _runner(self, **matrix):
+        base = {"enabled": True, "address": A, "family": "ipixel",
+                "char_uuid": CHAR, "text_mode": "native",
+                "text_animation": "scroll"}
+        base.update(matrix)
+        store = _store(base)
+        from vicelights.messages import MatrixRunner
+        return MatrixRunner(store, _SendWorker()), store
+
+    def test_idle_tick_rests_on_the_configured_text(self):
+        runner, _ = self._runner(resting_text="VICE")
+        runner.tick()
+        self.assertTrue(runner._resting)
+        self.assertEqual((runner._current or {}).get("text"), "VICE")
+        self.assertEqual(len(runner.worker.resting_sends()), 1)
+
+    def test_rest_is_painted_once_not_every_tick(self):
+        runner, _ = self._runner()
+        runner.tick()
+        runner.tick()
+        runner.tick()
+        self.assertEqual(len(runner.worker.resting_sends()), 1)
+
+    def test_disabling_resting_leaves_the_panel_alone(self):
+        runner, _ = self._runner(resting_enabled=False)
+        runner.tick()
+        self.assertFalse(runner._resting)
+        self.assertEqual(runner.worker.resting_sends(), [])
+
+    def test_a_blank_is_not_refilled_by_the_resting_line(self):
+        runner, _ = self._runner()
+        runner.clear()
+        runner.tick()
+        self.assertEqual(runner.worker.resting_sends(), [])   # blank stays blank
+        self.assertTrue(runner._rest_suppressed)
+
+    def test_hold_extends_a_long_scroll_past_its_dwell(self):
+        from vicelights import matrix as M
+        runner, store = self._runner(scroll_min_seconds=6.0,
+                                     scroll_seconds_per_char=0.5)
+        matrix = store.matrix()
+        driver = M.driver_for(matrix)
+        short = M.normalize_message({"text": "HI", "dwell": 10.0})
+        long = M.normalize_message({"text": "X" * 40, "dwell": 10.0})
+        self.assertEqual(runner._hold_for(matrix, driver, short, 10.0), 10.0)
+        self.assertEqual(runner._hold_for(matrix, driver, long, 10.0), 6.0 + 40 * 0.5)
+
+    def test_a_held_message_is_not_stretched(self):
+        from vicelights import matrix as M
+        runner, store = self._runner(text_animation="static")
+        matrix = store.matrix()
+        driver = M.driver_for(matrix)
+        message = M.normalize_message({"text": "X" * 40, "dwell": 8.0})
+        self.assertEqual(runner._hold_for(matrix, driver, message, 8.0), 8.0)
 
 
 if __name__ == "__main__":

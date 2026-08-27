@@ -634,10 +634,17 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
         dwell = float(raw.get("dwell", default_dwell))
     except (TypeError, ValueError):
         dwell = default_dwell
-    try:
-        speed = int(raw.get("speed", 50))
-    except (TypeError, ValueError):
-        speed = 50
+    # Speed, like mode, is left unset when the message did not choose one, so
+    # the panel's configured scroll speed can reach the schedule and preview
+    # lines instead of every one of them being pinned to a hardcoded 50.
+    raw_speed = raw.get("speed")
+    if raw_speed is None or raw_speed == "":
+        speed = None
+    else:
+        try:
+            speed = max(0, min(100, int(raw_speed)))
+        except (TypeError, ValueError):
+            speed = None
     try:
         color_mode = max(0, min(MAX_COLOR_MODE, int(raw.get("color_mode", 0))))
     except (TypeError, ValueError):
@@ -653,7 +660,7 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
         "color": format_color(parse_color(raw.get("color"), (255, 47, 110))),
         "background": format_color(parse_color(raw.get("background"), (0, 0, 0))),
         "mode": mode,
-        "speed": max(0, min(100, speed)),
+        "speed": speed,
         # 0 means "hold until something else is sent" -- a single standing
         # message rather than a rotation.
         "dwell": max(0.0, min(3600.0, dwell)),
@@ -726,6 +733,17 @@ TEXT_ANIMATIONS = {
     "fade": 6,
     "static": 0,         # one page, held: pages with nothing to page to
 }
+
+# The animations that travel the message across the panel end to end. These are
+# the ones a reader cannot take in from a single held frame, so the runner has
+# to leave them up long enough to make at least one full pass before moving on.
+# flash and fade change in place and are readable at once, so they are not here.
+SCROLLING_ANIMATIONS = frozenset(
+    ("scroll", "marquee", "scroll_up", "scroll_down"))
+
+# 0-100. Lower is a calmer crawl; 50 was the old hardcoded default and read too
+# fast for a full line. A message that names its own speed still wins.
+DEFAULT_TEXT_SPEED = 35
 
 # A cell is 8 wide and 16 tall, one byte per row, sixteen bytes -- for BOTH
 # flags. That is measured, not assumed: sending flag 1 with a 32-byte 16x16
@@ -912,6 +930,15 @@ class MatrixDriver:
             return mode
         default = str(self.config.get("text_animation") or DEFAULT_MODE).strip().lower()
         return default if default in self.modes else self.modes[0]
+
+    def scrolls(self, message: dict) -> bool:
+        """Does this message travel across the panel, so it needs time to pass?
+
+        True only when the panel animates it itself *and* the resolved
+        animation is one of the travelling ones. A static hold, a flash or a
+        software-paged message is taken in a frame at a time and does not.
+        """
+        return bool(self.animates) and self.mode_for(message) in SCROLLING_ANIMATIONS
 
     def characteristic(self):
         return self.config.get("char_uuid") or self.write_uuid
@@ -1171,6 +1198,21 @@ class IPixel(MatrixDriver):
             mode = str(self.config.get("text_animation") or DEFAULT_MODE).strip().lower()
         return TEXT_ANIMATIONS.get(mode, TEXT_ANIMATIONS["static"])
 
+    def speed_for(self, message: dict) -> int:
+        """0-100 scroll speed for this draw: the message's own, or the panel's.
+
+        A message that never set a speed inherits ``text_speed`` so the one
+        slider slows every scroll -- the calendar, the preview and the saved
+        queue alike -- rather than each auto-built line being pinned to 50.
+        """
+        want = (message or {}).get("speed")
+        if want is None:
+            want = self.config.get("text_speed", DEFAULT_TEXT_SPEED)
+        try:
+            return max(0, min(100, int(want)))
+        except (TypeError, ValueError):
+            return DEFAULT_TEXT_SPEED
+
     def native_text_frames(self, message: dict, slot: int = 0,
                            order: str = None, font_flag: int = None,
                            animation: int = None, **kwargs) -> list:
@@ -1196,10 +1238,7 @@ class IPixel(MatrixDriver):
         background = parse_color((message or {}).get("background"), (0, 0, 0))
         if animation is None:
             animation = self.animation_for(message)
-        try:
-            speed = max(0, min(100, int((message or {}).get("speed", 50))))
-        except (TypeError, ValueError):
-            speed = 50
+        speed = self.speed_for(message)
 
         cells = kwargs.get("cells")
         count = len(cells) if cells else len(text)

@@ -53,6 +53,12 @@ class MatrixRunner:
         self._unsure = []             # writes that failed and may be half up
         self._warned_unconfigured = False
         self._applied_brightness = None   # last brightness we commanded (auto-dim)
+        self._resting = False         # the idle line (VICE) is what is up
+        # A deliberate blank or a hand-sent standing message must not be
+        # painted over by the idle line; this stays set until something is
+        # meant to show again (the playlist/schedule turns on, or play_next
+        # puts real content up).
+        self._rest_suppressed = False
 
     # ------------------------------------------------------------------ state
 
@@ -166,6 +172,12 @@ class MatrixRunner:
             "text_animation": matrix.get("text_animation", "static"),
             "scrolling": (matrix.get("text_mode") == "native"
                           and matrix.get("text_animation", "static") != "static"),
+            "text_speed": matrix.get("text_speed", 35),
+            "scroll_seconds_per_char": matrix.get("scroll_seconds_per_char", 0.6),
+            "scroll_min_seconds": matrix.get("scroll_min_seconds", 6.0),
+            "resting_enabled": bool(matrix.get("resting_enabled", True)),
+            "resting_text": matrix.get("resting_text", "VICE"),
+            "resting": bool(self._resting),
             "bitmap_order": matrix.get("bitmap_order", "msb"),
             "text_reversed": bool(matrix.get("text_reversed")),
             "char_uuid": driver.characteristic() or "",
@@ -395,13 +407,40 @@ class MatrixRunner:
         # failing: an error on the screen beats a message that quietly never
         # went anywhere.
         driver = matrix_module.driver_for(matrix)
+        hold = self._hold_for(matrix, driver, message, hold)
         ok = self._send(message,
                         "panel: %s" % matrix_module.describe_message(
                             message, driver.mode_for(message)),
                         hold, manual=True)
         with self._lock:
+            # A hand-sent line stands until something replaces it; the idle
+            # line must not paint over it on the next quiet tick.
+            self._resting = False
+            self._rest_suppressed = True
             error = self._last_error
         return {"sent": ok, "message": message, "error": error}
+
+    def _hold_for(self, matrix: dict, driver, message: dict, dwell: float) -> float:
+        """How long to leave ``message`` up, given how it is animated.
+
+        A natively scrolled line does not stop on its own, so a dwell shorter
+        than the time it takes to cross the panel swaps it out mid-sentence.
+        Hold a travelling line for the longer of its dwell and an estimate from
+        its length -- a floor plus a per-character allowance -- so it finishes
+        at least one pass. A held or paged line is unaffected.
+        """
+        try:
+            if not driver.scrolls(message):
+                return dwell
+        except Exception:
+            return dwell
+        text = message.get("text") or ""
+        try:
+            per_char = float(matrix.get("scroll_seconds_per_char", 0.6))
+            floor = float(matrix.get("scroll_min_seconds", 6.0))
+        except (TypeError, ValueError):
+            per_char, floor = 0.6, 6.0
+        return max(dwell, floor + len(text) * per_char)
 
     def play_next(self, force: bool = False) -> dict:
         """Advance to the next enabled message in the queue."""
@@ -422,9 +461,15 @@ class MatrixRunner:
         message = queue[start % len(queue)]
         dwell = message["dwell"] or matrix.get("default_dwell", 20.0)
         driver = matrix_module.driver_for(matrix)
+        dwell = self._hold_for(matrix, driver, message, dwell)
         described = matrix_module.describe_message(message, driver.mode_for(message))
         ok = self._send(message, "panel: %s" % described, dwell, manual=force)
         if ok:
+            # Real content is up: the idle line is no longer what is showing,
+            # and any earlier blank or hand-send no longer holds the rest off.
+            with self._lock:
+                self._resting = False
+                self._rest_suppressed = False
             log.info("panel -> %s (holding %.0fs, %d in queue)",
                      described, dwell, len(queue))
         with self._lock:
@@ -464,6 +509,10 @@ class MatrixRunner:
             self._next_at = None
             self._unsure = []
             self._landed = None
+            # Blank means blank: the idle line must not refill the panel a tick
+            # later. It stays off until the playlist/schedule turns back on.
+            self._resting = False
+            self._rest_suppressed = True
             self._reset_pages()
         return ok
 
@@ -633,6 +682,39 @@ class MatrixRunner:
         # near enough that it is a number and not an infinity in the status API.
         return 24 * 3600.0
 
+    def _rest(self, matrix: dict):
+        """Show the idle line (VICE) when nothing else is playing.
+
+        This is what stops a panel sitting on a stale message once the
+        playlist is switched off, and what overwrites the second sign's vendor
+        boot text: the idle line goes to every panel like any other. It is
+        painted once and then left -- the flag keeps a quiet tick from
+        re-sending it every few seconds and clogging the shared radio.
+
+        It stands down for a deliberate blank or a hand-sent standing message
+        (``_rest_suppressed``), and never fights a scene sweep for the antenna.
+        """
+        if not matrix.get("resting_enabled", True):
+            return
+        if self._rest_suppressed:
+            return
+        text = (matrix.get("resting_text") or "VICE").strip() or "VICE"
+        with self._lock:
+            current = self._current or {}
+            already = self._resting and current.get("text") == text
+        if already:
+            return
+        if self.worker.busy:
+            # The lights are mid-sweep; try again next tick rather than stack a
+            # write behind them. Nothing is lost -- the idle line is patient.
+            return
+        message = matrix_module.normalize_message(
+            {"id": "matrix-resting", "text": text, "dwell": 0.0},
+            matrix.get("default_dwell", 20.0))
+        ok = self._send(message, "panel: resting on %r" % text, self._forever())
+        with self._lock:
+            self._resting = bool(ok)
+
     def tick(self):
         """Called from the scheduler thread every few seconds."""
         matrix = self.store.matrix()
@@ -664,12 +746,22 @@ class MatrixRunner:
                 self._turn_page()
             return
         if not playing:
+            # Nothing is cycling: rest on the idle line rather than leave a
+            # stale message (or the vendor's boot text) sitting there.
+            self._rest(matrix)
             return
+        if self._resting:
+            # Real content just turned on while we were resting on the idle
+            # line, which parked _next_at 24 hours out. Advance now, not then.
+            with self._lock:
+                self._resting = False
+                self._next_at = time.monotonic()
         queue = self._queue()
         if not queue:
             if not self._warned_unconfigured:
                 log.info("panel is set to play but has nothing to show")
                 self._warned_unconfigured = True
+            self._rest(matrix)
             return
         self._warned_unconfigured = False
         with self._lock:

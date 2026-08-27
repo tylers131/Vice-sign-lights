@@ -469,6 +469,32 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
           jumping page to page, and lighter on the radio. If the letters come
           out garbled, the panel needs a one-time font calibration; turn this
           back off, or run <code>matrix_probe.py text --sweep</code> on the Pi.</div>
+        <div id="panelSpeedRow" style="margin-top:12px">
+          <label>Scroll speed <b id="panelSpeedVal">35</b> <span class="muted"
+            style="font-weight:400">(lower = slower)</span></label>
+          <input type="range" id="panelSpeed" min="5" max="100" step="5" value="35"
+                 oninput="$('panelSpeedVal').textContent=this.value"
+                 onchange="setScrollSpeed()">
+          <div class="muted" style="font-size:13px;margin-top:4px">
+            How fast the panel slides a line across. Each message is also held
+            long enough to finish scrolling before the next one takes over, so a
+            long line stays up longer than a short one on its own.</div>
+        </div>
+      </div>
+      <div style="margin-top:12px;border-top:1px solid #26262e;padding-top:12px">
+        <label class="switch" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="panelResting" style="width:auto" onchange="saveResting()">
+          <span>Rest on a message when nothing is playing</span></label>
+        <div class="muted" style="font-size:13px;margin:4px 0 8px">
+          When the schedule and the queue are both off, every sign shows this
+          instead of holding a stale message or the panel's factory text.</div>
+        <div class="row">
+          <div class="grow">
+            <label>Resting message</label>
+            <input id="panelRestingText" type="text" maxlength="240" value="VICE"
+                   onchange="saveResting()">
+          </div>
+        </div>
       </div>
       <div id="panelBrightRow">
         <label>Daytime brightness <b id="panelBrightVal">100%</b></label>
@@ -1455,6 +1481,19 @@ function renderPanel(p){
   var sc = $("panelScale");
   if(sc && document.activeElement !== sc) sc.value = String(p.scale || "auto");
   if($("panelScroll")) $("panelScroll").checked = !!p.scrolling;
+  if($("panelSpeed")){
+    $("panelSpeedRow").style.display = p.scrolling ? "" : "none";
+    if(document.activeElement !== $("panelSpeed") && p.text_speed != null){
+      $("panelSpeed").value = p.text_speed;
+      $("panelSpeedVal").textContent = p.text_speed;
+    }
+  }
+  var restFocus = ["panelResting","panelRestingText"]
+    .indexOf(document.activeElement && document.activeElement.id) >= 0;
+  if($("panelResting") && !restFocus){
+    $("panelResting").checked = !!p.resting_enabled;
+    if(p.resting_text != null) $("panelRestingText").value = p.resting_text;
+  }
   $("panelBrightRow").style.display = caps.brightness ? "" : "none";
   if(document.activeElement !== $("panelBright")){
     $("panelBright").value = p.brightness;
@@ -1717,6 +1756,23 @@ function toggleScroll(){
     if(j.ok){ toast(on ? "Scrolling long messages" : "Back to paging");
       loadState(); post("/api/matrix/next").then(refreshStatus); }
     else { toast(j.error || "could not change it"); $("panelScroll").checked = !on; }
+  });
+}
+function setScrollSpeed(){
+  post("/api/matrix", {text_speed: parseInt($("panelSpeed").value, 10)}).then(function(j){
+    /* Re-send so the change is visible now rather than on the next message. */
+    if(j.ok){ loadState(); post("/api/matrix/next").then(refreshStatus); }
+    else toast(j.error || "could not set the speed");
+  });
+}
+function saveResting(){
+  post("/api/matrix", {
+    resting_enabled: $("panelResting").checked,
+    resting_text: $("panelRestingText").value
+  }).then(function(j){
+    if(j.ok){ toast($("panelResting").checked ? "Resting message set" : "Resting off");
+      renderPanel(j.matrix); }
+    else toast(j.error || "could not save it");
   });
 }
 function setPanelBrightness(){

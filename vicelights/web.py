@@ -862,7 +862,9 @@ def create_app(store, worker, scheduler, timekeeper, log_buffer, log_path):
                        "pixel_layout", "scale", "write_response", "stretch",
                        "bold", "batch_writes", "paging", "page_seconds",
                        "text_font", "bitmap_order", "text_reversed",
-                       "text_animation",
+                       "text_animation", "text_speed",
+                       "scroll_seconds_per_char", "scroll_min_seconds",
+                       "resting_enabled", "resting_text",
                        "color_mode", "h_align", "v_align",
                        "night_dim_enabled", "night_dim_start", "night_dim_end",
                        "night_brightness")

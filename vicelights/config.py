@@ -145,6 +145,17 @@ DEFAULT_MATRIX = {
     # a too-long line slide by instead of paging. Only applies with
     # text_mode="native". static | scroll | marquee | scroll_up | scroll_down.
     "text_animation": "static",
+    # 0-100 scroll speed for a line that did not choose its own; lower is a
+    # calmer crawl. And how long a travelling line is then held: a floor in
+    # seconds plus a per-character allowance, so a long line stays up long
+    # enough to finish scrolling before the next one takes over.
+    "text_speed": 35,
+    "scroll_seconds_per_char": 0.6,
+    "scroll_min_seconds": 6.0,
+    # When nothing is playing the sign rests on this line instead of holding a
+    # stale message or the vendor's boot text; both panels get it.
+    "resting_enabled": True,
+    "resting_text": "VICE",
     "bitmap_order": "msb",
     "text_reversed": False,     # for a panel that lays characters right to left
     "color_mode": 0,            # 0 solid; 2-4 are the panel's own gradients
@@ -479,9 +490,34 @@ def _matrix(raw) -> dict:
     order = str(value.get("bitmap_order") or "msb").strip().lower()
     value["bitmap_order"] = order if order in BITMAP_ORDERS else "msb"
     value["text_reversed"] = bool(value.get("text_reversed"))
-    from .matrix import TEXT_ANIMATIONS
+    from .matrix import TEXT_ANIMATIONS, DEFAULT_TEXT_SPEED, MAX_TEXT
     anim = str(value.get("text_animation") or "static").strip().lower()
     value["text_animation"] = anim if anim in TEXT_ANIMATIONS else "static"
+    # How fast the panel scrolls a line that did not set its own speed, and how
+    # long the runner then leaves a travelling line up so it finishes at least
+    # one pass before the next one replaces it. Both are clamped so a bad value
+    # cannot freeze the rotation or spin it too fast to read.
+    try:
+        value["text_speed"] = max(0, min(100, int(value.get("text_speed",
+                                                            DEFAULT_TEXT_SPEED))))
+    except (TypeError, ValueError):
+        value["text_speed"] = DEFAULT_TEXT_SPEED
+    try:
+        value["scroll_seconds_per_char"] = max(0.05, min(5.0, float(
+            value.get("scroll_seconds_per_char", 0.6))))
+    except (TypeError, ValueError):
+        value["scroll_seconds_per_char"] = 0.6
+    try:
+        value["scroll_min_seconds"] = max(0.0, min(120.0, float(
+            value.get("scroll_min_seconds", 6.0))))
+    except (TypeError, ValueError):
+        value["scroll_min_seconds"] = 6.0
+    # The resting line the sign falls back to when nothing else is playing, so
+    # a panel is never left holding a stale message or the vendor's boot text.
+    value["resting_enabled"] = bool(value.get("resting_enabled", True))
+    resting = str(value.get("resting_text") or "VICE").replace("\r", " ")
+    resting = resting.replace("\n", " ").strip()[:MAX_TEXT]
+    value["resting_text"] = resting or "VICE"
     value["night_dim_enabled"] = bool(value.get("night_dim_enabled"))
     value["night_dim_start"] = _hhmm(value.get("night_dim_start"), "23:00")
     value["night_dim_end"] = _hhmm(value.get("night_dim_end"), "06:00")

@@ -842,6 +842,30 @@ document their font byte-order, so native text can come out garbled until it is
 calibrated once -- turn the toggle back off, or run `matrix_probe.py text
 --sweep` at the sign and set the order that looked right.
 
+Two settings tune the scroll. **Scroll speed** (`matrix.text_speed`, 0-100,
+default 35 -- lower is a calmer crawl) is the speed byte handed to the panel for
+any line that did not choose its own; one slider slows the calendar, the preview
+and the saved queue together. And because a scrolling line never stops on its
+own, the runner **holds it long enough to finish at least one pass** before the
+next message replaces it: `matrix.scroll_min_seconds` (a floor, default 6) plus
+`matrix.scroll_seconds_per_char` (default 0.6) times the line's length, so a long
+line stays up longer than a short one instead of being swapped out mid-sentence.
+A line that names its own `speed` or `mode` still wins; a held or paged line is
+untouched.
+
+### Resting on a message when nothing is playing
+
+With the schedule and the saved queue both off, a panel used to keep whatever
+was last on it -- a stale offer, or, on a sign that was never driven, the
+vendor's boot text ("LED"). Instead it now **rests on a single line** -- `VICE`
+by default -- sent to every panel like any other message, so both signs read the
+same and neither shows leftover or factory text. It is painted once and then
+left (patient on the shared radio), and it steps aside for a deliberate blank or
+a hand-sent standing message rather than painting over them. Turn the playlist or
+schedule back on and real content takes over at once. In the config:
+`matrix.resting_enabled` and `matrix.resting_text`; on the *LED Text Display* tab,
+*Rest on a message when nothing is playing* with an editable line.
+
 ### Dimming the panel at night
 
 The text panel is far brighter than the sign's LED strips and glares after
