@@ -620,8 +620,15 @@ def normalize_message(raw: dict, default_dwell: float = 20.0) -> dict:
     raw = raw or {}
     text = str(raw.get("text") or "").replace("\r", " ").replace("\n", " ")
     text = text[:MAX_TEXT]
-    mode = str(raw.get("mode") or DEFAULT_MODE).strip().lower()
-    if mode not in MODES:
+    # A message that never named a mode is left *unset* ("") rather than
+    # stamped "static": only then can the panel's configured default animation
+    # (the "Scroll long messages" toggle) apply to it. Baking "static" in here
+    # made every schedule and preview line look like a deliberate hold, so
+    # turning scroll on scrolled the saved queue but never the calendar text.
+    # An unset mode falls through to that default in mode_for/animation_for; a
+    # named-but-unknown mode is still coerced to the safe static hold.
+    mode = str(raw.get("mode") or "").strip().lower()
+    if mode and mode not in MODES:
         mode = DEFAULT_MODE
     try:
         dwell = float(raw.get("dwell", default_dwell))

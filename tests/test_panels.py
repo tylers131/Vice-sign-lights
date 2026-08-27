@@ -204,6 +204,22 @@ class Scrolling(unittest.TestCase):
         self.assertEqual(d.animation_for({"text": "hi", "mode": "static"}),
                          M.TEXT_ANIMATIONS["static"])
 
+    def test_a_normalized_schedule_line_inherits_the_scroll_default(self):
+        # A schedule/preview line never names a mode, so normalize_message must
+        # leave it unset -- otherwise it looks like a deliberate "static" hold
+        # and the panel's scroll default never reaches the calendar text.
+        from vicelights import matrix as M
+        message = M.normalize_message({"text": "TODAY 2P COFFEE"})
+        self.assertEqual(message["mode"], "")
+        d = self._driver("native", "scroll")
+        self.assertEqual(d.mode_for(message), "scroll")
+        self.assertEqual(d.animation_for(message), M.TEXT_ANIMATIONS["scroll"])
+
+    def test_a_bad_mode_still_falls_back_to_static(self):
+        from vicelights import matrix as M
+        self.assertEqual(M.normalize_message({"text": "hi", "mode": "wat"})["mode"],
+                         "static")
+
     def test_pixels_mode_never_scrolls(self):
         d = self._driver("pixels", "scroll")
         self.assertFalse(d.animates)         # pages in software, does not scroll
