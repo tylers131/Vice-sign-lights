@@ -387,6 +387,9 @@ class TemperatureSampler:
         self.store = store
         self._thread = None
         self._stop = threading.Event()
+        # Poked to cut the between-reads sleep short, so a sensor change from
+        # the UI is read within seconds instead of up to a whole interval later.
+        self._wake = threading.Event()
         self._probe = None
         self._probe_sig = None
         self._reading = None
@@ -419,11 +422,15 @@ class TemperatureSampler:
             log.debug("closing the temperature probe: %s", exc)
 
     def start(self):
+        if not self._config().get("enabled"):
+            return
+        # A settings change reaches a sampler that is already running: wake it so
+        # it re-reads with the new sensor now, not at the end of its sleep.
+        self._wake.set()
         # is_alive, not just "is there a thread": a sampler turned off from the
         # UI exits its thread but leaves the (now dead) handle set, and toggling
         # the sensor back on has to be able to start a fresh one.
-        if (self._thread and self._thread.is_alive()) \
-                or not self._config().get("enabled"):
+        if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="temperature",
@@ -433,6 +440,7 @@ class TemperatureSampler:
 
     def stop(self):
         self._stop.set()
+        self._wake.set()            # cut any sleep short so the thread exits now
 
     def current(self):
         """The last reading, or None if there is none or it has gone stale."""
@@ -473,7 +481,10 @@ class TemperatureSampler:
                 with self._lock:
                     self._reading = reading
             interval = max(60.0, float(config.get("interval_minutes", 20.0)) * 60.0)
-            self._stop.wait(interval)
+            # Sleep until the interval is up OR a settings change pokes us awake,
+            # whichever comes first; clear the poke so the next sleep is real.
+            self._wake.wait(interval)
+            self._wake.clear()
 
 
 class PowerMonitor:
