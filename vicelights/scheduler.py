@@ -383,8 +383,11 @@ class TemperatureSampler:
     Off unless the config turns it on: no sensor, no thread, no log noise.
     """
 
-    def __init__(self, store):
+    def __init__(self, store, worker=None):
         self.store = store
+        # The BLE worker, so a Govee scan runs on the one radio thread instead
+        # of a concurrent scan of its own. None in tests / standalone use.
+        self.worker = worker
         self._thread = None
         self._stop = threading.Event()
         # Poked to cut the between-reads sleep short, so a sensor change from
@@ -408,9 +411,34 @@ class TemperatureSampler:
         """The reader the config asks for: the Govee beacon or the wired DHT."""
         if config.get("source") == "govee":
             from .govee import GoveeThermometer
-            return GoveeThermometer(address=config.get("address") or None)
+            return GoveeThermometer(address=config.get("address") or None,
+                                    scan=self._govee_scan)
         return Thermometer(pin=config.get("pin", 13),
                            model=config.get("model", "DHT11"))
+
+    def _govee_scan(self, seconds):
+        """A Govee scan run on the worker's radio thread, not a rival one.
+
+        Submitting the scan to the worker means it is serialised with every
+        light and panel write on the one adapter -- two BLE scans at once on
+        BlueZ can wedge it mid-write, which is exactly the failure a direct
+        scan from this thread caused. Blocks this (temperature) thread until the
+        job finishes, which is what it is for.
+        """
+        worker = self.worker
+        if worker is None:                      # standalone / tests: direct scan
+            from .govee import _default_scan
+            return _default_scan(seconds)
+        job = worker.submit_govee_scan(seconds)
+        if job is None:
+            return []
+        deadline = time.monotonic() + max(20.0, float(seconds) + 15.0)
+        while time.monotonic() < deadline:
+            if job.state in ("done", "failed", "superseded"):
+                break
+            if self._stop.wait(0.5):            # shutting down: give up the wait
+                return []
+        return list(getattr(worker, "last_govee_raw", None) or [])
 
     def _close_probe(self):
         probe, self._probe = self._probe, None
@@ -600,8 +628,10 @@ class Scheduler:
         self.worker = worker
         self.timekeeper = timekeeper
         # The temperature the schedule shows, sampled on its own thread so a
-        # ten-second sensor read never stalls the radio pacing here.
-        self.temperature = TemperatureSampler(store)
+        # ten-second sensor read never stalls the radio pacing here. It is given
+        # the worker so a Govee scan takes its turn on the one radio rather than
+        # opening a second, concurrent scan that wedges the adapter mid-write.
+        self.temperature = TemperatureSampler(store, worker)
         # What the panel should say, built from the clock, the calendar and
         # that sampler. It only decides text; the runner still does the
         # sending and cycling. Built before rotation because rotation borrows

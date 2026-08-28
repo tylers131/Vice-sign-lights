@@ -187,6 +187,37 @@ class SamplerPicksSource(unittest.TestCase):
         s._run()                      # disabled -> loop returns at once
         self.assertIsNone(s._thread)
 
+    def test_govee_reads_go_through_the_worker_not_a_rival_scan(self):
+        # The scan must be submitted to the shared worker, so it takes its turn
+        # on the one radio rather than opening a second scan that wedges it.
+        from vicelights.scheduler import TemperatureSampler
+
+        class Job:
+            state = "done"
+
+        class Worker:
+            def __init__(self):
+                self.submitted = 0
+                self.last_govee_raw = [
+                    {"address": "AA:BB:CC:DD:EE:01", "name": "GVH5075_1A2B",
+                     "mfr_data": H5075, "rssi": -50}]
+
+            def submit_govee_scan(self, seconds):
+                self.submitted += 1
+                return Job()
+
+        class Store:
+            def temperature(self):
+                return {"source": "govee", "address": "AA:BB:CC:DD:EE:01"}
+
+        worker = Worker()
+        s = TemperatureSampler(Store(), worker)
+        probe = s._build_probe(Store().temperature())
+        reading = probe.read()
+        self.assertEqual(worker.submitted, 1)          # went through the worker
+        self.assertIsNotNone(reading)
+        self.assertAlmostEqual(reading.fahrenheit, 70.4, places=1)
+
     def test_start_does_not_stack_a_second_live_thread(self):
         from vicelights.scheduler import TemperatureSampler
 

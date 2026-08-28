@@ -122,6 +122,7 @@ class BleWorker:
         self.device_state = {}
         self.last_scan = {"at": None, "devices": []}
         self.last_govee_scan = {"at": None, "devices": []}
+        self.last_govee_raw = []      # raw observations, for the sampler to decode
         # Devices whose last queued command put them into a built-in pattern.
         # A solid colour aimed at one of these needs help getting out first.
         self._in_pattern = set()
@@ -832,6 +833,10 @@ class BleWorker:
             observations = []
         else:
             observations = await govee.scan_observations(seconds)
+        # Kept for the temperature sampler to decode itself: the display list
+        # below is JSON-safe (bytes rendered to hex), but the sampler wants the
+        # raw manufacturer_data. In-process only, never serialised.
+        self.last_govee_raw = observations
         current = (self.store.temperature().get("address") or "").upper()
         found = []
         for obs in observations:
