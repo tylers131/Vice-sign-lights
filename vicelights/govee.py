@@ -303,6 +303,17 @@ def _cli(argv=None):
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    try:
+        from bleak import BleakScanner            # noqa: F401
+    except Exception:
+        print("Bluetooth library not found for THIS python. Run the sign's "
+              "own python, which has it:\n\n"
+              "  sudo systemctl show vice-lights -p ExecStart --value\n\n"
+              "  # then, using the /.../python it prints, from this folder:\n"
+              "  <that python> -m vicelights.govee %s\n"
+              % " ".join(argv or __import__("sys").argv[1:]))
+        return 2
+
     if args.cmd == "read":
         therm = GoveeThermometer(address=args.address, seconds=args.seconds)
         reading = therm.read()
